@@ -1,43 +1,53 @@
 /**
- * 状态 → 颜色令牌 / 文案的映射。
+ * 状态 → 颜色令牌 / 动态文案。
  *
  * 颜色一律用 CSS 变量名（var(--status-xxx)）而不是硬编码色值，
  * 这样换主题时只改 index.css，这里的代码不动。
  * CSS 里用 `color-mix()` 由同一个变量派生出淡底/边框/文字，
  * 所以每个状态只需要**一个**颜色定义。
+ *
+ * 语言相关的部分全部走 `t`：本文件不读全局状态，也不引入 React，
+ * 只是"拿一个已经绑定好 locale 的翻译函数"——于是它仍然可以单测。
+ * 颜色是纯静态的，留在模块常量里，渲染路径上零查表。
  */
 
+import type { MessageKey, Translate } from "./i18n"
 import type { TaskStatus } from "./api"
 
 export interface StatusMeta {
   /** CSS 变量名（不含 var() 包装） */
   colorVar: string
-  label: string
-  /** 拖到该泳道时是否合法（状态机守卫，详见 docs/plan/001 §5.2） */
-  /** 说明文案：拖不过去时告诉用户为什么 */
-  blockedHint?: string
+  /** 该状态在词典里的键；文案要随语言变，所以不能在这里存成静态字符串 */
+  labelKey: MessageKey
+  /** 拖到该泳道时是否合法的说明文案键（状态机守卫，详见 docs/plan/001 §5.2） */
+  hintKey?: MessageKey
 }
 
 export const STATUS_META: Record<TaskStatus, StatusMeta> = {
-  backlog: { colorVar: "--status-backlog", label: "想法池" },
-  todo: { colorVar: "--status-todo", label: "待办" },
-  doing: { colorVar: "--status-doing", label: "进行中" },
+  backlog: { colorVar: "--status-backlog", labelKey: "status.backlog" },
+  todo: { colorVar: "--status-todo", labelKey: "status.todo" },
+  doing: { colorVar: "--status-doing", labelKey: "status.doing" },
   blocked: {
     colorVar: "--status-blocked",
-    label: "阻塞",
-    blockedHint: "转阻塞需要填原因，请用卡片菜单里的「标记阻塞」",
+    labelKey: "status.blocked",
+    hintKey: "guard.hint.blocked",
   },
   review: {
     colorVar: "--status-review",
-    label: "待评审",
-    blockedHint: "需要先认领（claim）再提交评审",
+    labelKey: "status.review",
+    hintKey: "guard.hint.review",
   },
-  done: { colorVar: "--status-done", label: "已完成" },
+  done: { colorVar: "--status-done", labelKey: "status.done" },
   cancelled: {
     colorVar: "--status-cancelled",
-    label: "已取消",
-    blockedHint: "取消需要填原因，请用卡片菜单里的「取消任务」",
+    labelKey: "status.cancelled",
+    hintKey: "guard.hint.cancelled",
   },
+}
+
+/** 状态的中文名/英文名 */
+export function statusLabel(status: TaskStatus, t: Translate): string {
+  return t(STATUS_META[status].labelKey)
 }
 
 /** 泳道展示顺序：与人的阅读顺序一致（想法池 → 待办 → 进行中 → 阻塞 → 评审 → 完成） */
@@ -72,97 +82,106 @@ export const PRIORITY_LABEL: Record<number, string> = {
  *   - blocked / cancelled 需要 reason
  *   - review → doing 是"评审打回"，与 claim 不同路径
  */
-export function canMove(from: TaskStatus, to: TaskStatus): { ok: boolean; reason?: string } {
-  if (from === to) return { ok: false, reason: "状态未变" }
+export function canMove(
+  from: TaskStatus,
+  to: TaskStatus,
+  t: Translate,
+): { ok: boolean; reason?: string } {
+  if (from === to) return { ok: false, reason: t("guard.sameStatus") }
   if (to === "doing") {
-    return { ok: false, reason: "「进行中」必须先认领，请用卡片菜单的「认领任务」" }
+    return { ok: false, reason: t("guard.toDoing") }
   }
   if (to === "blocked" || to === "cancelled") {
-    return { ok: false, reason: STATUS_META[to].blockedHint ?? "需要填写原因" }
+    return { ok: false, reason: t(STATUS_META[to].hintKey ?? "guard.needReason") }
   }
   if (to === "done" && from !== "review") {
-    return { ok: false, reason: "只有「待评审」能直接完成；从进行中完成请用卡片菜单的「完成」" }
+    return { ok: false, reason: t("guard.toDone") }
   }
   if (from === "done" || from === "cancelled") {
-    return { ok: false, reason: "终态任务需要先「重新打开」才能改状态" }
+    return { ok: false, reason: t("guard.terminal") }
   }
   return { ok: true }
 }
 
 /** 相对时间：与 CLI 的显示口径保持一致 */
-export function relativeTime(ts: number, now = Date.now()): string {
+export function relativeTime(ts: number, t: Translate, now = Date.now()): string {
   const diff = Math.max(0, now - ts)
   const min = Math.floor(diff / 60_000)
-  if (min < 1) return "刚刚"
-  if (min < 60) return `${min}m 前`
+  if (min < 1) return t("time.justNow")
+  if (min < 60) return t("time.minutesAgo", { n: min })
   const hour = Math.floor(min / 60)
-  if (hour < 24) return `${hour}h 前`
-  return `${Math.floor(hour / 24)}d 前`
+  if (hour < 24) return t("time.hoursAgo", { n: hour })
+  return t("time.daysAgo", { n: Math.floor(hour / 24) })
 }
 
 /** 租约剩余时间（可能已过期 → 显示"已过期"） */
-export function leaseText(expiresAt: number | null, now = Date.now()): string | null {
+export function leaseText(expiresAt: number | null, t: Translate, now = Date.now()): string | null {
   if (expiresAt === null) return null
   const diff = expiresAt - now
-  if (diff <= 0) return "租约已过期"
+  if (diff <= 0) return t("time.leaseExpired")
   const min = Math.floor(diff / 60_000)
-  if (min < 1) return "租约剩 <1m"
-  if (min < 60) return `租约剩 ${min}m`
-  return `租约剩 ${Math.floor(min / 60)}h`
+  if (min < 1) return t("time.leaseUnderMin")
+  if (min < 60) return t("time.leaseMinutes", { n: min })
+  return t("time.leaseHours", { n: Math.floor(min / 60) })
 }
 
 /** 事件 → 一句话（与后端 describeEventBrief 同口径） */
-export function describeEvent(type: string, data: Record<string, unknown>): string {
+export function describeEvent(type: string, data: Record<string, unknown>, t: Translate): string {
   switch (type) {
     case "task_created":
-      return "创建任务"
+      return t("event.task_created")
     case "task_claimed":
-      return "认领任务"
+      return t("event.task_claimed")
     case "task_progress":
-      return data.pct !== undefined
-        ? `进度 ${String(data.pct)}%${data.note ? `（${String(data.note)}）` : ""}`
-        : "更新进度"
+      // pct 缺失 = 纯文字备注（"更新进度"），三种情况拆三个键而不是在模板里做条件
+      if (data.pct === undefined) return t("event.task_progress.generic")
+      return data.note
+        ? t("event.task_progress.note", { pct: String(data.pct), note: String(data.note) })
+        : t("event.task_progress", { pct: String(data.pct) })
     case "task_note":
-      return String(data.text ?? "备注")
+      return String(data.text ?? t("event.task_note"))
     case "task_blocked":
-      return `标记阻塞：${String(data.reason ?? "")}`
+      return t("event.task_blocked", { reason: String(data.reason ?? "") })
     case "task_unblocked":
-      return "解除阻塞"
+      return t("event.task_unblocked")
     case "task_released":
-      return "被释放"
+      return t("event.task_released")
     case "task_reclaimed":
-      return data.forced === true ? "被强制回收" : "持有者失联，被自动回收"
+      return data.forced === true
+        ? t("event.task_reclaimed")
+        : t("event.task_reclaimed.auto")
     case "task_review":
-      return "提交评审"
+      return t("event.task_review")
     case "task_done":
-      return "完成"
+      return t("event.task_done")
     case "task_cancelled":
-      return "取消"
+      return t("event.task_cancelled")
     case "task_reopened":
-      return "重新打开"
+      return t("event.task_reopened")
     case "task_removed":
-      return "已删除"
+      return t("event.task_removed")
     case "task_updated":
-      return "更新元信息"
+      return t("event.task_updated")
     case "dep_added":
-      return `新增依赖 ${String(data.depends_on_id ?? "")}`
+      return t("event.dep_added", { id: String(data.depends_on_id ?? "") })
     case "dep_removed":
-      return `移除依赖 ${String(data.depends_on_id ?? "")}`
+      return t("event.dep_removed", { id: String(data.depends_on_id ?? "") })
     case "plan_created":
-      return "保存计划"
+      return t("event.plan_created")
     case "plan_superseded":
-      return "计划被新版本顶替"
+      return t("event.plan_superseded")
     case "handoff_created":
-      return data.kind === "crash" ? "系统合成交接（崩溃恢复）" : "写了交接"
+      return data.kind === "crash" ? t("event.handoff_created.crash") : t("event.handoff_created.manual")
     case "handoff_consumed":
-      return `交接被 ${String(data.by_session ?? "?")} 接手`
+      return t("event.handoff_consumed", { by: String(data.by_session ?? "?") })
     case "session_started":
-      return "会话启动"
+      return t("event.session_started")
     case "session_closed":
-      return "会话结束"
+      return t("event.session_closed")
     case "session_crashed":
-      return "会话失联"
+      return t("event.session_crashed")
     default:
+      // 未知事件类型原样透出：前端版本比服务端旧时，这里要能看出"是什么"
       return type
   }
 }

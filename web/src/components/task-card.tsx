@@ -4,6 +4,9 @@
  * 信息取舍：一张卡上只放"扫一眼就该知道"的东西——标题、优先级、进度、
  * 剩余检查项、持有者。细节（时间线、交接、计划）一律进详情抽屉。
  * 看板的价值是全局态势，不是完整档案。
+ *
+ * 语言：所有文案走 `t`。`Lane` 也会 `useI18n()` 拿状态名——它不在 Board 的
+ * 上下文里，但 Provider 在上面包着，所以照样能拿到。
  */
 
 import { useSortable } from "@dnd-kit/sortable"
@@ -30,7 +33,8 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import type { TaskItem } from "@/lib/api"
-import { PRIORITY_LABEL, STATUS_META, leaseText, relativeTime } from "@/lib/status"
+import { useI18n } from "@/lib/i18n"
+import { PRIORITY_LABEL, STATUS_META, leaseText, relativeTime, statusLabel } from "@/lib/status"
 
 export interface TaskCardProps {
   task: TaskItem
@@ -63,6 +67,7 @@ export function TaskCard({
   onAction,
   disabled,
 }: TaskCardProps) {
+  const { t } = useI18n()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { status: task.status },
@@ -70,7 +75,7 @@ export function TaskCard({
   })
 
   const meta = STATUS_META[task.status]
-  const lease = leaseText(task.lease_expires_at)
+  const lease = leaseText(task.lease_expires_at, t)
   const waiting = task.unfinished_dependencies ?? []
   const checklistLeft = task.checklist.total - task.checklist.done
 
@@ -104,7 +109,7 @@ export function TaskCard({
           type="button"
           {...listeners}
           className="text-muted-foreground/50 -ml-1 cursor-grab touch-none active:cursor-grabbing hover:text-muted-foreground"
-          aria-label="拖动以调整状态"
+          aria-label={t("card.drag.aria")}
         >
           <GripVerticalIcon data-icon="inline-start" />
         </button>
@@ -159,7 +164,7 @@ export function TaskCard({
             {checklistLeft > 0 && (
               <span className="flex items-center gap-1">
                 <ListChecksIcon />
-                还剩 {checklistLeft} 项
+                {checklistLeft === 1 ? t("card.checklistLeftOne") : t("card.checklistLeft", { n: checklistLeft })}
               </span>
             )}
           </div>
@@ -169,7 +174,7 @@ export function TaskCard({
       {/* 等依赖：告诉用户"为什么还不能做" */}
       {waiting.length > 0 && task.status === "todo" && (
         <p className="text-muted-foreground bg-muted rounded px-2 py-1 text-[11px]">
-          等 {waiting.join("、")} 完成
+          {t("card.waitingDeps", { deps: waiting.join(t("list.sep")) })}
         </p>
       )}
 
@@ -194,7 +199,7 @@ export function TaskCard({
         <span data-slot="task-id" className="font-mono">
           {task.id}
         </span>
-        {task.updated_at && <span className="ml-auto shrink-0">{relativeTime(task.updated_at)}</span>}
+        {task.updated_at && <span className="ml-auto shrink-0">{relativeTime(task.updated_at, t)}</span>}
       </div>
 
       {/* 操作菜单：写操作都收在这里（需要 reason 的走对话框） */}
@@ -205,6 +210,7 @@ export function TaskCard({
 
 /** 卡片操作菜单 */
 function TaskMenu({ task, onAction }: { task: TaskItem; onAction: (t: TaskItem, a: CardAction) => void }) {
+  const { t } = useI18n()
   const run = (action: CardAction) => () => onAction(task, action)
   const canClaim = task.status === "todo" || task.status === "backlog"
   const canProgress = task.status === "doing"
@@ -220,7 +226,7 @@ function TaskMenu({ task, onAction }: { task: TaskItem; onAction: (t: TaskItem, 
           variant="ghost"
           size="sm"
           className="absolute top-1.5 right-1 size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-          aria-label="卡片操作"
+          aria-label={t("card.menu.aria")}
         >
           <MoreHorizontalIcon />
         </Button>
@@ -230,42 +236,42 @@ function TaskMenu({ task, onAction }: { task: TaskItem; onAction: (t: TaskItem, 
         <DropdownMenuGroup>
           <DropdownMenuItem disabled={!canClaim} onSelect={run("claim")}>
             <HandIcon data-icon="inline-start" />
-            认领任务
+            {t("card.action.claim")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={!canProgress} onSelect={run("progress")}>
             <ListChecksIcon data-icon="inline-start" />
-            更新进度
+            {t("card.action.progress")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={!canReview} onSelect={run("review")}>
             <CircleCheckIcon data-icon="inline-start" />
-            提交评审
+            {t("card.action.review")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={!canDone} onSelect={run("done")}>
             <CircleCheckIcon data-icon="inline-start" />
-            标记完成
+            {t("card.action.done")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={run("handoff")}>
             <TriangleAlertIcon data-icon="inline-start" />
-            写交接
+            {t("card.action.handoff")}
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuGroup>
           <DropdownMenuItem disabled={!canBlock} onSelect={run("block")}>
             <BanIcon data-icon="inline-start" />
-            标记阻塞
+            {t("card.action.block")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={task.status !== "blocked"} onSelect={run("unblock")}>
-            解除阻塞
+            {t("card.action.unblock")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={task.status !== "doing"} onSelect={run("release")}>
-            释放（保留进度）
+            {t("card.action.release")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={!isTerminal} onSelect={run("reopen")}>
-            重新打开
+            {t("card.action.reopen")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={isTerminal} onSelect={run("cancel")}>
             <BanIcon data-icon="inline-start" />
-            取消任务
+            {t("card.action.cancel")}
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
@@ -285,6 +291,7 @@ export function Lane({
   children: React.ReactNode
   dropHint?: string | null
 }) {
+  const { t } = useI18n()
   const meta = STATUS_META[status]
   return (
     <section
@@ -294,7 +301,7 @@ export function Lane({
     >
       <header className="flex items-center gap-2 px-1">
         <span className="lane-accent size-2.5 shrink-0 rounded-full" aria-hidden />
-        <h2 className="text-sm font-semibold">{meta.label}</h2>
+        <h2 className="text-sm font-semibold">{statusLabel(status, t)}</h2>
         <Badge variant="secondary" className="ml-auto font-mono text-[10px]">
           {tasks.length}
         </Badge>
@@ -307,7 +314,7 @@ export function Lane({
       <div className="bg-muted/25 flex min-h-24 flex-1 flex-col gap-2 rounded-lg p-1.5">
         {children}
         {tasks.length === 0 && (
-          <p className="text-muted-foreground/70 px-2 py-3 text-center text-[11px]">空</p>
+          <p className="text-muted-foreground/70 px-2 py-3 text-center text-[11px]">{t("common.empty")}</p>
         )}
       </div>
     </section>
@@ -316,11 +323,12 @@ export function Lane({
 
 /** 泳道内的占位提示（tooltip 说明为什么不能拖） */
 export function DropHint({ reason }: { reason: string }) {
+  const { t } = useI18n()
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <div className="text-muted-foreground/60 border-border text-center text-[11px] border border-dashed rounded-md py-1.5">
-          松手后会提示原因
+          {t("card.dropHint")}
         </div>
       </TooltipTrigger>
       <TooltipContent>{reason}</TooltipContent>

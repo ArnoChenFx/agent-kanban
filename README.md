@@ -156,6 +156,7 @@ You get the previous session's notes, the ordered list of every change made to t
 - **Task drawer** — timeline, handoffs, plan version history
 - **Live updates** via SSE, with cursor resume after a reconnect
 - **Multi-project switcher**, light/dark mode
+- **Chinese / English UI** — one click in the header, on both the board and the admin page (`/admin`), sharing a single preference; first visit follows the browser language
 - **Shareable links** — `?key=…&project=…`; parameters are stripped from the URL after reading
 - **Admin page** at `/admin` — manage projects, issue and revoke tokens
 

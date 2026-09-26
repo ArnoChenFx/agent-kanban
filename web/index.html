@@ -1,11 +1,14 @@
 <!doctype html>
+<!-- lang 写默认的简体中文：main.tsx 会在 render 前按实际 locale 改写，
+     这里的值只是给"JS 还没跑"的那一瞬间留个底。 -->
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>agent-kanban 看板</title>
+    <!-- 标题不带文案：本地化后的标题由 primeDocumentLocale() 在首帧前写入 -->
+    <title>agent-kanban</title>
   </head>
   <body>
     <div id="root"></div>

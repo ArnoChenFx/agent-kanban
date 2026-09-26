@@ -105,6 +105,52 @@ for (const file of FILES) {
     check("download-artifact 过滤掉 dockerbuild 缓存", !/dockerbuild/.test(dl));
     check("产物数量按 matrix 校验", /needs\.verify\.outputs\.platforms/.test(codeLines));
     check("产物数量不符则报错退出", /::error::expected \$\{EXPECTED\} platform binaries/.test(codeLines));
+    check("校验和数量单独校验", /::error::expected \$\{EXPECTED\} \.sha256 files/.test(codeLines));
+
+    // ---- files: 的 glob 不得互相重叠 ----
+    // 踩过的坑：`files:` 同时写了 `release-assets/kanban-*` 和 `release-assets/*.sha256`。
+    // glob 的 `*` 不跨越 `/`，但**可以匹配点号**，所以第一行已经把 4 个校验和文件收进来了，
+    // 第二行让它们各被上传两次。action 把所有模式的匹配结果直接 concat（util.ts 的
+    // `paths()` 不去重）后用 Promise.all 并发上传，同名资产并发 POST 是竞态：GitHub
+    // 拒掉其中一个（404/422），action 只能靠重新列举资产碰运气找回，找不到就整个 step
+    // 挂掉（`Error: Not Found - .../update-a-release-asset`，v0.1.1 发布失败；
+    // v0.1.0 用同一份配置侥幸通过了）。日志里只有被传两遍的 `.sha256` 报错，
+    // 8 个唯一文件全部上传成功，这个特征就是重复上传的指纹。
+    // 这里反过来做：用矩阵里的 asset 名展开 `files:` 的每个模式，要求每个资产
+    // （含 `.sha256`）**恰好**被一个模式命中。
+    const filesIdx = text.indexOf("\n          files: |");
+    const filesEnd = filesIdx === -1 ? -1 : text.indexOf("fail_on_unmatched_files", filesIdx);
+    // 只取 glob 本身：块里还跟着 `overwrite_files:` / `fail_on_unmatched_files:` 这类
+    // 同缩进的键值行，它们不是路径，包含进来会让每个模式的命中数都算错。
+    const filePatterns =
+      filesIdx === -1 || filesEnd === -1
+        ? []
+        : text
+            .slice(filesIdx, filesEnd)
+            .split("\n")
+            .map((l) => l.trim())
+            .filter((l) => l !== "" && !l.startsWith("#") && !/^[a-z_]+:/.test(l));
+    check("release 的 files: 块可解析", filePatterns.length > 0, filePatterns.join(" | "));
+
+    // 极简 glob：只支持 `*`（不跨 `/`），够覆盖 files: 里的写法
+    const globRe = (pattern: string) =>
+      new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`);
+    // 注意用 [ \t] 而不是 \s：带 m 标志时 \s 会吃掉换行，跨行误匹配
+    const assetNames = [...text.matchAll(/^[ \t]*asset:[ \t]*(\S+)[ \t]*$/gm)].map((m) => m[1]!);
+    // 模式带目录前缀，比对时也要带上，否则 `release-assets/kanban-*` 一个都匹配不上
+    const expectedAssets = assetNames.flatMap((a) => [`release-assets/${a}`, `release-assets/${a}.sha256`]);
+    check("矩阵里取到 4 个 asset 名", assetNames.length === 4, assetNames.join(", "));
+    const badMatches = expectedAssets.filter(
+      (name) => filePatterns.filter((p) => globRe(p).test(name)).length !== 1,
+    );
+    check(
+      "每个平台资产（含 .sha256）恰好被一个 glob 命中",
+      expectedAssets.length > 0 && badMatches.length === 0,
+      badMatches.length ? `命中数不为 1：${badMatches.join(", ")}` : `${expectedAssets.length} 个资产`,
+    );
+    check("release-notes.md 在 files: 里", filePatterns.includes("release-notes.md"));
+    // 重跑失败发布是常规修复手段，overwrite_files 决定重跑能否收敛（默认 true，显式钉住）
+    check("显式 overwrite_files: true", /overwrite_files:\s*true/.test(text));
 
     // ---- 自引用计数陷阱 ----
     // 踩过的坑：在 release 里 `grep -c 'target: bun-' .github/workflows/release.yml`，

@@ -4,6 +4,8 @@
  * 为什么要对话框而不是直接执行：状态机里 blocked / cancelled / reopen 都要求
  * `--reason`，`done` 在非 review 来源要 `--force`。让用户在 UI 上补齐这些信息，
  * 而不是发出一个注定失败、还要再报错的请求。
+ *
+ * 语言：每个对话框自己 `useI18n()`，不靠 props 传文案——文案列在一处好过散在两边。
  */
 
 import { useEffect, useState } from "react"
@@ -31,6 +33,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useI18n } from "@/lib/i18n"
 import type { TaskItem } from "@/lib/api"
 
 /** 需要一个原因的操作 */
@@ -53,6 +56,7 @@ export function ReasonDialog({
 }) {
   const [reason, setReason] = useState("")
   const [pending, setPending] = useState(false)
+  const { t } = useI18n()
 
   useEffect(() => {
     if (open) setReason("")
@@ -78,21 +82,21 @@ export function ReasonDialog({
         </DialogHeader>
         <FieldGroup>
           <Field data-invalid={!reason.trim() && pending ? true : undefined}>
-            <FieldLabel htmlFor="reason">原因</FieldLabel>
+            <FieldLabel htmlFor="reason">{t("reason.label")}</FieldLabel>
             <Textarea
               id="reason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder={placeholder ?? "发生了什么？下一个 agent 需要知道什么？"}
+              placeholder={placeholder ?? t("reason.placeholder")}
               rows={3}
               aria-invalid={!reason.trim() && pending}
             />
-            <FieldDescription>必填。会写进事件时间线，接手的人靠它理解现场。</FieldDescription>
+            <FieldDescription>{t("reason.desc")}</FieldDescription>
           </Field>
         </FieldGroup>
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="outline">取消</Button>
+            <Button variant="outline">{t("common.cancel")}</Button>
           </DialogClose>
           <Button disabled={!reason.trim() || pending} onClick={submit}>
             {confirmLabel}
@@ -119,6 +123,7 @@ export function ProgressDialog({
   const [note, setNote] = useState("")
   const [checks, setChecks] = useState<string[]>([])
   const [pending, setPending] = useState(false)
+  const { t } = useI18n()
 
   useEffect(() => {
     if (open && task) {
@@ -149,14 +154,14 @@ export function ProgressDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>更新进度</DialogTitle>
+          <DialogTitle>{t("progress.title")}</DialogTitle>
           <DialogDescription>
             {task.id} · {task.title}
           </DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <Field>
-            <FieldLabel htmlFor="pct">进度：{pct}%</FieldLabel>
+            <FieldLabel htmlFor="pct">{t("progress.pct", { pct })}</FieldLabel>
             <input
               id="pct"
               type="range"
@@ -172,7 +177,7 @@ export function ProgressDialog({
 
           {task.checklist.total > task.checklist.done && (
             <Field>
-              <FieldLabel>勾选已完成的检查项</FieldLabel>
+              <FieldLabel>{t("progress.checklist")}</FieldLabel>
               <div className="flex flex-col gap-1.5">
                 {Array.from({ length: task.checklist.total - task.checklist.done }).map((_, i) => {
                   const idx = task.checklist.done + i
@@ -187,32 +192,32 @@ export function ProgressDialog({
                           )
                         }
                       />
-                      第 {idx + 1} 项
+                      {t("progress.item", { n: idx + 1 })}
                     </Label>
                   )
                 })}
               </div>
-              <FieldDescription>按顺序勾选（后端按文字匹配，这里用序号代替）。</FieldDescription>
+              <FieldDescription>{t("progress.checklistDesc")}</FieldDescription>
             </Field>
           )}
 
           <Field>
-            <FieldLabel htmlFor="note">备注</FieldLabel>
+            <FieldLabel htmlFor="note">{t("progress.note")}</FieldLabel>
             <Textarea
               id="note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="这次推进做了什么？"
+              placeholder={t("progress.notePlaceholder")}
               rows={2}
             />
           </Field>
         </FieldGroup>
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="outline">取消</Button>
+            <Button variant="outline">{t("common.cancel")}</Button>
           </DialogClose>
           <Button disabled={pending} onClick={submit}>
-            保存
+            {t("common.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -242,6 +247,7 @@ export function HandoffDialog({
   const [blockers, setBlockers] = useState("")
   const [questions, setQuestions] = useState("")
   const [pending, setPending] = useState(false)
+  const { t } = useI18n()
 
   useEffect(() => {
     if (open) {
@@ -280,61 +286,61 @@ export function HandoffDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>写交接</DialogTitle>
+          <DialogTitle>{t("handoffDialog.title")}</DialogTitle>
           <DialogDescription>
             {task.id} · {task.title}
           </DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <FieldSet>
-            <FieldLegend>交接四要素</FieldLegend>
+            <FieldLegend>{t("handoffDialog.legend")}</FieldLegend>
             <Field data-invalid={pending && !summary.trim() ? true : undefined}>
-              <FieldLabel htmlFor="ho-summary">做了什么（必填）</FieldLabel>
+              <FieldLabel htmlFor="ho-summary">{t("handoffDialog.summary")}</FieldLabel>
               <Textarea
                 id="ho-summary"
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
-                placeholder="完成 WAL 事务层，store.ts 20 个测试全绿"
+                placeholder={t("handoffDialog.summaryPlaceholder")}
                 rows={2}
                 aria-invalid={pending && !summary.trim()}
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="ho-next">建议下一步</FieldLabel>
+              <FieldLabel htmlFor="ho-next">{t("handoffDialog.next")}</FieldLabel>
               <Input
                 id="ho-next"
                 value={next}
                 onChange={(e) => setNext(e.target.value)}
-                placeholder="实现 handoff 崩溃自动合成"
+                placeholder={t("handoffDialog.nextPlaceholder")}
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="ho-blockers">已知卡点</FieldLabel>
+              <FieldLabel htmlFor="ho-blockers">{t("handoffDialog.blockers")}</FieldLabel>
               <Input
                 id="ho-blockers"
                 value={blockers}
                 onChange={(e) => setBlockers(e.target.value)}
-                placeholder="依赖没装，WAL 文件归属待定"
+                placeholder={t("handoffDialog.blockersPlaceholder")}
               />
-              <FieldDescription>多个用逗号分隔。</FieldDescription>
+              <FieldDescription>{t("handoffDialog.blockersDesc")}</FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor="ho-open">留给人的问题</FieldLabel>
+              <FieldLabel htmlFor="ho-open">{t("handoffDialog.open")}</FieldLabel>
               <Input
                 id="ho-open"
                 value={questions}
                 onChange={(e) => setQuestions(e.target.value)}
-                placeholder="租约时长要不要按任务类型区分？"
+                placeholder={t("handoffDialog.openPlaceholder")}
               />
             </Field>
           </FieldSet>
         </FieldGroup>
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="outline">取消</Button>
+            <Button variant="outline">{t("common.cancel")}</Button>
           </DialogClose>
           <Button disabled={!summary.trim() || pending} onClick={submit}>
-            记录交接
+            {t("handoffDialog.submit")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -366,6 +372,7 @@ export function NewTaskDialog({
   const [checklist, setChecklist] = useState("")
   const [blockedBy, setBlockedBy] = useState("")
   const [pending, setPending] = useState(false)
+  const { t } = useI18n()
 
   useEffect(() => {
     if (open) {
@@ -406,32 +413,32 @@ export function NewTaskDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>新建任务</DialogTitle>
-          <DialogDescription>标题说清"要什么"，检查项留给接手的人说"怎么算做完"。</DialogDescription>
+          <DialogTitle>{t("newTask.title")}</DialogTitle>
+          <DialogDescription>{t("newTask.desc")}</DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <Field data-invalid={pending && !title.trim() ? true : undefined}>
-            <FieldLabel htmlFor="nt-title">标题</FieldLabel>
+            <FieldLabel htmlFor="nt-title">{t("newTask.label.title")}</FieldLabel>
             <Input
               id="nt-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="实现崩溃自动合成"
+              placeholder={t("newTask.placeholder.title")}
               aria-invalid={pending && !title.trim()}
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="nt-body">描述</FieldLabel>
+            <FieldLabel htmlFor="nt-body">{t("newTask.label.body")}</FieldLabel>
             <Textarea
               id="nt-body"
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={2}
-              placeholder="背景、约束、验收标准"
+              placeholder={t("newTask.placeholder.body")}
             />
           </Field>
           <Field>
-            <FieldLabel>优先级</FieldLabel>
+            <FieldLabel>{t("newTask.label.priority")}</FieldLabel>
             <Select value={String(priority)} onValueChange={(v) => setPriority(Number(v))}>
               <SelectTrigger>
                 <SelectValue />
@@ -440,7 +447,8 @@ export function NewTaskDialog({
                 <SelectGroup>
                   {[0, 1, 2, 3, 4].map((p) => (
                     <SelectItem key={p} value={String(p)}>
-                      P{p} {p === 0 ? "（最高）" : p === 4 ? "（最低）" : ""}
+                      {/* 括号内的补充说明跟着语言走：中文用全角括号，英文用半角 + 空格 */}
+                      {`P${p}${p === 0 ? t("newTask.priority.highest") : p === 4 ? t("newTask.priority.lowest") : ""}`}
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -448,7 +456,7 @@ export function NewTaskDialog({
             </Select>
           </Field>
           <Field>
-            <FieldLabel htmlFor="nt-labels">标签</FieldLabel>
+            <FieldLabel htmlFor="nt-labels">{t("newTask.label.labels")}</FieldLabel>
             <Input
               id="nt-labels"
               value={labels}
@@ -457,17 +465,17 @@ export function NewTaskDialog({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="nt-check">检查项</FieldLabel>
+            <FieldLabel htmlFor="nt-check">{t("newTask.label.checklist")}</FieldLabel>
             <Input
               id="nt-check"
               value={checklist}
               onChange={(e) => setChecklist(e.target.value)}
-              placeholder="补齐事件 payload,实现 rebuild"
+              placeholder={t("newTask.placeholder.checklist")}
             />
-            <FieldDescription>逗号分隔。这些会成为崩溃恢复时的"剩余工作"。</FieldDescription>
+            <FieldDescription>{t("newTask.checklist.desc")}</FieldDescription>
           </Field>
           <Field>
-            <FieldLabel htmlFor="nt-deps">依赖的任务号</FieldLabel>
+            <FieldLabel htmlFor="nt-deps">{t("newTask.label.deps")}</FieldLabel>
             <Input
               id="nt-deps"
               value={blockedBy}
@@ -478,10 +486,10 @@ export function NewTaskDialog({
         </FieldGroup>
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="outline">取消</Button>
+            <Button variant="outline">{t("common.cancel")}</Button>
           </DialogClose>
           <Button disabled={!title.trim() || pending} onClick={submit}>
-            创建
+            {t("common.create")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -501,30 +509,31 @@ export function ConflictDialog({
   holder: { session: string; progress?: number; lastSeen?: string } | null
   onForce?: () => Promise<void> | void
 }) {
+  const { t } = useI18n()
   if (!holder) return null
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            这张卡有人正在做
+            {t("conflict.title")}
           </DialogTitle>
           <DialogDescription>
-            持有者 <span className="font-mono">{holder.session}</span>
-            {holder.progress !== undefined && ` · 进度 ${holder.progress}%`}
+            {t("conflict.holder")} <span className="font-mono">{holder.session}</span>
+            {holder.progress !== undefined && ` · ${t("conflict.progress", { pct: holder.progress })}`}
             {holder.lastSeen && ` · ${holder.lastSeen}`}
           </DialogDescription>
         </DialogHeader>
         <div className="text-muted-foreground text-sm">
-          <p>强行抢过来会让两个 agent 同时改同一张卡。除非确认对方已经失联，否则换个任务做更稳妥。</p>
+          <p>{t("conflict.body")}</p>
         </div>
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="outline">算了，换一张</Button>
+            <Button variant="outline">{t("conflict.back")}</Button>
           </DialogClose>
           {onForce && (
             <Button variant="destructive" onClick={onForce}>
-              确认强行接管
+              {t("conflict.force")}
             </Button>
           )}
         </DialogFooter>

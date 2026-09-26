@@ -7,6 +7,10 @@
 // 点开卡片时抛 `Cannot read properties of undefined (reading 'plan_id')` ——
 // 那一层形状错误只有在浏览器里点一次才会暴露。
 //
+// 界面语言：浏览器用 --lang=zh-CN 启动，**固定中文**。看板会根据 navigator.language
+// 自动选语言（这是产品行为），所以不钉住它的话，英文系统上跑本脚本连“点开卡片”
+// 那一步都过不了（断言写的是中文文案）。双语本身在末尾单独有一节断言。
+//
 // 找不到 Chrome/Edge 时**跳过并返回 0**（CI 镜像未必带浏览器，不能因此卡门禁）。
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -97,6 +101,10 @@ try {
       `--user-data-dir=${join(dir, "chrome-profile")}`,
       "--no-first-run",
       "--disable-gpu",
+      // 钉住界面语言：看板读 navigator.language 做自动检测，
+      // 不固定的话下面的中文断言在英文系统上必然失败
+      "--lang=zh-CN",
+      "--accept-lang=zh-CN",
       `--remote-debugging-port=${CDP_PORT}`,
       "about:blank",
     ],
@@ -324,6 +332,102 @@ try {
     check("菜单宽度不是被触发器压窄的", menu.width >= 150, `${menu.width}px`);
     check("菜单项无折行", menu.wrapped.length === 0, menu.wrapped.join("、"));
   }
+
+  // ---- 双语：看板 + 管理页 ----
+  // 这节与上面用中文断言不同：它验证的是**切换本身**，所以两种语言下都跑。
+  console.log("\n=== 界面语言：自动检测 ===");
+  const zhLanes = await evaluate<string[]>(`[...document.querySelectorAll('section h2')].map(e => e.textContent.trim())`);
+  check(
+    "无 --lang=zh-CN 时看板默认中文",
+    zhLanes.length > 0 && zhLanes.every((s) => !/[A-Za-z]{3,}/.test(s)),
+    zhLanes.join(" / "),
+  );
+  check("html lang 跟随 locale", (await evaluate<string>(`document.documentElement.lang`)) === "zh-CN");
+
+  console.log("\n=== 界面语言：看板切换到英文 ===");
+  const toggled = await evaluate<boolean>(`(() => {
+    const b = document.querySelector('button[aria-label="切换到 English"]');
+    if (!b) return false;
+    b.click();
+    return true;
+  })()`);
+  check("语言切换按钮存在（aria-label 说出目标语言）", toggled);
+  await sleep(900);
+  const enLanes = await evaluate<string[]>(`[...document.querySelectorAll('section h2')].map(e => e.textContent.trim())`);
+  check("泳道名变成英文", enLanes.includes("To Do") && enLanes.includes("In Progress"), enLanes.join(" / "));
+  check("html lang 变成 en", (await evaluate<string>(`document.documentElement.lang`)) === "en");
+  check(
+    "document.title 本地化",
+    (await evaluate<string>(`document.title`)) === "agent-kanban Board",
+    await evaluate<string>(`document.title`),
+  );
+  check("选择写入 localStorage", (await evaluate<string>(`localStorage.getItem('kanban.locale')`)) === "en");
+  check(
+    "卡片菜单也变成英文",
+    (await evaluate<string>(`[...document.querySelectorAll('[aria-label]')].map(e => e.getAttribute('aria-label')).join(',')`)).includes(
+      "Card actions",
+    ),
+  );
+  // 词典漏键会在控制台打 warn（开发构建）；运行时不至于，但至少不能有运行时异常
+  check("切语言后无未捕获异常", exceptions.length === 0, exceptions[0]?.split("\n")[0] ?? "");
+  check("切语言后无控制台 error", consoleErrors.length === 0, [...new Set(consoleErrors)][0]?.slice(0, 120) ?? "");
+
+  console.log("\n=== 界面语言：管理页（/admin）===");
+  await send("Page.navigate", { url: `${BASE}/admin` });
+  await sleep(1800);
+  // /admin 不用 sessionStorage 里的 token（用完即清），所以登录要真的走一遍表单
+  const adminLoggedIn = await evaluate<boolean>(`(() => {
+    const input = document.getElementById('tokenInput');
+    const btn = document.getElementById('loginBtn');
+    if (!input || !btn) return false;
+    input.value = ${JSON.stringify(token)};
+    btn.click();
+    return true;
+  })()`);
+  check("管理页登录表单可提交", adminLoggedIn);
+  await sleep(1800);
+  check("管理页进入主体（登录成功）", await evaluate<boolean>(`!document.getElementById('app').hidden`));
+  const projTable = `document.querySelector('#projectRows')?.closest('table')?.innerText ?? ''`;
+  const createdCell = `document.querySelector('#projectRows td.muted')?.textContent ?? ''`;
+  // 看板上刚切到英文，而两个页面共用 localStorage["kanban.locale"]，
+  // 所以管理页跟着变英文——这是有意的（同一个 origin，不该有两套语言状态）
+  const adminEn0 = await evaluate<string>(`document.getElementById('serverInfo').textContent`);
+  check("管理页继承看板的语言选择（共用 localStorage）", /project\(s\)/.test(adminEn0), adminEn0);
+  check("管理页表头跟着变英文", (await evaluate<string>(projTable)).includes("Created"));
+  check(
+    "管理页英文日期用逗号分隔（toLocaleString(\"en\")）",
+    (await evaluate<string>(createdCell)).includes(","),
+    await evaluate<string>(createdCell),
+  );
+  check(
+    "管理页 placeholder 也翻译了",
+    (await evaluate<string>(`document.getElementById('newProjectKey').placeholder`)) === "project key (e.g. demo-app)",
+    await evaluate<string>(`document.getElementById('newProjectKey').placeholder`),
+  );
+
+  await evaluate<boolean>(`(() => {
+    const b = document.querySelector('#app [data-locale-btn]');
+    if (!b) return false;
+    b.click();
+    return true;
+  })()`);
+  await sleep(900);
+  const adminZh = await evaluate<string>(`document.getElementById('serverInfo').textContent`);
+  check("管理页切到中文", /个 project/.test(adminZh), adminZh);
+  check("管理页表头跟着变中文", (await evaluate<string>(projTable)).includes("创建于"));
+  check(
+    "管理页中文日期不带逗号（toLocaleString(\"zh-CN\")）",
+    !(await evaluate<string>(createdCell)).includes(","),
+    await evaluate<string>(createdCell),
+  );
+  check(
+    "管理页 placeholder 也切回中文",
+    (await evaluate<string>(`document.getElementById('newProjectKey').placeholder`)).includes("project key"),
+    await evaluate<string>(`document.getElementById('newProjectKey').placeholder`),
+  );
+  check("html lang 回到 zh-CN", (await evaluate<string>(`document.documentElement.lang`)) === "zh-CN");
+  check("管理页无未捕获异常", exceptions.length === 0, exceptions[0]?.split("\n")[0] ?? "");
+  check("管理页无控制台 error", consoleErrors.length === 0, [...new Set(consoleErrors)][0]?.slice(0, 120) ?? "");
 } catch (e) {
   console.error(`✗ Web UI 回归异常：${String(e).split("\n")[0]}`);
   failures++;

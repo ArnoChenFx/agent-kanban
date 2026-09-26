@@ -11,6 +11,7 @@
  */
 
 import type { KanbanEvent } from "./types"
+import { tActive } from "./i18n"
 
 const TOKEN_KEY = "kanban.token"
 const PROJECT_KEY = "kanban.project"
@@ -106,7 +107,7 @@ function authHeaders(token: string, sessionId?: string | null): HeadersInit {
 function throwIfError<T>(env: Envelope<T>): T {
   if (env.ok) return env.data as T
   const err = env.error
-  throw new ApiError(err?.code ?? 6, err?.name ?? "INTERNAL", err?.message ?? "未知错误", err?.details ?? {})
+  throw new ApiError(err?.code ?? 6, err?.name ?? "INTERNAL", err?.message ?? tActive("api.error.unknown"), err?.details ?? {})
 }
 
 /** 执行一个 Op（写操作统一入口） */
@@ -124,7 +125,7 @@ export async function executeOp<T>(
       body: JSON.stringify({ project, op }),
     })
   } catch {
-    throw new ApiError(4, "BUSY", "连不上看板服务（网络错误）", { hint: "确认 kanban serve 是否在运行" })
+    throw new ApiError(4, "BUSY", tActive("api.error.network"), { hint: tActive("api.error.networkHint") })
   }
   const env = (await res.json()) as Envelope<T>
   const data = throwIfError(env)
@@ -181,7 +182,7 @@ export async function fetchTaskDetail(
   const task = data as unknown as Record<string, unknown>
   if (!task || typeof task !== "object" || typeof task.id !== "string") {
     // 形状不符时给出可读报错，而不是让它顺着下面的 `task.plan_id` 崩成 TypeError
-    throw new ApiError(6, "INTERNAL", "服务端返回的任务详情形状异常", {
+    throw new ApiError(6, "INTERNAL", tActive("api.error.badShape"), {
       task_id: taskId,
       keys: Object.keys((task ?? {}) as object).slice(0, 20).join(","),
     })

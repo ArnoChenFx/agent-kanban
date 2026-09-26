@@ -123,25 +123,32 @@ const wait = (ms: number) => sleep(ms);
 /**
  * 截图辅助。
  *
- * 两个关键约束（都是踩过的坑）：
+ * 三个关键约束（都是踩过的坑）：
  * 1. **必须用 ?key= 直连看板**，不能用“先写 localStorage 的种子页再跳转”的方案：
  *    headless Chrome 里 localStorage 在跨页面导航后读不回来（写成功、读为 null）。
  *    同一页面内写+读则完全正常，所以分享链接方案反而更可靠。
  * 2. **必须带 static=1**：SSE 长连接会让 Chrome 的 virtual-time 永远等不到
  *    “网络空闲”，导致 --screenshot 永不触发。
+ * 3. **每种语言必须用独立的 user-data-dir**：界面语言会写进 localStorage
+ *    （kanban.locale）。共用 profile 的话，上一张截图的选择会泄进下一张，
+ *    “截英文”结果拍出中文。用 --lang/en-US 传 navigator.language 来触发
+ *    自动检测，不需要真的去点界面上的切换按钮。
  */
-async function shot(name: string, query: string, budget = 6000) {
+async function shot(name: string, query: string, lang = "zh-CN", budget = 6000) {
+  const shotProfile = `${profile}-${name}`;
   await new Promise<void>((resolve) => {
     const p = spawn(
       browser!,
       [
         "--headless=new",
-        `--user-data-dir=${profile}`,
+        `--user-data-dir=${shotProfile}`,
         "--no-first-run",
         "--disable-gpu",
         "--hide-scrollbars",
         "--force-device-scale-factor=1",
         "--window-size=1680,1050",
+        `--lang=${lang}`,
+        `--accept-lang=${lang}`,
         `--screenshot=${join(outDir, `${name}.png`)}`,
         `--virtual-time-budget=${budget}`,
         `${BASE}/?${query}`,
@@ -154,6 +161,8 @@ async function shot(name: string, query: string, budget = 6000) {
       clearTimeout(killer);
       resolve();
     });
+    // profile 目录会随截图增长，用完就删
+    p.on("close", () => rmSync(shotProfile, { recursive: true, force: true }));
   });
   console.log(`✓ ${name}.png`);
 }
@@ -176,13 +185,19 @@ if (!probeJson.ok) {
 console.log(`凭据自检通过，可见 project：${probeJson.data?.map((p) => p.key).join(", ")}`);
 
 // 登录页：先截一张（无凭据）
-await shot("01-login", "static=1", 3000);
+await shot("01-login", "static=1", "zh-CN", 3000);
 await sleep(400);
 
 // 亮色看板 / 暗色看板
 await shot("02-board-light", creds);
 await sleep(400);
 await shot("03-board-dark", `${creds}&theme=dark`);
+
+// 英文界面：只靠 --lang=en-US 走 navigator.language 自动检测
+await sleep(400);
+await shot("08-login-en", "static=1", "en-US", 3000);
+await sleep(400);
+await shot("09-board-light-en", creds, "en-US");
 
 server.kill();
 await sleep(200);

@@ -55,6 +55,27 @@ docs/note/            实施记录与踩坑笔记
 
 **注意：** `src/commands/context.ts` 是连接/会话上下文辅助模块；`src/commands/recovery.ts` 才是实现 `kanban context` 的命令文件。两者无关，命名容易误导。
 
+### 前端文案约定（i18n）
+
+看板 `web/` 与管理页 `/admin` 都支持中英双语，**共用同一套约定**与同一个
+`localStorage` 键 `kanban.locale`（同 origin 不该有两套语言状态）。
+
+`web/src/lib/i18n.tsx` 是看板侧的**唯一**文案入口，三条硬规则：
+
+1. **组件里不准写中文字面量。** 界面文案一律 `const { t } = useI18n()` 后 `t("board.newTask")`；需要传给 `web/src/lib/status.ts` 这类纯函数时，把 `t` 本身传下去（`canMove(from, to, t)`、`relativeTime(ts, t)`）。
+2. **`zh` 是键的唯一来源**，`en` 被声明为 `Record<MessageKey, string>`。少翻一条就是 `tsc` 报错，而不是上线后英文界面里某个按钮突然变成一串 key。**别把它改成 `satisfies`——那不是穷尽检查。**
+3. **代码注释用中文，界面文案用词典。** `web/src/**/*.tsx` 里剩下的中文字符只应该出现在注释中——`rg '[\x{4e00}-\x{9fff}]' web/src` 出现新的一行，就是漏翻。
+
+`web/src/lib/status.ts` 不引 React，只接收一个绑定好 locale 的 `t`，所以它依然可以脱离界面单测。`web/src/lib/api.ts` 同样是纯请求层，用 `tActive()`（`i18n.tsx` 里的模块级翻译函数）翻译自己的错误文案。
+
+管理页 `src/server/admin-page.ts` 是模板字符串，没有类型层的穷尽检查：静态文案用 `data-i18n` / `data-i18n-ph` 标记后统一刷，动态文案走内联 `t()`。
+
+界面语言由后端下发的**数据**（任务标题、交接正文、`next_actions`）不翻译——那是内容，不是 chrome。唯一例外是会话心跳：后端 `sessionToJson` 同时给了 `last_seen_at`（毫秒时间戳），前端用它自己格式化，不直接用后端那个中文串 `fresh`。
+
+新增语言：看板往 `LOCALES` 加一项、给 `HTML_LANG` / `LOCALE_NAME` 补值、写一份同键的词典（类型会告诉你还差哪些键）；管理页补一份 `DICT.<lang>`。
+
+> ⚠ 改 `src/server/admin-page.ts` 里的内联 JS 时，反斜杠与反引号要当作"多了一层转义"来审：模板字符串会先吃掉一层（`\w` → `w`，正则会静默失效；反引号会直接终止模板字符串）。插值用的是 `split`/`join` 而不是正则，就是为了避开这个坑。
+
 ## 数据模型
 
 **事件是事实来源。** 每次变更都往 `events` 追加一条；`tasks`、`plans`、`handoffs`、`task_deps` 是投影。如果你给投影加了字段，就必须同时在对应事件里发出足够的 payload，否则 `rebuild` 会报漂移。

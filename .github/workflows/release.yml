@@ -335,7 +335,18 @@ jobs:
             ls -1 release-assets/ || true
             exit 1
           fi
-          echo "collected ${COUNT}/${EXPECTED} platform binaries"
+          # A binary nobody can verify is as broken as a missing download, and the
+          # checksum files travel in the same artifacts as the binaries, so they
+          # disappear together. Count them separately to fail here rather than
+          # publish a Release that offers unverifiable files.
+          SUMS=$(ls -1 release-assets/*.sha256 2>/dev/null | wc -l || true)
+          SUMS="${SUMS:-0}"
+          if [ "$SUMS" -ne "$EXPECTED" ]; then
+            echo "::error::expected ${EXPECTED} .sha256 files, found ${SUMS}:"
+            ls -1 release-assets/ || true
+            exit 1
+          fi
+          echo "collected ${COUNT}/${EXPECTED} platform binaries + ${SUMS} checksums"
 
       # Release notes are user-facing product content, so they follow the repository
       # default (English) rather than the workflow's English-only rule for machinery.
@@ -407,8 +418,28 @@ jobs:
           body_path: release-notes.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          # ⚠ **One glob, never two overlapping ones.** A second
+          #   `release-assets/*.sha256` line does NOT "add the checksums": glob `*`
+          #   spans any character except `/`, and a dot is just a character, so
+          #   `kanban-*` already matches all four `*.sha256` files. The extra line
+          #   makes the action upload each of them twice.
+          #   The action concatenates every pattern's matches (no dedup) and uploads
+          #   them all with Promise.all, so the two POSTs for one asset name race
+          #   each other. GitHub rejects the loser with 404/422, and the action can
+          #   only recover it by re-listing the release assets; when that lookup
+          #   misses, the whole step dies with
+          #   "Error: Not Found - .../update-a-release-asset" after most assets are
+          #   already uploaded. Observed on v0.1.1 — v0.1.0 shipped from the exact
+          #   same config only because the race happened to resolve.
+          #   `bun run verify:workflows` asserts that every expected asset is matched
+          #   by exactly one pattern, so this cannot come back unnoticed.
           files: |
             release-assets/kanban-*
-            release-assets/*.sha256
             release-notes.md
+          # Re-running a failed release is the normal repair path, and a failed run
+          # always leaves assets behind (the action publishes the release only after
+          # every upload lands). Overwriting is what makes a re-run converge instead
+          # of dying on "already_exists". This is the action's default, pinned here
+          # because the repair path depends on it.
+          overwrite_files: true
           fail_on_unmatched_files: true

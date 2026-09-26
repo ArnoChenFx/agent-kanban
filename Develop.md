@@ -55,6 +55,20 @@ That is what makes local and remote mode behaviourally identical. It is a struct
 
 **Watch out:** `src/commands/context.ts` is the connection/session context helper. `src/commands/recovery.ts` is the command that implements `kanban context`. They are unrelated and the names are misleading.
 
+### Frontend copy (i18n)
+
+`web/src/lib/i18n.tsx` is the **only** entry point for UI copy. Three hard rules:
+
+1. **No Chinese string literals in components.** Get `const { t } = useI18n()` and call `t("board.newTask")`. When a pure function needs copy — `web/src/lib/status.ts` and friends — pass `t` itself down: `canMove(from, to, t)`, `relativeTime(ts, t)`.
+2. **`zh` is the single source of keys.** `en` is typed `Record<MessageKey, string>`, so a missing translation is a `tsc` error instead of a raw key surfacing in the English UI.
+3. **Comments in Chinese, copy in the dictionary.** The only Chinese left in `web/src/**/*.tsx` belongs in comments — a new hit from `rg '[\x{4e00}-\x{9fff}]' web/src` is an untranslated string.
+
+`web/src/lib/status.ts` imports no React; it just receives a locale-bound `t`, so it stays testable outside the UI.
+
+Copy that arrives as **data** from the backend (task titles, handoff bodies, `next_actions`) is not translated — that is content, not chrome. The one exception is session heartbeat: `sessionToJson` also ships `last_seen_at` (a ms timestamp), and the UI formats that itself rather than displaying the backend's Chinese `fresh` string.
+
+Adding a language: extend `LOCALES`, fill in `HTML_LANG` / `LOCALE_NAME`, and write a dictionary with the same keys — the type will tell you which ones you are missing.
+
 ## Data model
 
 Five ideas worth knowing before you touch anything:

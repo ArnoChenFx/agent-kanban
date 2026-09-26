@@ -6,6 +6,9 @@
  *
  * 这里是看板与"崩溃恢复"两条链路的交汇点：
  * 时间线回答"发生过什么"，交接回答"上一个 agent 想让你知道什么"。
+ *
+ * 语言：本文件与同目录其他组件一样只用 `t`；`Timeline` / `Handoffs` / `SessionsPanel`
+ * 各自 `useI18n()`，不靠 props 传。
  */
 
 import { useEffect, useState } from "react"
@@ -30,9 +33,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { fetchTaskDetail, type HandoffItem, type PlanItem, type TaskItem } from "@/lib/api"
+import { fetchTaskDetail, type HandoffItem, type PlanItem, type SessionItem, type TaskItem } from "@/lib/api"
 import type { KanbanEvent } from "@/lib/types"
-import { PRIORITY_LABEL, STATUS_META, describeEvent, relativeTime } from "@/lib/status"
+import { useI18n } from "@/lib/i18n"
+import { PRIORITY_LABEL, STATUS_META, describeEvent, relativeTime, statusLabel } from "@/lib/status"
 
 export function TaskDetailSheet({
   task,
@@ -53,6 +57,7 @@ export function TaskDetailSheet({
   } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { t } = useI18n()
 
   useEffect(() => {
     if (!task) {
@@ -90,7 +95,7 @@ export function TaskDetailSheet({
                   {task.id}
                 </Badge>
                 <Badge className="status-chip border-0" style={{ ["--chip-color" as string]: `var(${meta.colorVar})` }}>
-                  {meta.label}
+                  {statusLabel(task.status, t)}
                 </Badge>
                 {task.priority <= 1 && <Badge variant="secondary">{PRIORITY_LABEL[task.priority]}</Badge>}
                 {task.labels.map((l) => (
@@ -101,8 +106,8 @@ export function TaskDetailSheet({
               </div>
               <SheetTitle className="text-xl leading-snug">{task.title}</SheetTitle>
               <SheetDescription>
-                {task.progress}% · 创建于 {relativeTime(task.created_at)}
-                {task.updated_at && ` · 更新于 ${relativeTime(task.updated_at)}`}
+                {`${task.progress}% · ${t("detail.created", { time: relativeTime(task.created_at, t) })}`}
+                {task.updated_at && ` · ${t("detail.updated", { time: relativeTime(task.updated_at, t) })}`}
               </SheetDescription>
               {/* 进度条放进 header 而不是它的同级：
                   SheetContent 自身没有内边距（p-4 都在 SheetHeader/Footer 上），
@@ -123,7 +128,7 @@ export function TaskDetailSheet({
                 <div className="text-destructive bg-destructive/8 flex items-start gap-2 rounded-md p-3 text-sm">
                   <TriangleAlertIcon className="mt-0.5 shrink-0" />
                   <div>
-                    <p className="font-medium">阻塞原因</p>
+                    <p className="font-medium">{t("detail.blockReason")}</p>
                     <p>{task.block_reason}</p>
                   </div>
                 </div>
@@ -142,16 +147,16 @@ export function TaskDetailSheet({
               {detail && (
                 <Tabs defaultValue="timeline">
                   <TabsList>
-                    <TabsTrigger value="timeline">时间线</TabsTrigger>
+                    <TabsTrigger value="timeline">{t("detail.tab.timeline")}</TabsTrigger>
                     <TabsTrigger value="handoff">
-                      交接
+                      {t("detail.tab.handoff")}
                       {detail.handoffs.length > 0 && (
                         <Badge variant="secondary" className="ml-1">
                           {detail.handoffs.length}
                         </Badge>
                       )}
                     </TabsTrigger>
-                    {detail.plan && <TabsTrigger value="plan">计划</TabsTrigger>}
+                    {detail.plan && <TabsTrigger value="plan">{t("detail.tab.plan")}</TabsTrigger>}
                   </TabsList>
 
                   <TabsContent value="timeline">
@@ -173,7 +178,7 @@ export function TaskDetailSheet({
 
             <SheetFooter className="mt-4">
               <p className="text-muted-foreground text-xs">
-                CLI 等价操作：<code>kanban task show {task.id}</code>
+                {t("detail.cliEquivalent")} <code>kanban task show {task.id}</code>
               </p>
             </SheetFooter>
           </>
@@ -184,8 +189,9 @@ export function TaskDetailSheet({
 }
 
 function Timeline({ events }: { events: KanbanEvent[] }) {
+  const { t } = useI18n()
   if (events.length === 0) {
-    return <p className="text-muted-foreground py-8 text-center text-sm">还没有事件</p>
+    return <p className="text-muted-foreground py-8 text-center text-sm">{t("detail.timeline.empty")}</p>
   }
   return (
     <ScrollArea className="h-[26rem] pr-3">
@@ -198,9 +204,9 @@ function Timeline({ events }: { events: KanbanEvent[] }) {
               {i < events.length - 1 && <div className="bg-border w-px flex-1" />}
             </div>
             <div className="flex flex-col gap-0.5 pb-4">
-              <p className="text-sm">{describeEvent(e.type, e.data)}</p>
+              <p className="text-sm">{describeEvent(e.type, e.data, t)}</p>
               <p className="text-muted-foreground text-[11px]">
-                {relativeTime(e.ts)} · {e.session_id ?? "system"}
+                {relativeTime(e.ts, t)} · {e.session_id ?? "system"}
               </p>
             </div>
           </li>
@@ -211,12 +217,13 @@ function Timeline({ events }: { events: KanbanEvent[] }) {
 }
 
 function Handoffs({ items }: { items: HandoffItem[] }) {
+  const { t } = useI18n()
   if (items.length === 0) {
     return (
       <div className="text-muted-foreground flex flex-col items-center gap-2 py-8 text-center text-sm">
         <UserRoundIcon className="size-6" />
-        <p>还没有交接记录</p>
-        <p className="text-xs">用卡片菜单的「写交接」给下一个 agent 留话</p>
+        <p>{t("handoff.empty")}</p>
+        <p className="text-xs">{t("handoff.emptyHint")}</p>
       </div>
     )
   }
@@ -233,21 +240,21 @@ function Handoffs({ items }: { items: HandoffItem[] }) {
         >
           <div className="flex items-center gap-2">
             <Badge className="status-chip border-0">
-              {h.kind === "crash" ? "崩溃自动合成" : "主动交接"}
+              {h.kind === "crash" ? t("handoff.kind.crash") : t("handoff.kind.manual")}
             </Badge>
             <span className="text-muted-foreground text-[11px]">
-              {h.from_session} · {relativeTime(h.created_at)}
+              {h.from_session} · {relativeTime(h.created_at, t)}
             </span>
             {h.consumed_by && (
               <Badge variant="outline" className="ml-auto text-[10px]">
-                {h.consumed_by} 已接手
+                {t("handoff.consumed", { by: h.consumed_by })}
               </Badge>
             )}
           </div>
           <p className="text-sm">{h.summary}</p>
           {h.next_step && (
             <p className="text-muted-foreground text-sm">
-              <span className="text-foreground font-medium">下一步：</span>
+              <span className="text-foreground font-medium">{t("handoff.nextStep")}</span>
               {h.next_step}
             </p>
           )}
@@ -294,14 +301,15 @@ export function SessionsPanel({
   sessions,
   tasksById,
 }: {
-  sessions: Array<{ id: string; agent_name: string; status: string; stale: boolean; fresh: string | null; tasks: string[] }>
+  sessions: SessionItem[]
   tasksById: Map<string, TaskItem>
 }) {
+  const { t } = useI18n()
   if (sessions.length === 0) {
     return (
       <div className="text-muted-foreground flex flex-col items-center gap-2 py-6 text-center text-sm">
         <ListChecksIcon className="size-5" />
-        <p>还没有活跃会话</p>
+        <p>{t("sessions.empty")}</p>
       </div>
     )
   }
@@ -314,17 +322,24 @@ export function SessionsPanel({
             <span className="text-muted-foreground font-mono text-[11px]">{s.id}</span>
             {s.stale ? (
               <Badge className="status-chip border-0" style={{ ["--chip-color" as string]: "var(--status-stale)" }}>
-                失联
+                {t("sessions.stale")}
               </Badge>
             ) : (
               <Badge variant="secondary" className="ml-auto text-[10px]">
-                {s.fresh ?? "活跃"}
+                {/* 心跳时间优先用 last_seen_at 在前端自己格式化：后端的 fresh 是
+                    中文串（"刚刚"），直接显示会在英文界面里露出来。
+                    老服务端没带 last_seen_at 时才退回后端那个串。 */}
+                {typeof s.last_seen_at === "number"
+                  ? relativeTime(s.last_seen_at, t)
+                  : (s.fresh ?? t("sessions.active"))}
               </Badge>
             )}
           </div>
           {s.tasks.length > 0 && (
             <p className="text-muted-foreground text-[11px]">
-              持有 {s.tasks.map((t) => tasksById.get(t)?.title ?? t).join("、")}
+              {t("sessions.holding", {
+                tasks: s.tasks.map((id) => tasksById.get(id)?.title ?? id).join(t("list.sep")),
+              })}
             </p>
           )}
         </li>

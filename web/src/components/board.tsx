@@ -8,6 +8,10 @@
  *
  * 数据流：首次 load 拉 /api/board → SSE 收到事件 → 防抖后重新拉 board。
  * 不做增量更新：看板数据量小（几百张卡），全量重拉比维护 diff 更不容易出错。
+ *
+ * 语言：本文件所有界面文案都走 `t(key)`；从 lib/status.ts 拿的
+ * 状态名/时间/事件描述也一样传 `t` 下去。**不要**在这里写中文字面量——
+ * 漏翻的那一条会静静地在英文界面里露出中文。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -64,6 +68,7 @@ import {
   ReasonDialog,
 } from "@/components/dialogs"
 import { LoginCard } from "@/components/login"
+import { LanguageToggle } from "@/components/language-toggle"
 import {
   ApiError,
   executeOp,
@@ -80,10 +85,12 @@ import {
   type TaskItem,
   type TaskStatus,
 } from "@/lib/api"
-import { LANE_ORDER, STATUS_META, canMove, relativeTime } from "@/lib/status"
+import { useI18n } from "@/lib/i18n"
+import { LANE_ORDER, STATUS_META, canMove, relativeTime, statusLabel } from "@/lib/status"
 
 export function Board() {
   // 注意：URL 里的 ?key=… 由 main.tsx 在 render 前统一处理（启动引导）
+  const { t } = useI18n()
   const [token, setTokenState] = useState<string | null>(getToken())
   const [project, setProject] = useState<string | null>(getLastProject())
   const [projects, setProjects] = useState<Array<{ key: string; name: string }>>([])
@@ -205,19 +212,19 @@ export function Board() {
         return true
       } catch (e) {
         if (e instanceof ApiError) {
-          if (e.isAuth) toast.error("token 无效或已过期", { description: "重新登录一下" })
-          else if (e.isConflict) toast.error("被别的 agent 抢先了", { description: String(e.details.holder ?? e.message) })
-          else if (e.isBusy) toast.error("数据库忙，请稍后重试")
+          if (e.isAuth) toast.error(t("toast.error.auth"), { description: t("toast.error.authDesc") })
+          else if (e.isConflict) toast.error(t("toast.error.conflict"), { description: String(e.details.holder ?? e.message) })
+          else if (e.isBusy) toast.error(t("toast.error.busy"))
           else toast.error(e.message, {
             description: typeof e.details.hint === "string" ? e.details.hint : undefined,
           })
         } else {
-          toast.error("未知错误", { description: String(e) })
+          toast.error(t("toast.error.unknown"), { description: String(e) })
         }
         return false
       }
     },
-    [token, project, reload],
+    [token, project, reload, t],
   )
 
   // ---- 卡片操作分发 ----
@@ -225,7 +232,7 @@ export function Board() {
     async (task: TaskItem, action: CardAction) => {
       switch (action) {
         case "claim":
-          await run({ kind: "task.claim", params: { task_id: task.id } }, `已认领 ${task.id}`)
+          await run({ kind: "task.claim", params: { task_id: task.id } }, t("toast.success.claim", { id: task.id }))
           break
         case "progress":
         case "handoff":
@@ -236,20 +243,20 @@ export function Board() {
           setDialog({ kind: action, task })
           break
         case "review":
-          await run({ kind: "task.review", params: { task_id: task.id } }, `已提交评审：${task.id}`)
+          await run({ kind: "task.review", params: { task_id: task.id } }, t("toast.success.review", { id: task.id }))
           break
         case "done":
-          await run({ kind: "task.done", params: { task_id: task.id, force: true } }, `已完成：${task.id}`)
+          await run({ kind: "task.done", params: { task_id: task.id, force: true } }, t("toast.success.done", { id: task.id }))
           break
         case "unblock":
-          await run({ kind: "task.unblock", params: { task_id: task.id } }, `已解除阻塞：${task.id}`)
+          await run({ kind: "task.unblock", params: { task_id: task.id } }, t("toast.success.unblock", { id: task.id }))
           break
         case "release":
-          await run({ kind: "task.release", params: { task_id: task.id } }, `已释放（进度保留）：${task.id}`)
+          await run({ kind: "task.release", params: { task_id: task.id } }, t("toast.success.release", { id: task.id }))
           break
       }
     },
-    [run],
+    [run, t],
   )
 
   // ---- 拖拽 ----
@@ -269,13 +276,16 @@ export function Board() {
     const to = e.over.data.current?.status as TaskStatus | undefined
     if (!to || to === task.status) return
 
-    const check = canMove(task.status, to)
+    const check = canMove(task.status, to, t)
     if (!check.ok) {
-      toast.warning(check.reason ?? "这一步走不通")
+      toast.warning(check.reason ?? t("toast.moveFailed"))
       return
     }
     // todo → cancelled / backlog → todo 这类直接调状态机即可
-    const ok = await run({ kind: "task.transition", params: { task_id: task.id, to } }, `${task.id} → ${STATUS_META[to].label}`)
+    const ok = await run(
+      { kind: "task.transition", params: { task_id: task.id, to } },
+      `${task.id} → ${statusLabel(to, t)}`,
+    )
     if (!ok) {
       // 冲突：给出"强行接管"的选项
       if (task.status === "doing") {
@@ -316,7 +326,7 @@ export function Board() {
 
         <Select value={project ?? undefined} onValueChange={setProject}>
           <SelectTrigger size="sm" className="w-44">
-            <SelectValue placeholder="选择 project" />
+            <SelectValue placeholder={t("board.selectProject")} />
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
@@ -338,21 +348,21 @@ export function Board() {
                 onClick={() => {
                   setNewTaskOpen(true)
                 }}
-                aria-label="新建任务"
+                aria-label={t("board.newTask.aria")}
               >
                 <PlusIcon />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>新建任务</TooltipContent>
+            <TooltipContent>{t("board.newTask")}</TooltipContent>
           </Tooltip>
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={reload} aria-label="刷新">
+              <Button variant="ghost" size="icon" onClick={reload} aria-label={t("board.refresh")}>
                 <RefreshCwIcon />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>刷新</TooltipContent>
+            <TooltipContent>{t("board.refresh")}</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -361,24 +371,26 @@ export function Board() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setDark(!dark)}
-                aria-label="切换亮暗"
+                aria-label={t("board.theme.aria")}
               >
                 {dark ? <SunIcon /> : <MoonIcon />}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{dark ? "切到浅色" : "切到深色"}</TooltipContent>
+            <TooltipContent>{dark ? t("board.theme.toLight") : t("board.theme.toDark")}</TooltipContent>
           </Tooltip>
+
+          <LanguageToggle />
 
           {/* 实时连接状态：SSE 断了要看得见，否则用户会以为看板不动了 */}
           <Badge variant={online ? "secondary" : "outline"} className="gap-1">
             {online ? <WifiIcon /> : <WifiOffIcon />}
-            {online ? "实时" : "离线"}
+            {online ? t("board.online") : t("board.offline")}
           </Badge>
 
           <Separator orientation="vertical" className="mx-1 h-5" />
 
           <Button variant="ghost" size="sm" onClick={() => setToken(null)}>
-            退出
+            {t("board.logout")}
           </Button>
         </div>
       </header>
@@ -387,18 +399,21 @@ export function Board() {
       {context && context.zombie_sessions.length > 0 && (
         <Alert variant="destructive" className="mx-4 mt-3">
           <AlertTriangleIcon />
-          <AlertTitle>
-            {context.zombie_sessions.length} 个会话失联
-          </AlertTitle>
+          <AlertTitle>{t("board.zombie.title", { n: context.zombie_sessions.length })}</AlertTitle>
           <AlertDescription>
             {context.zombie_sessions.map((z) => (
               <p key={z.session_id}>
-                {z.agent_name}（{z.session_id}，{z.silent_minutes} 分钟无心跳）持有{" "}
-                {z.tasks.map((t) => `${t.id} ${t.title}`).join("、") || "无任务"}
+                {t("board.zombie.line", {
+                  agent: z.agent_name,
+                  session: z.session_id,
+                  minutes: z.silent_minutes,
+                  tasks: z.tasks.map((task) => `${task.id} ${task.title}`).join(t("list.sep")) || t("board.zombie.noTask"),
+                })}
               </p>
             ))}
             <p className="text-xs">
-              CLI 接管：<code>kanban resume &lt;任务号&gt;</code>（进度会自动保留）
+              {t("board.zombie.cli")} <code>{`kanban resume <${t("cli.taskIdArg")}>`}</code>
+              {t("board.zombie.cliNote")}
             </p>
           </AlertDescription>
         </Alert>
@@ -453,15 +468,15 @@ export function Board() {
             <Empty className="min-h-[60vh]">
               <EmptyHeader>
                 <InboxIcon />
-                <EmptyTitle>看板还是空的</EmptyTitle>
+                <EmptyTitle>{t("board.empty.title")}</EmptyTitle>
                 <EmptyDescription>
-                  新建第一张卡，或在项目目录里执行 <code>kanban task add "..."</code>
+                  {t("board.empty.desc")} <code>{t("board.empty.cmd")}</code>
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
                 <Button onClick={() => setNewTaskOpen(true)}>
                   <PlusIcon data-icon="inline-start" />
-                  新建任务
+                  {t("board.newTask")}
                 </Button>
               </EmptyContent>
             </Empty>
@@ -472,7 +487,7 @@ export function Board() {
         <aside className="border-border bg-sidebar hidden w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l p-4 lg:flex">
           <section>
             <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              交给你的交接
+              {t("sidebar.handoffs")}
               {context && context.pending_handoffs.length > 0 && (
                 <Badge className="status-chip border-0" style={{ ["--chip-color" as string]: "var(--status-review)" }}>
                   {context.pending_handoffs.length}
@@ -492,9 +507,9 @@ export function Board() {
                   >
                     <div className="flex items-center gap-2">
                       <Badge className="status-chip border-0">
-                        {h.kind === "crash" ? "崩溃合成" : "主动"}
+                        {h.kind === "crash" ? t("sidebar.handoff.crash") : t("sidebar.handoff.manual")}
                       </Badge>
-                      <span className="text-muted-foreground text-[11px]">{relativeTime(h.created_at)}</span>
+                      <span className="text-muted-foreground text-[11px]">{relativeTime(h.created_at, t)}</span>
                     </div>
                     <p className="font-mono text-xs">{h.task_id}</p>
                     <p className="line-clamp-3 text-xs">{h.summary}</p>
@@ -508,20 +523,20 @@ export function Board() {
                         if (t) setSelected(t)
                       }}
                     >
-                      查看
+                      {t("common.view")}
                     </Button>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-muted-foreground text-sm">没有待接手的交接</p>
+              <p className="text-muted-foreground text-sm">{t("sidebar.handoff.empty")}</p>
             )}
           </section>
 
           <Separator />
 
           <section>
-            <h2 className="mb-2 text-sm font-semibold">会话</h2>
+            <h2 className="mb-2 text-sm font-semibold">{t("sidebar.sessions")}</h2>
             <SessionsPanel sessions={board?.sessions ?? []} tasksById={tasksById} />
           </section>
 
@@ -529,7 +544,7 @@ export function Board() {
             <>
               <Separator />
               <section>
-                <h2 className="mb-2 text-sm font-semibold">建议接下来</h2>
+                <h2 className="mb-2 text-sm font-semibold">{t("sidebar.next")}</h2>
                 <ul className="text-muted-foreground flex flex-col gap-1 text-xs">
                   {context.next_actions.slice(0, 6).map((a, i) => (
                     <li key={i} className="flex items-start gap-1.5">
@@ -545,10 +560,10 @@ export function Board() {
           <Separator />
 
           <section>
-            <h2 className="mb-2 text-sm font-semibold">命令行等价</h2>
+            <h2 className="mb-2 text-sm font-semibold">{t("sidebar.cliEquiv")}</h2>
             <ul className="text-muted-foreground space-y-1 font-mono text-[11px]">
               <li>kanban context</li>
-              <li>kanban resume &lt;任务号&gt;</li>
+              <li>{`kanban resume <${t("cli.taskIdArg")}>`}</li>
               <li>kanban board</li>
               <li>kanban doctor --deep</li>
             </ul>
@@ -575,7 +590,7 @@ export function Board() {
                 blocked_by: input.blocked_by,
               },
             },
-            "任务已创建",
+            "toast.success.create",
           )
         }}
       />
@@ -588,7 +603,7 @@ export function Board() {
           if (!dialog) return
           await run(
             { kind: "task.progress", params: { task_id: dialog.task.id, ...input } },
-            `进度已更新：${dialog.task.id}`,
+            t("toast.success.progress", { id: dialog.task.id }),
           )
         }}
       />
@@ -601,7 +616,7 @@ export function Board() {
           if (!dialog) return
           await run(
             { kind: "handoff.create", params: { task_id: dialog.task.id, ...input } },
-            "交接已记录，下一个会话会看到",
+            t("toast.success.handoff"),
           )
         }}
       />
@@ -610,16 +625,26 @@ export function Board() {
         open={dialog?.kind === "block" || dialog?.kind === "cancel" || dialog?.kind === "reopen"}
         onOpenChange={(v) => !v && setDialog(null)}
         title={
-          dialog?.kind === "block" ? "标记阻塞" : dialog?.kind === "cancel" ? "取消任务" : "重新打开"
+          dialog?.kind === "block"
+            ? t("reason.block.title")
+            : dialog?.kind === "cancel"
+              ? t("reason.cancel.title")
+              : t("reason.reopen.title")
         }
         description={
           dialog?.kind === "block"
-            ? "阻塞需要人介入，说明白卡在哪，下一个 agent 才知道该不该换路。"
+            ? t("reason.block.desc")
             : dialog?.kind === "cancel"
-              ? "取消是终态。写清原因，将来有人问起时能看到当时的判断。"
-              : "重新打开会把任务拉回待办（进度保留）。"
+              ? t("reason.cancel.desc")
+              : t("reason.reopen.desc")
         }
-        confirmLabel={dialog?.kind === "block" ? "标记阻塞" : dialog?.kind === "cancel" ? "取消任务" : "重新打开"}
+        confirmLabel={
+          dialog?.kind === "block"
+            ? t("reason.block.title")
+            : dialog?.kind === "cancel"
+              ? t("reason.cancel.title")
+              : t("reason.reopen.title")
+        }
         onConfirm={async (reason) => {
           if (!dialog) return
           const op =
@@ -628,7 +653,7 @@ export function Board() {
               : dialog.kind === "cancel"
                 ? { kind: "task.cancel", params: { task_id: dialog.task.id, reason } }
                 : { kind: "task.reopen", params: { task_id: dialog.task.id, reason } }
-          await run(op, "已更新")
+          await run(op, t("toast.success.updated"))
         }}
       />
 
@@ -640,7 +665,7 @@ export function Board() {
           if (!conflict) return
           await run(
             { kind: "task.claim", params: { task_id: conflict.task.id, force: true } },
-            `已强行接管 ${conflict.task.id}（已记录 reclaimed 事件）`,
+            t("toast.success.force", { id: conflict.task.id }),
           )
         }}
       />
