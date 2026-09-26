@@ -50,26 +50,22 @@ check("有健康检查", /healthcheck:/.test(compose));
 check("有 restart 策略", /restart:\s*unless-stopped/.test(compose));
 check("数据卷已声明", /kanban-data:/.test(compose));
 check("日志轮转已配置", /max-size/.test(compose));
-check("镜像名可覆盖", /KANBAN_IMAGE:-\s*ghcr\.io\/[\w-]+\/agent-kanban/.test(compose));
-// 默认拉 GHCR 而非本地构建；build 块已降为注释掉的可选项
-check("默认用 GHCR 镜像", /KANBAN_IMAGE:-\s*ghcr\.io\//.test(compose));
-check("本地 build 已降为可选项", !/^\s{4}build:$/m.test(compose));
-check("注释说明了为何不带代理", /already has it|corporate gateway/i.test(compose));
+
+// 镜像不再可配置：compose 里直接写死 ghcr.io/arnochenfx/agent-kanban:latest，
+// KANBAN_IMAGE 已从 compose 与 .env.example 中移除。下面两条只守住「仍然从
+// GHCR 拉取、且没有偷偷退回本地构建」这两个约定。
+check("镜像来自 GHCR", /image:\s*ghcr\.io\//.test(compose));
+check("不再本地构建", !/^\s{4}build:$/m.test(compose));
 
 console.log("\n=== deploy/ 与 bootstrap ===");
 const { existsSync } = await import("node:fs");
 check("无 deploy/ 目录（已去掉 bootstrap）", !existsSync(`${ROOT}/deploy`));
 check("compose 无 bootstrap 服务", !/\n  bootstrap:/.test(compose));
-check(
-  "Dockerfile 说明不编译二进制",
-  /不编译二进制/.test(readText("Dockerfile")),
-);
 
 console.log("\n=== .env.example ===");
 const env = readText(".env.example");
 check("含 KANBAN_BIND", /KANBAN_BIND=/.test(env));
 check("含 KANBAN_PORT", /KANBAN_PORT=/.test(env));
-check("含 KANBAN_IMAGE 说明", /KANBAN_IMAGE/.test(env));
 check("含 KANBAN_ADMIN_TOKEN", /^KANBAN_ADMIN_TOKEN=/m.test(env));
 check("说明了 token 格式要求", /32 lowercase hex/i.test(env));
 check("无 KANBAN_DOMAIN（已移除 TLS 方案）", !/^KANBAN_DOMAIN=/m.test(env));
