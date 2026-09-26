@@ -13,6 +13,8 @@
 import { ExitCode, type ExitCodeValue } from "./core/errors.ts";
 import { cmdInit } from "./commands/init.ts";
 import { cmdInstallProtocol } from "./commands/protocol.ts";
+import { cmdBackup } from "./commands/backup.ts";
+import { runMcpServer } from "./mcp/server.ts";
 import { cmdSession } from "./commands/session.ts";
 import { cmdTask } from "./commands/task.ts";
 import { cmdBoard } from "./commands/board.ts";
@@ -45,12 +47,14 @@ const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看
   resume      接管任务并注入交接与时间线
   handoff     写交接（收工前）：summary / next / blockers / open
   doctor      一致性自检与修复
+  export/import/snapshot/compact  备份与维护（事件 journal 导出/重放/裁剪）
   plan        计划版本化：save（每次存新版本）/ show / list / history / at / attach
   rebuild     从事件流重建投影（自证一致；默认只校验）
   config      项目配置：show / init / set / use（.kanban/config.toml）
   project     项目查询（本机直连）
   admin       管理员：project 创建/删除、token 签发/吊销/授权
   serve       启动 HTTP + SSE server（供多机共享）
+  mcp         启动 MCP server（stdio，agent 通过 tool call 读写看板）
 
 两种模式
   本地：kanban task list
@@ -94,6 +98,28 @@ const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看
 
 更多：kanban task --help · kanban config --help · kanban admin --help
 文档：docs/plan/001-总体设计.md · docs/plan/002-接口契约.md`;
+
+/** `kanban mcp` 的用法（它是给 harness 看的，不是给人天天敲的，所以与主帮助分开） */
+const MCP_USAGE = `用法：kanban mcp [--server <url>] [--project <key>] [--key <k_xxx>]
+
+以 stdio 方式启动 MCP server，把看板暴露成 agent 可调用的工具。
+harness 会把它当子进程拉起，不需要手动运行。
+
+注册示例：
+  pi mcp add kanban -- cmd kanban mcp
+  claude mcp add kanban -- cmd kanban mcp
+
+工具分组：
+  会话   kanban_session_start / kanban_bootstrap / kanban_session_end
+  任务   kanban_task_list / get / create / claim / progress / note /
+         block / unblock / complete / review
+  恢复   kanban_resume / kanban_handoff
+  计划   kanban_plan_save / show / diff
+  看板   kanban_board / kanban_doctor
+
+每个会话第一步 kanban_session_start，第二步 kanban_bootstrap。
+
+注意：stdout 是 JSON-RPC 通道，诊断信息一律走 stderr。`;
 
 /** 提升到模块级：main 的 catch 兜底需要用 */
 const globals = {
@@ -179,6 +205,12 @@ async function main(): Promise<void> {
     case "install-protocol":
       code = cmdInstallProtocol(withGlobals());
       break;
+    case "export":
+    case "import":
+    case "snapshot":
+    case "compact":
+      code = await cmdBackup([command!, ...withGlobals()]);
+      break;
     case "session":
       code = await cmdSession(withGlobals());
       break;
@@ -217,6 +249,26 @@ async function main(): Promise<void> {
       // 这里直接 return，让进程持续存活，直到收到 SIGINT。
       cmdServe(withGlobals());
       return;
+    case "mcp": {
+      // 同 serve：MCP server 跑在当前进程上，不能被末尾的 process.exit 带走
+      const args = parseArgs(withGlobals(), {
+        booleans: ["json", "help"],
+        strings: ["db", "server", "project", "key"],
+        short: { h: "help" },
+      });
+      assertKnownOptions(args, ["json", "help", "db", "server", "project", "key"]);
+      if (getBool(args, "help")) {
+        process.stdout.write(MCP_USAGE + "\n");
+        process.exit(ExitCode.OK);
+      }
+      await runMcpServer({
+        db: getString(args, "db"),
+        server: getString(args, "server"),
+        project: getString(args, "project"),
+        key: getString(args, "key"),
+      });
+      return;
+    }
     default:
       process.stderr.write(`未知命令：${command}\n\n`);
       process.stderr.write(HELP + "\n");

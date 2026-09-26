@@ -102,7 +102,7 @@ docker compose up -d
 
 镜像里**不含**编译好的二进制，它直接用 `oven/bun` 跑 TypeScript 源码，镜像内没有构建步骤，Bun 运行时也只有一份。
 
-默认会用 Compose 本地构建镜像。想改成拉取已发布的镜像，在 `.env` 里设 `KANBAN_IMAGE`；`KANBAN_BIND` 和 `KANBAN_PORT` 控制服务能被访问到多远、绑在哪个宿主端口上。
+从 **GitHub Container Registry（GHCR）** 拉取已发布的镜像——发布流程只推 GHCR，不推 Docker Hub。镜像地址直接写在 `docker-compose.yml` 里，想换 tag 或命名空间就改那一行。`KANBAN_BIND` 和 `KANBAN_PORT` 控制服务能被访问到多远、绑在哪个宿主端口上。
 
 ## 日常用法
 
@@ -239,6 +239,7 @@ Server 端：`KANBAN_HOST`、`KANBAN_PORT`、`KANBAN_WEB_DIR`、`KANBAN_ADMIN_TO
 |---|---|
 | `kanban init` | 创建本地看板（`.kanban/`） |
 | `kanban install-protocol` | 把 agent 协作协议写入项目的 `AGENTS.md` |
+| `kanban mcp` | 启动 MCP server（stdio），让 agent 以 tool call 读写看板 |
 | `kanban session start \| end \| list \| heartbeat` | 会话生命周期 |
 | `kanban task add \| list \| show \| claim \| progress \| block \| done \| …` | 任务操作 |
 | `kanban board` | 终端泳道视图 |
@@ -247,6 +248,10 @@ Server 端：`KANBAN_HOST`、`KANBAN_PORT`、`KANBAN_WEB_DIR`、`KANBAN_ADMIN_TO
 | `kanban handoff` | 写交接（summary / next / blockers / open） |
 | `kanban plan save \| show \| list \| history \| at \| attach` | 计划版本化 |
 | `kanban rebuild [--write]` | 重放事件流并校验投影 |
+| `kanban export [--out <目录>]` | 导出事件 journal（按天分文件） |
+| `kanban import <目录> [--dry-run]` | 从 journal 重建库（跨机器迁移用） |
+| `kanban snapshot` | 写看板快照（人可读 JSON） |
+| `kanban compact [--keep-days 30]` | 裁剪旧事件（先自动快照） |
 | `kanban doctor [--deep]` | 一致性自检与修复 |
 | `kanban config show \| init \| set \| use \| path` | 配置管理 |
 | `kanban project list` | 查询 project（本地库） |
@@ -272,6 +277,54 @@ Server 端：`KANBAN_HOST`、`KANBAN_PORT`、`KANBAN_WEB_DIR`、`KANBAN_ADMIN_TO
 
 agent 应该基于退出码（或 `--json` 输出里的 `error.name` 字符串）分支，不要去解析错误文案。
 
+## 让 agent 自己会用这个看板
+
+### 方式一：协议文件（对任何 agent 有效）
+
+```bash
+kanban install-protocol      # 往 <项目>/AGENTS.md 写一个受管区块
+kanban install-protocol --check   # CI 门禁：缺失或落后则退出码 2
+```
+
+区块夹在 `<!-- kanban:begin -->` 与 `<!-- kanban:end -->` 之间，命令只碰这一段，
+所以你可以在同一个文件里写自己的规范。`kanban doctor` 会报出区块是否落后于 CLI 版本。
+
+只要 agent 会读 `AGENTS.md`（或 `CLAUDE.md`、或你 harness 认的那个文件名），
+它就知道开工前要先跑 `kanban session start` 和 `kanban context`，而不是直接改代码。
+也可以用 `--file` 写到别处，比如 `--file .cursor/rules/kanban.mdc`。
+
+### 方式二：MCP 工具
+
+```bash
+pi mcp add kanban -- cmd kanban mcp
+claude mcp add kanban -- cmd kanban mcp
+```
+
+20 个工具，全部是 CLI 同一套 core 的薄封装：
+
+| 分组 | 工具 |
+|---|---|
+| 会话 | `kanban_session_start` / `kanban_bootstrap` / `kanban_session_end` |
+| 任务 | `kanban_task_list` / `get` / `create` / `claim` / `progress` / `note` / `block` / `unblock` / `complete` / `review` |
+| 恢复 | `kanban_resume` / `kanban_handoff` |
+| 计划 | `kanban_plan_save` / `show` / `diff` |
+| 看板 | `kanban_board` / `kanban_doctor` |
+
+agent 被期望跑的训练流程：
+
+```
+kanban_session_start(agent_name="pi-fix")   → s-4k9d2m
+kanban_bootstrap(session_id="s-4k9d2m")     → 交接、你的卡、无人管的卡
+kanban_resume(session_id="s-4k9d2m", task_id="T-0007")
+kanban_plan_show(task_id="T-0007")
+kanban_task_progress(..., pct=80)
+kanban_handoff(..., summary="...", next_step="...")
+kanban_session_end(session_id="s-4k9d2m")
+```
+
+每个工具返回 `{ ok, data, next_actions }`；失败时返回 `{ ok: false, error }`，
+其中的 `code` 与 `name` 与 CLI 的退出码一一对应，agent 可以用同一套逻辑分支。
+
 ## 什么时候该用它
 
 适合：
@@ -286,6 +339,68 @@ agent 应该基于退出码（或 `--json` 输出里的 `error.name` 字符串�
 - 单个 agent 的短任务，开销不划算
 - 不能共享给 server 的工作，用本地模式，不需要 server
 - 需要真正的多用户权限模型。token 是按 project 授权的，不是按用户
+
+## 常见问题
+
+**数据库不入 git，这样安全吗？**
+
+安全，而且丢了能恢复。`.kanban/kanban.db` 是个 SQLite 文件：它本来就是构建产物、
+里面全是 token 哈希、合并也麻烦。不入 git 是刻意的。
+
+**入 git 的是 `.kanban/journal/`** —— 只追加的事件流，每次变更一行 JSON，按天分文件。
+既然事件是事实来源、看板只是投影，那么在新机器上重放这个日志就能完整重建：
+任务、检查项、计划、交接、依赖，一个不少。`kanban rebuild --write` 干的正是这件事，
+和它用来自证一致的是同一套机制。
+
+```bash
+# 旧机器上
+kanban export --out .kanban/journal
+
+# 新机器上
+kanban init
+kanban import .kanban/journal
+kanban rebuild --write --force
+```
+
+project key 是由目录名派生的，所以新旧机器不同。`import` 会把事件改写到当前 project
+并告知你；想保留原 key 就加 `--keep-project`。
+
+**能不能直接拷 `.db` 文件到另一台机器？**
+
+通常可以，前提是路径不变。但它是个活数据库，要在 server 停掉时拷，而且不会与目标机
+上已有的数据合并。更推荐 `export` / `import`：可合并、可 diff、且 server 在跑时也能用。
+
+**事件流有缺口怎么办？**
+
+`kanban doctor` 会报出不一致，`kanban rebuild` 能指出到底哪些字段对不上。
+不加 `--write --force` 它不会写入任何东西，所以历史里的缺口不可能静默地抹掉你的看板。
+
+**两个 agent 抢同一张卡会怎样？**
+
+一个赢。输的那个拿到退出码 `3`，并附上当前持有者的名字、进度和最后动作，应该改做别的。
+`--force` 留给你确认过要人工介入的情况，它会留下一条 `task_reclaimed` 事件。
+
+**agent 干活途中死了，怎么接手？**
+
+`kanban context` 会列出持有者已失联的卡，然后 `kanban resume T-0007` 接管。
+进度和检查项都会保留，上一位持有者的交接会一并注入。
+如果对方留了交接，即使租约还没到期也能接管——写交接就意味着让位。
+
+**怎么把整个看板迁到共享 server？**
+
+在目标机器上跑 `kanban serve`，建一个 project，签一个 token，
+再用 `.kanban/config.toml` 把客户端指过去。每个 project 隔离，每个 token 只能访问被授权的 project。
+
+**跑了几个月，数据库变大了。**
+
+`kanban compact --keep-days 30`。它会先写快照再删旧事件，
+保留最近 N 天的全部、进行中任务的相关事件，以及无论多旧都保底的 1000 条。
+被裁掉的那段历史只存在于那份快照里。
+
+**能直接暴露到网络上吗？**
+
+`serve` 默认绑 `127.0.0.1`，且不终止 TLS。暴露前请放在 TLS 终止之后：
+没有 TLS 的话 token 就是明文传输的。参见[安全](#安全)一节。
 
 ## 文档
 

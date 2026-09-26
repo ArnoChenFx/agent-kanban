@@ -73,6 +73,86 @@ import { sessionToJson, taskToJson, toEvent } from "./rows.ts";
 import type { Plan, Task, TaskStatus } from "./types.ts";
 
 /**
+ * diff 输出的行数上限。超过就截断：diff 本身是用来快速定位变化的，
+ * 真要逐字对比时 agent 应该直接看两版正文。
+ */
+const DIFF_MAX_LINES = 400;
+
+/**
+ * 行级 diff（LCS）。
+ *
+ * 为什么不引三方 diff 库：只需要单文件纯文本 + 统一输出格式，自写 30 行足够，
+ * 而且少一个依赖就少一处版本升级带来的行为漂移。
+ *
+ * 复杂度 O(n*m)，对计划正文（通常几十到几百行）完全够用；
+ * 真遇到万行级别的正文，截断会先一步保护住输出。
+ */
+function diffText(from: string, to: string): {
+  diff: string;
+  added: number;
+  removed: number;
+  truncated: boolean;
+} {
+  const a = from.split("\n");
+  const b = to.split("\n");
+
+  // LCS 长度表
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
+  }
+
+  const lines: string[] = [];
+  let added = 0;
+  let removed = 0;
+  let truncated = false;
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (lines.length >= DIFF_MAX_LINES) {
+      truncated = true;
+      break;
+    }
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
+      lines.push(`- ${a[i]}`);
+      removed++;
+      i++;
+    } else {
+      lines.push(`+ ${b[j]}`);
+      added++;
+      j++;
+    }
+  }
+  if (!truncated) {
+    for (; i < m; i++) {
+      if (lines.length >= DIFF_MAX_LINES) {
+        truncated = true;
+        break;
+      }
+      lines.push(`- ${a[i]}`);
+      removed++;
+    }
+    for (; j < n; j++) {
+      if (lines.length >= DIFF_MAX_LINES) {
+        truncated = true;
+        break;
+      }
+      lines.push(`+ ${b[j]}`);
+      added++;
+    }
+  }
+
+  return { diff: lines.join("\n"), added, removed, truncated };
+}
+
+/**
  * Op 联合类型。
  *
  * 命名规则：`领域.动作`（如 task.create / session.start / board.get）。
@@ -129,6 +209,7 @@ export type Op =
   | { kind: "plan.history"; params: { plan_id: string } }
   | { kind: "plan.at"; params: { task_id?: string | null; scope?: "project" | "task"; ts: number } }
   | { kind: "plan.attach"; params: { task_id: string; plan_id: string; session_id?: string | null } }
+  | { kind: "plan.diff"; params: { from_plan_id: string; to_plan_id: string } }
   | { kind: "rebuild.check"; params: { from_seq?: number; write?: boolean; force?: boolean } }
   // ---- project ----
   | { kind: "project.get"; params: Record<string, never> }
@@ -696,6 +777,28 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       return {
         data: planToJson(plan, { includeBody: false }),
         nextActions: [`${plan.taskId} 的当前计划 → ${plan.id}`],
+      };
+    }
+
+    case "plan.diff": {
+      const from = requirePlan(scope, op.params.from_plan_id);
+      const to = requirePlan(scope, op.params.to_plan_id);
+      // 标题也要比：只看正文会漏掉“改了标题没改正文”这种半途而废
+      const bodyDiff = diffText(from.body ?? "", to.body ?? "");
+      const titleChanged = from.title !== to.title;
+      return {
+        data: {
+          from_plan_id: from.id,
+          to_plan_id: to.id,
+          from_version: from.version,
+          to_version: to.version,
+          title_changed: titleChanged,
+          title: titleChanged ? { from: from.title, to: to.title } : null,
+          ...bodyDiff,
+        },
+        nextActions: bodyDiff.truncated
+          ? [`diff 超过 ${DIFF_MAX_LINES} 行已截断，要全量请直接对比两版正文`]
+          : [],
       };
     }
 

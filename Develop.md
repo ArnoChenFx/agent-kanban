@@ -65,7 +65,7 @@ Five ideas worth knowing before you touch anything:
 
 **Ownership is a lease.** `tasks.owner_session_id` plus `lease_expires_at`. Reaping an expired lease preserves progress and checklist items — only ownership moves.
 
-**Handoffs come in two kinds.** Voluntary (written by an agent before stopping) and crash-generated. `resume` prefers voluntary; the crash variant is a fallback and always says the previous holder is unreachable. An unconsumed voluntary handoff also lets another session take over a task whose lease has *not* expired — writing a handoff means yielding.
+**Handoffs come in two kinds.** Voluntary (written by an agent before stopping) and crash-generated. `resume` prefers voluntary; the crash variant is a fallback and always says the previous holder is unreachable. A voluntary handoff also lets another session take over a task whose lease has *not* expired — writing a handoff means yielding. "Yields" covers the handoff being unconsumed *or* already consumed by the session now taking over: otherwise the standard MCP flow (`bootstrap` consumes, then `resume`) would hit a conflict and push the agent toward `--force`.
 
 **`BEGIN IMMEDIATE`, always.** Writers take the write lock up front rather than upgrading mid-transaction, which avoids `SQLITE_BUSY` deadlocks between the lease reaper and normal traffic.
 
@@ -75,6 +75,7 @@ Five ideas worth knowing before you touch anything:
 bun install
 cd web && bun install && cd ..
 
+bun run verify:all    # all 13 gates in one run, with a summary
 bun run web:dev      # Vite on :5173
 bun run serve        # backend + built frontend on :7788
 ```
@@ -134,6 +135,9 @@ Unit tests cover logic. The scripts below boot real servers, spawn real processe
 | `verify-deps.ts` | No undeclared ("phantom") dependencies |
 | `verify-workflows.ts` | Workflow files parse and keep their required structure |
 | `verify-docs.ts` | Docs still match the code: exit codes, env vars, flags, command and script names |
+| `verify-mcp.ts` | The MCP server works over real stdio JSON-RPC, contract §3.4 recovery flow |
+| `verify-backup.ts` | export → import on a second machine restores the board losslessly |
+| `verify-all.ts` | Runs every gate above in one go; the summary answers "what is still red" |
 | `verify-auth.ts` | Token scoping and project isolation |
 | `verify-remote.ts` | Local and remote backends behave identically |
 | `verify-recovery.ts` | Lease expiry, handoff, `context`, `resume`, `doctor` |
@@ -145,6 +149,9 @@ bun run verify:deps
 bun run verify:workflows
 bun run verify:docs
 bun run verify:deploy
+bun run verify:mcp
+bun run verify:backup
+bun run verify:all    # the lot, with a summary
 ```
 
 Documentation rot is silent. Renaming a command or reassigning an exit code breaks nothing at runtime, it just quietly makes the docs wrong, and nobody reads them twice. `verify-docs.ts` diffs the claims in the four documents against the actual source: every exit code, environment variable, global flag, top-level command, npm script, and referenced file path.

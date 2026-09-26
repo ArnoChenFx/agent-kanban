@@ -26,6 +26,10 @@
     "verify:deps": "bun run scripts/verify-deps.ts",
     "verify:workflows": "bun run scripts/verify-workflows.ts",
     "verify:docs": "bun run scripts/verify-docs.ts",
+    "verify:mcp": "bun run scripts/verify-mcp.ts",
+    "verify:backup": "bun run scripts/verify-backup.ts",
+    "dogfood": "bun run scripts/dogfood.ts",
+    "verify:all": "bun run scripts/verify-all.ts",
     "verify:deploy": "bun run scripts/verify-deploy.ts",
     "snapshot:web": "bun run scripts/snapshot-web.ts"
   },
@@ -44,5 +48,8 @@
   },
   "engines": {
     "bun": ">=1.4.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.1"
   }
 }

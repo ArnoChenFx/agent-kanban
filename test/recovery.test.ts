@@ -457,6 +457,85 @@ describe("resume —— 接管并注入现场", () => {
 });
 
 // =============================================================================
+describe("交接即让位 —— 租约未过期时的接管", () => {
+  /**
+   * 回归：曾经出现“JS 判定放行、UPDATE 拒绝”的不一致。
+   *
+   * 表现是前置判定说有资格接管，紧接着就抛 CONFLICT：
+   * 因为 hasHandoverConsumedBy 放行了，而条件 UPDATE 的 WHERE 里
+   * 没有对应谓词，changes=0 后又抛冲突。两个地方必须同步。
+   */
+  test("交接已被本会话消费 → 租约未过期也能接管（MCP bootstrap→resume 流程）", () => {
+    const t = createTestDb();
+    let A!: ReturnType<typeof createSession>;
+    let B!: ReturnType<typeof createSession>;
+    let task!: ReturnType<typeof createTask>;
+    t.tx((tx) => {
+      A = createSession(tx, { agentName: "a" });
+      B = createSession(tx, { agentName: "b" });
+      task = createTask(tx, { title: "让位" });
+    });
+    t.tx((tx) => claimTask(tx, task.id, { sessionId: A.id, now: t.now() }, { ttlMs: 15 * 60_000 }));
+    t.tx((tx) => writeHandoff(tx, { taskId: task.id, sessionId: A.id, summary: "做了一半" }));
+
+    // B 读走交接（bootstrap 的默认行为）
+    t.tx((tx) => {
+      for (const h of pendingHandoffs(t.scope, {})) consumeHandoff(tx, h.id, B.id);
+    });
+    expect(pendingHandoffs(t.scope, {})).toHaveLength(0);
+
+    // 租约还剩 14 分钟，但 B 已读到交接 → 应当可以接管
+    let claimed!: ReturnType<typeof claimTask>;
+    t.tx((tx) => {
+      claimed = claimTask(tx, task.id, { sessionId: B.id, now: t.now() + 1000 }, {});
+    });
+    expect(claimed.assigneeSessionId).toBe(B.id);
+    t.cleanup();
+  });
+
+  test("交接未消费 → 直接接管（不需先 bootstrap）", () => {
+    const t = createTestDb();
+    let A!: ReturnType<typeof createSession>;
+    let B!: ReturnType<typeof createSession>;
+    let task!: ReturnType<typeof createTask>;
+    t.tx((tx) => {
+      A = createSession(tx, { agentName: "a" });
+      B = createSession(tx, { agentName: "b" });
+      task = createTask(tx, { title: "让位2" });
+    });
+    t.tx((tx) => claimTask(tx, task.id, { sessionId: A.id, now: t.now() }, { ttlMs: 15 * 60_000 }));
+    t.tx((tx) => writeHandoff(tx, { taskId: task.id, sessionId: A.id, summary: "做了一半" }));
+
+    let claimed!: ReturnType<typeof claimTask>;
+    t.tx((tx) => {
+      claimed = claimTask(tx, task.id, { sessionId: B.id, now: t.now() + 1000 }, {});
+    });
+    expect(claimed.assigneeSessionId).toBe(B.id);
+    t.cleanup();
+  });
+
+  test("租约有效且无人交接 → 仍然 CONFLICT（不能被上面两条放宽成水）", () => {
+    const t = createTestDb();
+    let A!: ReturnType<typeof createSession>;
+    let B!: ReturnType<typeof createSession>;
+    let task!: ReturnType<typeof createTask>;
+    t.tx((tx) => {
+      A = createSession(tx, { agentName: "a" });
+      B = createSession(tx, { agentName: "b" });
+      task = createTask(tx, { title: "不让位" });
+    });
+    t.tx((tx) => claimTask(tx, task.id, { sessionId: A.id, now: t.now() }, { ttlMs: 15 * 60_000 }));
+
+    expect(() =>
+      t.tx((tx) => {
+        claimTask(tx, task.id, { sessionId: B.id, now: t.now() + 1000 }, {});
+      }),
+    ).toThrow();
+    t.cleanup();
+  });
+});
+
+// =============================================================================
 describe("doctor —— 一致性自检", () => {
   test("健康库无告警", () => {
     const t = createTestDb();

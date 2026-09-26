@@ -448,11 +448,20 @@ export function claimTask(
     // 持有者主动留了交接 = 他已经把这张卡交出去了，即使进程还活着。
     // 不放开这个条件会导致“交接写得越认真，越接不了手”的荒谬结果。
     const handedOver = hasPendingHandover(ctx, id, before.assigneeSessionId);
-    if (!leaseExpired && !handedOver) {
-      // 租约有效且未交接 → 冲突。buildConflictError 会附上 holder 进度/心跳/最后动作
+    // ⚠ 第二条：**本会话已消费过这条交接**也算让位。
+    //   典型触发：MCP 的标准流程是 bootstrap（读交接，consume=true）→ resume。
+    //   如果“消费”抹掉了让位信号，这个流程会卡在 CONFLICT，agent 只能去 force——
+    //   而 force 会留下一条 task_reclaimed 痕迹，把一次正常接手续记成“抢占”。
+    //   消费回答的是“谁接手了”，不是“能不能接手”，这两件事不该耦合。
+    const consumedByMe = actor.sessionId
+      ? hasHandoverConsumedBy(ctx, id, actor.sessionId)
+      : false;
+    if (!leaseExpired && !handedOver && !consumedByMe) {
+      // 租约有效、未交接、我也还没读过 → 冲突。
+      // buildConflictError 会附上 holder 进度/心跳/最后动作
       throw buildConflictError(db, before, actor, now);
     }
-    // 租约已过期或已交接：继续往下走条件 UPDATE（其 WHERE 允许过期持有者被抢占）
+    // 租约已过期，或持有者已交接，或本会话已读走交接：走条件 UPDATE
   } else if (before.status !== "todo") {
     // backlog / blocked / review / done / cancelled：不能用 claim 抢占
     throw KanbanError.illegalTransition(id, before.status, "doing", legalTransitions(before.status));
@@ -480,7 +489,7 @@ export function claimTask(
                      OR assignee_session_id = ?)`,
           )
           .run(actor.sessionId, now + ttl, now, now, id, now, actor.sessionId)
-      : // 接管理由已过期持有者（或已留下交接的持有者）留下的 doing 卡
+      : // 接管理由已过期持有者（或已让位的持有者）留下的 doing 卡
         db
           .query(
             `UPDATE tasks
@@ -490,9 +499,22 @@ export function claimTask(
                 AND (lease_expires_at IS NULL
                      OR lease_expires_at <= ?
                      OR assignee_session_id = ?
-                     OR ${HANDOVER_PREDICATE})`,
+                     OR ${HANDOVER_PREDICATE}
+                     OR ${CONSUMED_BY_PREDICATE})`,
           )
-          .run(actor.sessionId, now + ttl, now, id, now, actor.sessionId, ctx.projectKey, id);
+          .run(
+            actor.sessionId,
+            now + ttl,
+            now,
+            id,
+            now,
+            actor.sessionId,
+            ctx.projectKey,
+            id,
+            ctx.projectKey,
+            id,
+            actor.sessionId ?? "",
+          );
 
   if (Number(result.changes) === 0) {
     // 条件不成立 → 有人正在做。构造带 holder 详情的冲突错误，让 agent 能改道
@@ -533,6 +555,22 @@ const HANDOVER_PREDICATE = `EXISTS (
            AND h.consumed_by IS NULL
       )`;
 
+/**
+ * “交接已被本会话消费”的 SQL 谓词。
+ *
+ * ⚠ 必须与 hasPendingHandover / hasHandoverConsumedBy 的判定**保持一致**。
+ *   两处曾经不一致：JS 侧放行、UPDATE 侧拒绝，表现为
+ *   “日志说可以接管，紧接着就抛 CONFLICT”——最难查的那类不一致。
+ *   凡靠条件 UPDATE 保证原子性的地方，谓词都要同步加。
+ */
+const CONSUMED_BY_PREDICATE = `EXISTS (
+        SELECT 1 FROM handoffs h
+         WHERE h.project_key = ?
+           AND h.task_id = ?
+           AND h.kind = 'voluntary'
+           AND h.consumed_by = ?
+      )`;
+
 /** 该任务是否处于“持有者已交接”状态（供前置校验用） */
 function hasPendingHandover(ctx: TxContext, taskId: string, holderSessionId: string | null): boolean {
   if (!holderSessionId) return false;
@@ -543,6 +581,23 @@ function hasPendingHandover(ctx: TxContext, taskId: string, holderSessionId: str
           AND session_id = ? AND consumed_by IS NULL`,
     )
     .get(ctx.projectKey, taskId, holderSessionId);
+  return (row?.n ?? 0) > 0;
+}
+
+/**
+ * 本会话是否已消费过该任务的主动交接。
+ *
+ * 与 hasPendingHandover 的分工：那条问“还有没有人没读”，这条问“我读没读过”。
+ * 任一成立就说明持有者已经让位，可以接管。
+ */
+function hasHandoverConsumedBy(ctx: TxContext, taskId: string, consumerSessionId: string): boolean {
+  const row = ctx.db
+    .query<{ n: number }, [string, string, string]>(
+      `SELECT COUNT(*) AS n FROM handoffs
+      WHERE project_key = ? AND task_id = ? AND kind = 'voluntary'
+      AND consumed_by = ?`,
+    )
+    .get(ctx.projectKey, taskId, consumerSessionId);
   return (row?.n ?? 0) > 0;
 }
 

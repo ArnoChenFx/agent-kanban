@@ -63,7 +63,7 @@ docs/note/            实施记录与踩坑笔记
 
 **归属是租约。** `tasks.owner_session_id` 加 `lease_expires_at`。回收过期租约时保留进度和检查项，只把归属换掉。
 
-**交接分两种。** 主动交接（agent 收工前写的）和崩溃自动生成的。`resume` 优先用主动交接；崩溃版只是兜底，而且一定会写明"原持有者失联"。存在未消费的主动交接时，其他 session **即使在租约未过期时也能接管**，因为写交接就意味着让位。
+**交接分两种。** 主动交接（agent 收工前写的）和崩溃自动生成的。`resume` 优先用主动交接；崩溃版只是兜底，而且一定会写明"原持有者失联"。存在主动交接时，其他 session **即使在租约未过期时也能接管**，因为写交接就意味着让位。“让位”包括交接尚未被消费、**以及已被当前这个 session 消费过**两种情况——否则 MCP 的标准流程（`bootstrap` 先消费、再 `resume`）会卡在 CONFLICT，把 agent 逼去用 `force`。
 
 **一律用 `BEGIN IMMEDIATE`。** 写事务一开始就拿写锁，避开中途升级，这能防住租约回收协程与正常流量之间的 `SQLITE_BUSY` 死锁。
 
@@ -73,6 +73,7 @@ docs/note/            实施记录与踩坑笔记
 bun install
 cd web && bun install && cd ..
 
+bun run verify:all    # 13 道门禁全跑一遍，带汇总
 bun run web:dev      # Vite 在 :5173
 bun run serve        # 后端 + 已构建前端在 :7788
 ```
@@ -136,6 +137,9 @@ cd web && bun run typecheck # 前端
 | `verify-remote.ts` | 本地与远程后端行为一致 |
 | `verify-recovery.ts` | 租约过期、交接、`context`、`resume`、`doctor` |
 | `verify-rebuild.ts` | 故意破坏投影，再用单个事务修回来 |
+| `verify-mcp.ts` | MCP server 走真 stdio JSON-RPC，跑契约 §3.4 的恢复流程 |
+| `verify-backup.ts` | export → import 在另一台机器上无损恢复 |
+| `verify-all.ts` | 把上面所有门禁跑一遍，用汇总回答“还有哪里红” |
 
 ```bash
 bun run verify:web
@@ -143,6 +147,9 @@ bun run verify:deps
 bun run verify:workflows
 bun run verify:docs
 bun run verify:deploy
+bun run verify:mcp
+bun run verify:backup
+bun run verify:all    # 全跑一遍，带汇总
 ```
 
 文档腐烂是**无声的**。改了个命令名或重新分配了退出码，运行时不会报任何错，只会让文档悄悄变错，而没人会读第二遍。`verify-docs.ts` 把四份文档里的断言拿去和源码逐一对比：每个退出码、环境变量、全局选项、顶层命令、npm script，以及引用到的文件路径。

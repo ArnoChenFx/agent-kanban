@@ -185,9 +185,19 @@ export function getList(args: ParsedArgs, name: string): string[] | undefined {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * 全局选项：对**所有**命令生效。
+ *
+ * 为什么单列一份：cli.ts 的 withGlobals() 会把命令行上的全局选项注入到子命令 argv，
+ * 所以每个命令的 assertKnownOptions 都得把它们列入白名单。漏列一个，那个命令就会
+ * 在“带了个完全合法的 --session”时报“未知选项”——已经踩过一次（backup 系列）。
+ * 把集合收在这里，漏列就不可能发生。
+ */
+export const GLOBAL_OPTIONS = ["json", "session", "db", "server", "project", "key", "no-color"] as const;
+
 /** 校验未知选项：命令层调用，spec 之外的选项直接报错而不是忽略 */
 export function assertKnownOptions(args: ParsedArgs, allowed: string[]): void {
-  const allowedSet = new Set(allowed);
+  const allowedSet = new Set([...allowed, ...GLOBAL_OPTIONS]);
   const bad = Object.keys(args.options).filter((k) => !allowedSet.has(k));
   if (bad.length > 0) {
     throw KanbanError.usage(

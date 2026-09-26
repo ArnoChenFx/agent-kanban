@@ -65,10 +65,14 @@ jobs:
       - name: Verify workflow files
         run: bun run verify:workflows
 
-      # Checks that exit codes, env vars, flags, command names and script names in
-      # the docs still match the code. Documentation drifts silently otherwise.
       - name: Verify documentation accuracy
         run: bun run verify:docs
+
+      - name: MCP end-to-end
+        run: bun run scripts/verify-mcp.ts
+
+      - name: Backup and maintenance
+        run: bun run scripts/verify-backup.ts
 
       # Catches "someone committed the build output": a real asset manifest
       # references web/dist by literal path, which cannot resolve on a clean
@@ -211,6 +215,12 @@ jobs:
 
       - name: Web board
         run: bun run scripts/verify-web.ts
+
+      - name: MCP end-to-end
+        run: bun run scripts/verify-mcp.ts
+
+      - name: Backup and maintenance
+        run: bun run scripts/verify-backup.ts
 
       - name: Verify deployment config
         run: bun run scripts/verify-deploy.ts

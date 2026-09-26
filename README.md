@@ -104,7 +104,7 @@ docker compose up -d
 
 The image does **not** ship a compiled binary. It runs the TypeScript sources directly on `oven/bun`, so there is no build step in the image and only one copy of the Bun runtime.
 
-By default Compose builds the image locally. To pull a published image instead, set `KANBAN_IMAGE` in `.env`; `KANBAN_BIND` and `KANBAN_PORT` control how far the server is reachable and which host port it binds.
+Compose pulls the published image from **GitHub Container Registry** — releases push to GHCR only, never to Docker Hub. The image reference is pinned in `docker-compose.yml`; edit that one line to use a different tag or namespace. `KANBAN_BIND` and `KANBAN_PORT` control how far the server is reachable and which host port it binds.
 
 ## Daily use
 
@@ -241,6 +241,7 @@ When it comes from the environment, the token is neither written to `config.toml
 |---|---|
 | `kanban init` | Create the local board (`.kanban/`) |
 | `kanban install-protocol` | Write the agent collaboration protocol into the project's `AGENTS.md` |
+| `kanban mcp` | Run the MCP server (stdio) so an agent can call the board as tools |
 | `kanban session start \| end \| list \| heartbeat` | Session lifecycle |
 | `kanban task add \| list \| show \| claim \| progress \| block \| done \| …` | Task operations |
 | `kanban board` | Swimlane view in the terminal |
@@ -250,6 +251,10 @@ When it comes from the environment, the token is neither written to `config.toml
 | `kanban plan save \| show \| list \| history \| at \| attach` | Versioned plans |
 | `kanban rebuild [--write]` | Replay the event log and verify the projection |
 | `kanban doctor [--deep]` | Consistency self-check and repair |
+| `kanban export [--out <dir>]` | Export the event journal (one file per day) |
+| `kanban import <dir> [--dry-run]` | Rebuild the database from a journal (cross-machine migration) |
+| `kanban snapshot` | Write a human-readable board snapshot |
+| `kanban compact [--keep-days 30]` | Trim old events (snapshots first) |
 | `kanban config show \| init \| set \| use \| path` | Configuration |
 | `kanban project list` | Query projects (local database) |
 | `kanban admin project … \| token …` | Project and token management |
@@ -274,6 +279,55 @@ These are a published contract. Agents branch on them, so the meanings never cha
 
 Agents should branch on the code (or the `error.name` string in `--json` output), never on message text.
 
+## Letting an agent drive the board
+
+### Option 1 — the protocol file (works with any agent)
+
+```bash
+kanban install-protocol      # writes a managed block into <project>/AGENTS.md
+kanban install-protocol --check   # CI guard: exits 2 if missing or outdated
+```
+
+The block sits between `<!-- kanban:begin -->` and `<!-- kanban:end -->` and is the only
+thing the command touches, so you can keep your own conventions in the same file. `kanban
+doctor` reports when the installed block is behind the CLI version.
+
+Any agent that reads `AGENTS.md` (or `CLAUDE.md`, or whatever your harness looks for) then
+knows to run `kanban session start` and `kanban context` before touching code. Use
+`--file` to write somewhere else, for example `--file .cursor/rules/kanban.mdc`.
+
+### Option 2 — MCP tools
+
+```bash
+pi mcp add kanban -- cmd kanban mcp
+claude mcp add kanban -- cmd kanban mcp
+```
+
+20 tools, all thin wrappers over the same core the CLI uses:
+
+| Group | Tools |
+|---|---|
+| Session | `kanban_session_start` / `kanban_bootstrap` / `kanban_session_end` |
+| Tasks | `kanban_task_list` / `get` / `create` / `claim` / `progress` / `note` / `block` / `unblock` / `complete` / `review` |
+| Recovery | `kanban_resume` / `kanban_handoff` |
+| Plans | `kanban_plan_save` / `show` / `diff` |
+| Board | `kanban_board` / `kanban_doctor` |
+
+The recovery flow an agent is expected to run:
+
+```
+kanban_session_start(agent_name="pi-fix")   → s-4k9d2m
+kanban_bootstrap(session_id="s-4k9d2m")     → handoffs, your cards, unattended cards
+kanban_resume(session_id="s-4k9d2m", task_id="T-0007")
+kanban_plan_show(task_id="T-0007")
+kanban_task_progress(..., pct=80)
+kanban_handoff(..., summary="...", next_step="...")
+kanban_session_end(session_id="s-4k9d2m")
+```
+
+Every tool returns `{ ok, data, next_actions }`; failures return `{ ok: false, error }` with
+the same code and `name` the CLI would exit with, so an agent can branch on them the same way.
+
 ## When to reach for this
 
 Good fit:
@@ -288,6 +342,78 @@ Poor fit:
 - A single agent on a short task. The overhead is not worth it
 - Work that must not be shared with a server. Use local mode, no server needed
 - Anything needing a real multi-user permissions model. Tokens are project-scoped, not user-scoped
+
+## FAQ
+
+**The database is not in git. Is that safe?**
+
+Yes, and losing it is recoverable. `.kanban/kanban.db` is a SQLite file: a build
+artifact, full of token hashes, and awkward to merge. It is not in `.gitignore` by
+accident.
+
+What *is* in git is `.kanban/journal/` — the append-only event log, one JSON line per
+change, grouped into daily files. Since events are the source of truth and the board is
+just a projection, replaying that log on a fresh machine reproduces everything: tasks,
+checklists, plans, handoffs, dependencies, the lot. `kanban rebuild --write` does exactly
+that, which is the same mechanism that lets it prove its own consistency.
+
+```bash
+# on the old machine
+kanban export --out .kanban/journal
+
+# on the new one
+kanban init
+kanban import .kanban/journal
+kanban rebuild --write --force
+```
+
+Project keys are derived from directory names, so they differ between machines.
+`import` rewrites events onto the current project and tells you it did; pass
+`--keep-project` to preserve the original keys instead.
+
+**Can I just copy the `.db` file to another machine?**
+
+Usually yes, as long as the path does not change. But it is a live database, so copy it
+while the server is stopped, and it will not merge with anything already on the target.
+Prefer `export` / `import`: it is mergeable, diffable, and safe to run while the server is
+up.
+
+**What if the event log has a gap?**
+
+`kanban doctor` reports the inconsistency, and `kanban rebuild` shows exactly which fields
+disagree. It will not overwrite anything unless you pass `--write --force`, so a gap in the
+history can never silently wipe your board.
+
+**Two agents grabbed the same task. What happens?**
+
+One wins. The loser gets exit code `3` together with the current holder's name, progress,
+and last action, and should pick something else. `--force` exists for the case where you
+have decided a human confirmed the override; it leaves a `task_reclaimed` event behind.
+
+**An agent died mid-task. How do I pick it up?**
+
+`kanban context` lists cards whose holder has gone stale, then `kanban resume T-0007`
+takes it over. Progress and checklist survive, and the previous holder's handoff is
+injected. If they left a handoff, you can take over even before the lease expires —
+writing a handoff means yielding.
+
+**How do I move everything to a shared server?**
+
+Run `kanban serve` on the box, create a project, issue a token, and point clients at it
+with `.kanban/config.toml`. Each project is isolated, and each token only reaches the
+projects it was granted.
+
+**The board has been running for months and the database grew large.**
+
+`kanban compact --keep-days 30`. It writes a snapshot first, then drops old events —
+keeping everything from the last N days, anything belonging to a live task, and a floor of
+1000 rows regardless of age. The trimmed history survives only in that snapshot.
+
+**Is it safe to expose to a network?**
+
+`serve` binds `127.0.0.1` and does not terminate TLS by default. Put it behind a TLS
+terminator before exposing it: without TLS, tokens go over the wire in plaintext. See
+[Security](#security).
 
 ## Documentation
 

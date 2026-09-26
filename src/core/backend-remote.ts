@@ -38,6 +38,8 @@ export class RemoteBackend implements Backend {
   private readonly sessionId: string | null;
   private readonly nowFn: () => number;
   private readonly timeoutMs: number;
+  /** 原始构造参数：withSession 重建时复用 */
+  private readonly opts: RemoteBackendOptions;
 
   constructor(opts: RemoteBackendOptions) {
     this.server = opts.server.replace(/\/+$/, "");
@@ -46,6 +48,14 @@ export class RemoteBackend implements Backend {
     this.sessionId = opts.sessionId ?? null;
     this.nowFn = opts.now ?? Date.now;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
+    this.opts = {
+      server: this.server,
+      projectKey: this.projectKey,
+      apiKey: this.apiKey,
+      sessionId: this.sessionId,
+      now: this.nowFn,
+      timeoutMs: this.timeoutMs,
+    };
   }
 
   /** 执行 Op：POST /api/op */
@@ -76,6 +86,14 @@ export class RemoteBackend implements Backend {
     url.searchParams.set("key", this.apiKey);
     if (opts.afterSeq !== undefined) url.searchParams.set("after", String(opts.afterSeq));
     return await this.fetchStream(url.toString(), opts.signal);
+  }
+
+  /**
+   * 换一个会话身份，返回新的 Backend（HTTP 无状态，重建代价很低）。
+   * 语义与本地版一致：MCP server 靠它把 agent 传回的 session_id 绑到后续调用上。
+   */
+  withSession(sessionId: string | null): Backend {
+    return new RemoteBackend({ ...this.opts, sessionId });
   }
 
   close(): void {
