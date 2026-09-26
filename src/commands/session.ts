@@ -7,6 +7,7 @@
  */
 
 import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
+import { resolveSessionKey } from "../core/paths.ts";
 import { assertKnownOptions, getBool, getString, parseArgs } from "./args.ts";
 import {
   closeCtx,
@@ -18,13 +19,22 @@ import {
 import { createOutput } from "./output.ts";
 
 const USAGE = `Usage:
-  agent-kanban session start --agent <name> [--harness pi|claude-code|cursor|human] [--id s-xxx]
+  agent-kanban session start --agent <name> [--harness <name>] [--id s-xxx]
   agent-kanban session list [--all] [--json]
   agent-kanban session heartbeat [--session <id>]
   agent-kanban session end [--summary "what you did"] [--session <id>]
 
 Notes:
-  start writes session_id into .kanban/session, so later commands need no --session.
+  start writes session_id into .kanban/sessions/<identity-key> (falling back to .kanban/session
+  when no identity key can be derived), so later commands need no --session.
+  The identity key is resolved in this order:
+    1. $KANBAN_SESSION_KEY                        (any stable unique value)
+    2. the harness session variable, e.g. PI_SESSION_ID (pi), PI_SESSION_FILE (oh-my-pi),
+       CLAUDE_CODE_SESSION_ID (claude-code), GROK_SESSION_ID (grok)
+    3. any other <TOOL>_SESSION_ID found in the environment
+  --harness is free-form and only labels the session on the board; it does not pick the key.
+  Set $KANBAN_SESSION_KEY when your tool exports nothing usable (cursor-agent, codex).
+  Agents sharing one directory therefore stay separate automatically.
   In remote mode the session is still created on the server (--session only affects how the identity is passed).`;
 
 export async function cmdSession(argv: string[]): Promise<ExitCodeValue> {
@@ -92,6 +102,13 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
     out.line(`  session_id : ${session.id}`);
     out.line(`  agent      : ${session.agent_name}${session.harness ? ` (${session.harness})` : ""}`);
     out.line(`  project    : ${ctx.project.key}`);
+    // 打出 identity key：同目录并行时这是唯一能确认"我到底是谁"的凭据，
+    // 排查串号时第一件事就是对比两个 agent 的这一行
+    const key = resolveSessionKey();
+    if (key) out.line(`  identity   : ${key}`);
+    else {
+      out.line(`  identity   : (none — sharing .kanban/session with every other agent in this directory)`);
+    }
     out.line("");
     out.line(`Next run \`agent-kanban context\` to read the situation: unconsumed handoffs, in-progress cards, claimable tasks.`);
 

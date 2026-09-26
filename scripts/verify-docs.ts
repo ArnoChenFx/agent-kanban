@@ -51,9 +51,12 @@ for (const f of ["README.md", "README-zh.md"]) {
 //   （KANBAN_BIND 等）只在那里定义，只扫 src/ 会把它们误报成「编造」。
 //   匹配方式取宽松的标识符扫描：这些文件里出现的 KANBAN_ 开头 token
 //   必然是环境变量名（插值写作 "${KANBAN_BIND:-...}"，不是行首声明）。
+//   src/core/paths.ts 也在列：身份分片相关的 KANBAN_SESSION_KEY 定义在那里，
+//   只扫 commands/ 会把 README 里对它的说明误报成「编造」。
 const envFound = new Set<string>();
 for (const f of [
   "src/core/config.ts",
+  "src/core/paths.ts",
   "src/server/http.ts",
   "src/commands/context.ts",
   "src/commands/project.ts",
@@ -62,7 +65,14 @@ for (const f of [
   ".env.example",
 ]) {
   const src = readFileSync(join(ROOT, f), "utf8");
-  for (const m of src.matchAll(/\bKANBAN_[A-Z_]+\b/g)) envFound.add(m[0]);
+  // 同名**常量**要排除：paths.ts 里的 `KANBAN_DIR` 是数据目录名 ".kanban"，
+  // 不是环境变量。写成 `const KANBAN_X = ...` 的声明一律不算命中。
+  // （目前全仓只有 KANBAN_DIR 一处，且没有任何真环境变量是这个形式，
+  //   所以这条规则误伤不到东西——若将来出现，先把那个变量改成真读取。）
+  const declared = new Set([...src.matchAll(/\bconst\s+(KANBAN_[A-Z_]+)\b/g)].map((m) => m[1]!));
+  for (const m of src.matchAll(/\bKANBAN_[A-Z_]+\b/g)) {
+    if (!declared.has(m[0])) envFound.add(m[0]);
+  }
 }
 console.log(`\n=== 环境变量（实际 ${envFound.size} 个）===`);
 for (const f of ["README.md", "Develop.md"]) {

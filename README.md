@@ -161,6 +161,48 @@ agent-kanban resume T-0007     # take over: handoff + full timeline injected
 
 You get the previous session's notes, the ordered list of every change made to the task, and the current plan version — not a blank card titled "fix auth".
 
+### Several agents in one directory
+
+Each agent gets its own identity automatically, so two agents in the same checkout stay separate
+without exporting anything:
+
+```bash
+# terminal 1                      # terminal 2
+agent-kanban session start --agent pi-main --harness pi
+agent-kanban context              # agent-b: same thing, separate session
+```
+
+The identity comes from a per-session variable the agent harness already exports, and lands in
+`.kanban/sessions/<key>`, one file per agent. The old single `.kanban/session` file is used only by
+processes that have no such variable, so a keyless shell never borrows someone else's identity.
+
+| Agent tool | Variable it exports |
+|---|---|
+| pi | `PI_SESSION_ID` |
+| oh-my-pi (`omp`) | `PI_SESSION_FILE` (a path — only the file name is used) |
+| Claude Code | `CLAUDE_CODE_SESSION_ID` |
+| Grok | `GROK_SESSION_ID` |
+| Codex | `CODEX_SESSION_ID` (the root session, not the thread) |
+| DeepSeek Harness | `DSH_SESSION_ID` (only present for agent-initiated shell calls) |
+| anything else | any `<TOOL>_SESSION_ID` in the environment is picked up automatically |
+
+If your agent tool exports nothing usable (cursor-agent doesn't, as of this writing), or you want to
+be explicit, set the key yourself:
+
+```bash
+export KANBAN_SESSION_KEY=my-agent   # any stable unique value
+agent-kanban session start --agent codex-main --harness codex
+```
+
+`session start` prints the identity it picked, so you can confirm two agents really did land on
+different keys:
+
+```
+  session_id : s-ayj4se
+  agent      : pi-main (pi)
+  identity   : pi-01a0debe-ca55-752e-895f-c20eb141ac19
+```
+
 ## The web board
 
 `agent-kanban serve` hosts a real UI on port 7788. It serves the board, the admin page, and the
@@ -276,7 +318,8 @@ Everything lives in `<project>/.kanban/config.toml`.
 | Access token | `--key` | `KANBAN_KEY` | — |
 | Mode | — | `KANBAN_MODE` | `remote` if a server is set, else `local` |
 | Database path | `--db` | `KANBAN_DB` | `<project>/.kanban/kanban.db` |
-| Session ID | `--session` | `KANBAN_SESSION` | `<project>/.kanban/session` |
+| Session ID | `--session` | `KANBAN_SESSION` | `.kanban/sessions/<identity-key>`, else `.kanban/session` |
+| Identity key | — | `KANBAN_SESSION_KEY` | harness session variable (`PI_SESSION_ID`, `CLAUDE_CODE_SESSION_ID`, …) |
 
 Two flags affect every command, so they work before or after the subcommand: `--json` for machine-readable output, and `--no-color` to disable ANSI colors. In CI, set `NO_COLOR=1` instead.
 

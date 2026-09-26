@@ -12,10 +12,20 @@
 
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { join, dirname, resolve as resolvePath } from "node:path";
 import { getConfig, migrate, openDb, type Db } from "../core/db.ts";
 import { KanbanError } from "../core/errors.ts";
-import { findKanbanDir, findKanbanDirLoose, resolvePaths, SESSION_FILENAME, type KanbanPaths } from "../core/paths.ts";
+import {
+  findKanbanDir,
+  findKanbanDirLoose,
+  pruneStaleSessionKeys,
+  resolvePaths,
+  resolveSessionKey,
+  SESSION_FILENAME,
+  SESSION_KEY_ENV,
+  sessionKeyFilePath,
+  type KanbanPaths,
+} from "../core/paths.ts";
 import { resolveLocalProject, validateProjectKey, type Project } from "../core/projects.ts";
 import { reapZombies } from "../core/sessions.ts";
 import type { Actor } from "../core/tasks.ts";
@@ -184,10 +194,7 @@ function openLocalCtx(input: {
   }
 
   // 会话解析（契约 §1.4）
-  const sessionId =
-    input.sessionId && input.sessionId.length > 0
-      ? input.sessionId
-      : process.env.KANBAN_SESSION ?? readSessionFile(input.paths.dir) ?? null;
+  const sessionId = currentSessionId(input.paths.dir, input.sessionId);
 
   const backend = new LocalBackend({
     db: handle.raw,
@@ -248,10 +255,7 @@ function openRemoteCtx(input: {
     });
   }
 
-  const sessionId =
-    input.sessionId && input.sessionId.length > 0
-      ? input.sessionId
-      : process.env.KANBAN_SESSION ?? readSessionFile(input.paths.dir) ?? null;
+  const sessionId = currentSessionId(input.paths.dir, input.sessionId);
 
   const backend = new RemoteBackend({
     server,
@@ -303,26 +307,75 @@ function openRemoteCtx(input: {
 }
 
 /**
- * 解析当前会话 ID（契约 §1.4）。
+ * 取当前会话 ID，取不到返回 **null**（不报错）。优先级见契约 §1.4。
  *
- * 优先级：显式 --session > KANBAN_SESSION > .kanban/session 文件。
- * 都拿不到就报错而不是自动建会话：自动创建会产生"野会话"，污染看板且无法区分是人还是 agent。
+ * ⚠ 三处都判**非空字符串**，而不是判“存在”。这不是吹毛求疵：
+ *   `process.env.KANBAN_SESSION ?? readSessionFile(...)` 看上去等价，实际上不是——
+ *   `KANBAN_SESSION=`（shell 里给变量赋空，最常见的“取消设置”写法）不是 nullish，
+ *   `??` 会让它**直接胜出**，于是 sessionId 变成空串：身份文件被忽略、
+ *   事件流记成空 session_id、所有 `claim` 都以空身份互相续租。
+ *   症状是“两个 agent 抢同一张卡不报错、看板 holder 栏空白”，而且全程不报错。
+ *   把空串当“没设”，才与 resolveSessionKey 对空值的处理一致。
+ *
+ * 取参数而不是 Ctx：`openCtx` 在构造出 Ctx **之前**就要用到它。
+ *
+ * 调用方分两种：
+ *   - 只读探测（`agent-kanban context`）：拿到 null 就该**说清楚自己没注册**，
+ *     而不是硬报错——看板上有什么是可以看的，不该因为缺身份就拒绝服务。
+ *   - 身份相关命令：包一层 `resolveSessionId`，把 null 变成一句可操作的报错。
  */
-export function resolveSessionId(ctx: Ctx, explicit?: string): string {
+export function currentSessionId(dir: string, explicit?: string): string | null {
   if (explicit && explicit.length > 0) return explicit;
 
   const fromEnv = process.env.KANBAN_SESSION;
   if (fromEnv && fromEnv.length > 0) return fromEnv;
 
-  const fromFile = readSessionFile(ctx.paths.dir);
-  if (fromFile && fromFile.length > 0) return fromFile;
+  return readSessionFile(dir);
+}
+
+/**
+ * 解析当前会话 ID（契约 §1.4）。
+ *
+ * 优先级：显式 --session > KANBAN_SESSION > 身份分片文件 > 旧单文件。
+ * 都拿不到就报错而不是自动建会话：自动创建会产生“野会话”，污染看板且无法区分是人还是 agent。
+ */
+export function resolveSessionId(ctx: Ctx, explicit?: string): string {
+  const id = currentSessionId(ctx.paths.dir, explicit);
+  if (id && id.length > 0) return id;
 
   throw KanbanError.usage(
     "missing session id, cannot tell who is operating",
+    missingSessionHint(),
+  );
+}
+
+/**
+ * 身份缺失时的可操作提示。
+ *
+ * 分两种情况给不同的话，因为**建议的动作不一样**：
+ *   - 身份 key 能解析出来（说明人知道你是谁，只是没注册过会话）
+ *     → 跑一次 `session start` 即可，并且要说明重注册是安全的
+ *   - key 解析不出来（裸 shell / 没装 harness）
+ *     → 只能手动传 `--session` 或导出 `KANBAN_SESSION`
+ */
+function missingSessionHint(): string {
+  const key = resolveSessionKey();
+  if (key) {
+    return (
+      `Your identity key is \`${key}\` (from ${SESSION_KEY_ENV} or a harness session variable), ` +
+      `but no session is registered for it yet.\n\n` +
+      `Fix: run \`agent-kanban session start --agent <name> --harness <harness>\` once, then keep using the board normally.\n` +
+      `This is safe to do even if you already held cards: the old session goes stale after the grace period, ` +
+      `its cards return to todo with progress and checklist intact.`
+    );
+  }
+  return (
     "Pick one of three:\n" +
       "  1. add --session <id> on the command line\n" +
       "  2. set the KANBAN_SESSION environment variable\n" +
-      "  3. run `agent-kanban session start --agent <name>` first to write the default session",
+      "  3. run `agent-kanban session start --agent <name>` first to write the default session\n" +
+      `Running several agents in one directory? Give each one a stable identity key via ${SESSION_KEY_ENV}=<value> ` +
+      "so they stop sharing a single session file."
   );
 }
 
@@ -335,16 +388,67 @@ export function makeActor(ctx: Ctx, sessionId: string | null): Actor {
   };
 }
 
-/** 把会话 ID 写入 .kanban/session 便捷文件 */
+/**
+ * 把会话 ID 写入本机的身份文件。
+ *
+ * ## 只写一个地方，取决于能不能解析出身份 key
+ *
+ * - **有 key** → 只写分片 `.kanban/sessions/<key>`，**绝不碰旧单文件**。
+ *   若此时还顺手写旧单文件，同目录里没 key 的进程（裸 shell、cursor-agent、codex）
+ *   就会读到它、以这个身份操作看板——**正是这次改造要消灭的静默串号**，
+ *   等于在新机制上留了个后门。
+ * - **无 key** → 退回改造前的 `.kanban/session` 单文件，行为逐字不变。
+ *
+ * 代价：keyful 与 keyless 混用时，keyless 侧会**明确报错**（而不是冒充），
+ * 提示里已经写清修复动作。这是有意的取舍：宁可退出码 1，不要静默写错人。
+ *
+ * ## 关于旧版 CLI
+ *
+ * 旧二进制只认 `.kanban/session`，共存时它会因为没有该文件而报 "missing session id"，
+ * 跑一次旧版 `session start` 即可自愈（它会写旧单文件，而 keyful 一侧压根不读它）。
+ *
+ * 顺手清一遍过期分片（见 pruneStaleSessionKeys）：写新身份是唯一适合做这件事的时刻。
+ */
 export function writeSessionFile(ctx: Ctx, sessionId: string): void {
-  mkdirSync(ctx.paths.dir, { recursive: true });
-  writeFileSync(join(ctx.paths.dir, SESSION_FILENAME), sessionId, "utf8");
+  const dir = ctx.paths.dir;
+
+  const key = resolveSessionKey();
+  if (key) {
+    const file = sessionKeyFilePath(dir, key);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, sessionId, "utf8");
+  } else {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, SESSION_FILENAME), sessionId, "utf8");
+  }
+
+  pruneStaleSessionKeys(dir, { now: ctx.now() });
 }
 
-/** 读便捷文件里的会话 ID（不存在返回 null）。接受目录路径或 Ctx */
+/**
+ * 读本机记录的身份文件里的会话 ID（不存在返回 null）。接受目录路径或 Ctx。
+ *
+ * ⚠ 关键规则：**能解析出身份 key 时，绝不回退到旧单文件。**
+ *
+ *   假设 A、B 两个 agent 同目录，A 先 `session start`（旧单文件 = A），
+ *   B 从没注册过。此时若允许 B 读旧单文件，B 就会以 A 的身份操作看板——
+ *   正是这次改造要消灭的静默串号。
+ *   B 的 key 明明解析得出来（它是另一个真实的 agent），所以让它**大声报错**、
+ *   并在提示里直接给出 `session start` 这条修复动作，比让它安静地冒充 A 强得多。
+ *   改造前没有分片，B 也会冒充 A；现在只是从静默错乱变成一句明确的退出码 1。
+ */
 export function readSessionFile(ctxOrDir: Ctx | string): string | null {
   const dir = typeof ctxOrDir === "string" ? ctxOrDir : ctxOrDir.paths.dir;
-  const file = join(dir, SESSION_FILENAME);
+
+  const key = resolveSessionKey();
+  if (key) return readSessionIdFile(sessionKeyFilePath(dir, key));
+
+  // 无 key（裸 shell / 未列入表的 harness）：退回改造前的行为
+  return readSessionIdFile(join(dir, SESSION_FILENAME));
+}
+
+/** 读单个身份文件；空文件当不存在 */
+function readSessionIdFile(file: string): string | null {
   if (!existsSync(file)) return null;
   const content = readFileSync(file, "utf8").trim();
   return content.length > 0 ? content : null;

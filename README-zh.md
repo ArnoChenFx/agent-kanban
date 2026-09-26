@@ -159,6 +159,46 @@ agent-kanban resume T-0007     # 接管：交接 + 完整时间线一并注入
 
 你拿到的是上一个会话的笔记、这次任务所有变更的有序列表、当前的计划版本——而不是一张标题写着"修鉴权"的空白卡。
 
+### 同一目录跑多个 agent
+
+每个 agent 会自动拿到自己的身份，同一个 checkout 里开两个终端也不会串：
+
+```bash
+# 终端 1                      # 终端 2
+agent-kanban session start --agent pi-main --harness pi
+agent-kanban context              # agent-b：同样一条命令，独立的会话
+```
+
+身份取自 agent harness 自己导出的**每会话唯一**环境变量，落在 `.kanban/sessions/<key>`，
+一个 agent 一个文件。旧的单文件 `.kanban/session` 只给拿不到这类变量的进程用，
+所以裸 shell 不会借用别人的身份。
+
+| agent 工具 | 它导出的变量 |
+|---|---|
+| pi | `PI_SESSION_ID` |
+| oh-my-pi（`omp`） | `PI_SESSION_FILE`（是**路径**，只用文件名部分） |
+| Claude Code | `CLAUDE_CODE_SESSION_ID` |
+| Grok | `GROK_SESSION_ID` |
+| Codex | `CODEX_SESSION_ID`（root session，不是 thread） |
+| DeepSeek Harness | `DSH_SESSION_ID`（**仅 agent 发起的 shell 调用**才有） |
+| 其它任意工具 | 环境里出现的 `<TOOL>_SESSION_ID` 会被自动收编 |
+
+如果你的 agent 工具不导出可用的变量（截至本文写作时 cursor-agent 不导出），
+或者想显式指定，自己给一个：
+
+```bash
+export KANBAN_SESSION_KEY=my-agent   # 任意稳定且唯一的值
+agent-kanban session start --agent codex-main --harness codex
+```
+
+`session start` 会打印它选中的身份，可以据此确认两个 agent 真的落在了不同的 key 上：
+
+```
+  session_id : s-ayj4se
+  agent      : pi-main (pi)
+  identity   : pi-01a0debe-ca55-752e-895f-c20eb141ac19
+```
+
 ## Web 看板
 
 `agent-kanban serve` 会在 7788 端口开一个真正的界面。看板、管理页和 CLI 调的是同一套 API
@@ -271,7 +311,8 @@ agent-kanban config init --server https://kanban.example.com --project my-app --
 | 访问 token | `--key` | `KANBAN_KEY` | — |
 | 模式 | — | `KANBAN_MODE` | 有 server 则 `remote`，否则 `local` |
 | 数据库路径 | `--db` | `KANBAN_DB` | `<项目>/.kanban/kanban.db` |
-| 会话 ID | `--session` | `KANBAN_SESSION` | `<项目>/.kanban/session` |
+| 会话 ID | `--session` | `KANBAN_SESSION` | `.kanban/sessions/<身份 key>`，否则 `.kanban/session` |
+| 身份 key | — | `KANBAN_SESSION_KEY` | harness 会话变量（`PI_SESSION_ID`、`CLAUDE_CODE_SESSION_ID` 等） |
 
 有两个选项对所有命令生效，写在子命令前后都可以：`--json` 输出结构化结果，`--no-color` 关闭 ANSI 颜色。在 CI 里更推荐设 `NO_COLOR=1`。
 

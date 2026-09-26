@@ -20,8 +20,9 @@ import {
   truncate,
 } from "../core/format.ts";
 import type { Op } from "../core/ops.ts";
+import { resolveSessionKey } from "../core/paths.ts";
 import { assertKnownOptions, getBool, getInt, getString, parseArgs, requirePositional } from "./args.ts";
-import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
+import { closeCtx, currentSessionId, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
 const CONTEXT_USAGE = `Usage: agent-kanban context [options]
@@ -108,6 +109,27 @@ async function contextCommand(argv: string[]): Promise<ExitCodeValue> {
     if (json) {
       out.data(context);
       return ExitCode.OK;
+    }
+
+    // 没注册身份时必须说清楚，否则这块看板在**说谎**：
+    // my_tasks 靠 session_id 匹配，而它是空的，于是**自己的卡会被列进
+    // “Other sessions in progress”**，看上去像别人在干。
+    // 升级到身份分片（.kanban/sessions/<key>）后的第一次 context 正好命中这个状态，
+    // 而 context 又是协议里要求 agent 跑的第一条命令——这里不提示，agent 会直接被误导。
+    const identity = currentSessionId(ctx.paths.dir, getString(args, "session"));
+    if (!identity) {
+      const key = resolveSessionKey();
+      out.line(
+        style.yellow("⚠ not registered as a session") +
+          (key ? style.gray(`  (identity key: ${key})`) : ""),
+      );
+      out.line(
+        style.gray("  Your own cards will show up under “Other sessions” until you register."),
+      );
+      out.line(
+        style.gray("  Fix: agent-kanban session start --agent <name> --harness <harness>"),
+      );
+      out.line("");
     }
 
     renderContext(out, context, ctx.project.key);
