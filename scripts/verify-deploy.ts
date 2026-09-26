@@ -88,7 +88,22 @@ const gen = readFileSync(`${ROOT}/scripts/gen-assets.ts`, "utf8");
 check("gen-assets 存在且扫描 dist", /readdirSync/.test(gen) && /web\/dist/.test(gen));
 check("生成 manifest 到 src/server", /assets\.generated\.ts/.test(gen));
 const manifest = readFileSync(`${ROOT}/src/server/assets.generated.ts`, "utf8");
-check("manifest 已入库（含占位）", /EMBEDDED_ASSETS/.test(manifest));
+// 必须严格是**空表占位**。只 grep `EMBEDDED_ASSETS` 是不够的 —— 真实清单里
+// 也有这个名字，于是检查永远是绿的，直到有人把构建产物提交上去：
+// 清单里全是 `import ... from "../../web/dist/assets/xxx.woff2"` 的字面量路径，
+// 而干净 checkout 还没有 web/dist，`bun test` 会直接抛
+// "Cannot find module '../../web/dist/assets/...'"，tsc 也跟着炸。
+//
+// ⚠ 本检查断言的是**运行时**文件内容，所以别把会触发 gen:assets 的步骤
+//   （`web:build`、直接跑 gen:assets）挪到本脚本之前。build / e2e job 都是在
+//   前端产物生成之前调用它的。
+const isPlaceholder =
+  /EMBEDDED_ASSETS: EmbeddedAssetMap = \{\}/.test(manifest) && /EMBEDDED_COUNT = 0/.test(manifest);
+check(
+  "manifest 是空表占位（不是构建产物）",
+  isPlaceholder,
+  isPlaceholder ? "" : "检测到真实清单：它引用了 web/dist 的字面量路径，干净 checkout 上无法解析",
+);
 check("package.json 有 gen:assets", /"gen:assets"/.test(readFileSync(`${ROOT}/package.json`, "utf8")));
 
 console.log(`\n${fails === 0 ? "✓ 全部检查通过" : `✗ ${fails} 项失败`}`);

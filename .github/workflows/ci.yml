@@ -70,6 +70,13 @@ jobs:
       - name: Verify documentation accuracy
         run: bun run verify:docs
 
+      # Catches "someone committed the build output": a real asset manifest
+      # references web/dist by literal path, which cannot resolve on a clean
+      # checkout. Runs here because this job never builds the frontend, so the
+      # check cannot be masked by build ordering.
+      - name: Verify deployment config
+        run: bun run verify:deploy
+
   build:
     name: Frontend build and binary smoke test
     runs-on: ubuntu-latest
