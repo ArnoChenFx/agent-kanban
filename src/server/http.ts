@@ -41,6 +41,7 @@ import { queryEvents } from "../core/events.ts";
 import { toEvent } from "../core/rows.ts";
 import { style } from "../core/format.ts";
 import { renderAdminPage } from "../server/admin-page.ts";
+import { EMBEDDED_ASSETS, EMBEDDED_BYTES, EMBEDDED_COUNT } from "./assets.generated.ts";
 
 export interface ServeOptions {
   dbPath: string;
@@ -93,18 +94,28 @@ export function startServer(opts: ServeOptions): {
     })();
 
   // ---- 管理员 token 初始化（ADR-13：server 默认必须有一个管理员 token）----
-  // ensureAdminToken 同时做两件事：写入 config.toml（运维可读）+ 注册到 tokens 表（鉴权依据）
+  // ensureAdminToken 同时做三件事：
+  //   1. 写入 config.toml（运维可读）—— 环境变量提供时不写
+  //   2. 注册到 tokens 表（运行时鉴权的唯一依据）
+  //   3. 校验格式（环境变量路径）
   let adminToken = "";
   if (!opts.noBootstrap) {
     const ensured = ensureAdminToken(configDir, { db, now: nowFn(), generate: generateApiKey });
     adminToken = ensured.token;
-    if (ensured.isNew) {
+
+    if (ensured.source === "env") {
+      // 环境变量路径：token 是外部注入的，不打印（避免进容器日志 = 泄露），
+      // 只告诉用户“它生效了”以及去哪儿改
+      process.stdout.write(
+        `\n${style.gray("管理员 token：")}来自环境变量 ${style.cyan("KANBAN_ADMIN_TOKEN")}（不写入配置文件、不打印明文）\n\n`,
+      );
+    } else if (ensured.isNew) {
       process.stdout.write(
         `\n${style.yellow("已生成管理员 token")}（只显示这一次，已存入 ${ensured.path}）\n` +
           `  ${style.bold(ensured.token)}\n\n` +
           `${style.gray("用途：")}管理 project、签发/吊销 token、跨 project 查看任务\n` +
           `${style.gray("用法：")}kanban --key ${ensured.token} admin project list\n` +
-          `${style.gray("提示：")}可用环境变量 KANBAN_ADMIN_TOKEN 覆盖（容器场景）\n\n`,
+          `${style.gray("容器场景：")}可用环境变量 KANBAN_ADMIN_TOKEN 预先指定（必须是 k_ + 32 位 hex）\n\n`,
       );
     }
   }
@@ -223,7 +234,7 @@ async function handleRequest(
 
   // ---- 静态前端 ----
   if (!path.startsWith("/api/")) {
-    return serveStatic(path, webDir ?? null);
+    return await serveStatic(path, webDir ?? null);
   }
 
   // ---- 业务接口：从 URL 或 body 取 project（Op 路径下在 body 里）----
@@ -676,43 +687,83 @@ function handleSse(req: Request, db: Database, url: URL, nowFn: () => number): R
 }
 
 /** 静态资源：优先服务 `web/dist` 的构建产物，缺省退回内置占位页 */
-function serveStatic(path: string, webDir: string | null): Response {
-  if (!webDir) {
-    // 未构建：只把 `/` 换成占位页，其余仍然 404
-    if (path === "/" || path === "/index.html") {
-      return new Response(PLACEHOLDER_HTML, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
-    return new Response("Not Found", { status: 404 });
-  }
+/**
+ * 静态资源：二进制内嵌 → 磁盘目录 → 占位页。
+ *
+ * 查找优先级：
+ *   1. **内嵌资源**（`bun build --compile` 打进二进制的 web/dist）
+ *      —— 单文件分发时唯一可用的来源，也是发布产物的默认路径
+ *   2. 磁盘目录（`KANBAN_WEB_DIR` 或包根下的 web/dist）
+ *      —— 开发模式、以及“二进制 + 旁边放一份前端”的部署方式
+ *   3. 内置占位页（含构建指引）
+ *
+ * 两者都提供时内嵌优先：发布出去的二进制就是自包含的，不该再受外部文件影响
+ * （否则“改了旁边的文件导致线上行为变化”会变得不可预测）。
+ */
+async function serveStatic(path: string, webDir: string | null): Promise<Response> {
+  // 归一化请求路径：`/` → index.html，并阻断路径穿越
+  const rel = path === "/" ? "index.html" : decodeURIComponent(path).replace(/^\/+/, "");
 
-  // 归一化并阻断路径穿越：`/../../etc/passwd` 之类
-  const rel = path === "/" ? "index.html" : path.replace(/^\/+/, "");
-  const target = resolve(webDir, rel);
-  const inside = target.startsWith(webDir) ? target : null;
-  if (!inside) return new Response("Forbidden", { status: 403 });
+  // `..` 会在归一化后暴露，必须拦掉（即使最终仍指向 web 目录内，
+  // 也没必要支持这种写法——前端不会产生它）
+  if (rel.includes("..")) return new Response("Forbidden", { status: 403 });
 
-  // SPA 回退：非 /api 的未知路径一律交给 index.html（前端自己用 History API 路由）
-  const candidates = existsSync(inside) && statSync(inside).isFile()
-    ? [inside]
-    : [join(webDir, "index.html")];
-
-  for (const file of candidates) {
-    if (!existsSync(file)) continue;
-    const body = Bun.file(file);
-    return new Response(body, {
+  // ---- 1. 内嵌资源 ----
+  const embedded = EMBEDDED_ASSETS[rel];
+  if (embedded) {
+    return new Response(await embedded(), {
       headers: {
-        "Content-Type": contentTypeFor(file),
-        // 带内容哈希的资源可以长缓存；index.html 必须每次校验，否则发版后用户拿旧壳
-        "Cache-Control": file.endsWith(".html")
-          ? "no-cache"
-          : "public, max-age=31536000, immutable",
+        "Content-Type": contentTypeFor(rel),
+        "Cache-Control": cacheControlFor(rel),
       },
     });
   }
+  // SPA 回退（命中 index.html）
+  const embeddedIndex = EMBEDDED_ASSETS["index.html"];
+  if (embeddedIndex) {
+    return new Response(await embeddedIndex(), {
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" },
+    });
+  }
 
+  // ---- 2. 磁盘目录 ----
+  if (webDir) {
+    const target = resolve(webDir, rel);
+    const inside = target.startsWith(webDir) ? target : null;
+    if (inside && existsSync(inside) && statSync(inside).isFile()) {
+      return new Response(Bun.file(inside), {
+        headers: { "Content-Type": contentTypeFor(inside), "Cache-Control": cacheControlFor(inside) },
+      });
+    }
+    // SPA 回退到磁盘上的 index.html
+    const indexFile = join(webDir, "index.html");
+    if (existsSync(indexFile)) {
+      return new Response(Bun.file(indexFile), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" },
+      });
+    }
+  }
+
+  // ---- 3. 都没有 ----
+  if (path === "/" || path === "/index.html") {
+    return new Response(PLACEHOLDER_HTML, {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
   return new Response("Not Found", { status: 404 });
+}
+
+/**
+ * 缓存头：带内容哈希的资源可长缓存；html 必须每次校验。
+ *
+ * 为什么 index.html 不能长缓存：它引用的是带 hash 的资源文件名，
+ * 发版后 index.html 会指向新 hash 但 URL 不变——长缓存会让用户永远拿旧壳，
+ * 表现为“明明更新了但页面还是老的，且刷新没用”。
+ */
+function cacheControlFor(file: string): string {
+  return file.endsWith(".html")
+    ? "no-cache"
+    : "public, max-age=31536000, immutable"
 }
 
 /** 极简 MIME 映射（够用即可，不引入依赖） */
@@ -836,15 +887,40 @@ export function runServe(opts: ServeOptions & { quiet?: boolean }): ExitCodeValu
     .get()?.c ?? 0;
   handle.raw.close();
 
-  const { url, stop } = startServer(opts);
+  // 容器友好：允许用环境变量配 host/port，不用改镜像的 CMD。
+  // 优先级：CLI 参数 > 环境变量 > 默认值（与项目整体的配置优先级一致）。
+  const envHost = process.env.KANBAN_HOST?.trim();
+  const envPort = Number(process.env.KANBAN_PORT);
+  const effective: ServeOptions = {
+    ...opts,
+    host: opts.host ?? (envHost && envHost.length > 0 ? envHost : undefined),
+    port: opts.port ?? (Number.isInteger(envPort) && envPort > 0 ? envPort : undefined),
+  };
+
+  const { url, stop } = startServer(effective);
 
   if (!opts.quiet) {
     process.stdout.write(`${style.green("✓")} kanban server 已启动：${style.cyan(url)}\n`);
     process.stdout.write(`  数据库：${opts.dbPath}\n`);
     process.stdout.write(`  project 数：${projectCount}\n`);
-    if ((opts.host ?? "127.0.0.1") === "0.0.0.0") {
+    if ((effective.host ?? "127.0.0.1") === "0.0.0.0") {
       process.stdout.write(
         `  ${style.yellow("警告")}：已绑定 0.0.0.0，请确保前面有 TLS 反向代理（推荐 https + 内网）\n`,
+      );
+    }
+    if (process.env.KANBAN_WEB_DIR) {
+      process.stdout.write(`  Web 资源目录：${style.cyan(process.env.KANBAN_WEB_DIR)}\n`);
+    }
+    // 前端来源：内嵌（单文件二进制）还是磁盘（开发 / 旁挂）
+    if (EMBEDDED_COUNT > 0) {
+      process.stdout.write(
+        `  Web 看板：${style.green("已内置于二进制")} ${style.gray(`(${EMBEDDED_COUNT} 个文件，${(EMBEDDED_BYTES / 1024).toFixed(0)} KB)`)}\n`,
+      );
+    } else if (effective.webDir) {
+      process.stdout.write(`  Web 看板：${style.gray("从磁盘读取")} ${style.cyan(effective.webDir)}\n`);
+    } else {
+      process.stdout.write(
+        `  Web 看板：${style.yellow("未启用")} ${style.gray("（构建前端后重新编译二进制：bun run web:build && bun run gen:assets）")}\n`,
       );
     }
     process.stdout.write(`\n  在另一台机器/另一个 project 上使用：\n`);

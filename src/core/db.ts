@@ -21,6 +21,18 @@ import { dirname, join } from "node:path";
 import { KanbanError } from "./errors.ts";
 import type { KanbanConfig } from "./types.ts";
 
+/**
+ * schema.sql 作为 **embedded file** 引入。
+ *
+ * 这行 import 是 `bun build --compile` 能产出可运行二进制的关键：
+ * 普通 `readFileSync(join(import.meta.dir, "schema.sql"))` 在编译产物里
+ * 会报 ENOENT（编译器不会把非模块图的文件打进去），而 declared embedded file
+ * 会被嵌进可执行文件，运行时 `Bun.file()` 读到内存副本。
+ *
+ * 开发模式（bun run）下它就是普通的文件路径，行为一致。
+ */
+import SCHEMA_FILE from "./schema.sql" with { type: "file" };
+
 /** 当前 schema 版本；新增表/列时 +1 并在 MIGRATIONS 里补一条 */
 export const SCHEMA_VERSION = 4;
 
@@ -87,16 +99,27 @@ export function openDb(
 
 /**
  * 应用 schema（幂等）。全部语句都是 CREATE TABLE IF NOT EXISTS，可重复执行。
- * 用 fs 读取而不是 import text，因为后者在部分 Bun 版本上对 .sql 的处理不稳定。
+ *
+ * ⚠ 为什么用 `with { type: "file" }` 而不是 fs 读路径：
+ * 普通的 `readFileSync(join(import.meta.dir, "schema.sql"))` 在 `bun build --compile`
+ * 编译成单文件二进制后**会失败**（ENOENT: 'B:\~BUN\root\schema.sql'）——
+ * 因为 schema.sql 不是模块图的一部分，编译器不会把它打进去。
+ * 声明为 embedded file 后，编译产物自带它，`Bun.file()` 直接读到内存副本。
+ * 非编译模式下同样工作（指向真实文件）。
  */
 export function applySchema(db: Db): void {
-  const schemaPath = join(import.meta.dir, "schema.sql");
-  const sql = readFileSync(schemaPath, "utf8");
+  let sql: string;
+  try {
+    sql = readFileSync(SCHEMA_FILE, "utf8");
+  } catch (err) {
+    throw KanbanError.notInit(`schema 读取失败：${(err as Error).message}`, {
+      hint: "如果这是编译后的二进制，说明该产物构建不完整（缺少 embedded schema.sql）",
+    });
+  }
   try {
     db.raw.exec(sql);
   } catch (err) {
     throw KanbanError.notInit(`schema 应用失败：${(err as Error).message}`, {
-      schema_path: schemaPath,
       hint: "数据库可能已损坏，可备份后用 `kanban import <journal>` 从事件重建",
     });
   }

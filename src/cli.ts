@@ -27,6 +27,7 @@ import { reportError } from "./commands/output.ts";
 import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./commands/args.ts";
 import { openCtx, closeCtx } from "./commands/context.ts";
 import { style } from "./core/format.ts";
+import { readPackageVersion } from "./core/version.ts";
 
 /** 主帮助 */
 const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看板
@@ -74,6 +75,7 @@ const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看
   --session <id>     会话标识（也可用 KANBAN_SESSION）
   --json             结构化输出
   --no-color         关闭颜色
+  --version, -V      打印版本号
 
 典型工作流（agent 视角）：
   kanban session start --agent pi-main --harness pi   # 1. 注册会话
@@ -160,6 +162,13 @@ async function main(): Promise<void> {
     case "--help":
     case "-h":
       process.stdout.write(HELP + "\n");
+      code = ExitCode.OK;
+      break;
+    // 版本号：从 package.json 读，与发布 tag 同源（CI 校验二者一致）
+    case "--version":
+    case "-V":
+    case "version":
+      process.stdout.write(`${readPackageVersion()}\n`);
       code = ExitCode.OK;
       break;
     case "init":

@@ -6,6 +6,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+    /* 晨光（背景渐晕） */
+    --color-glow: var(--glow);
     /* ---- 任务状态色（接入 Tailwind，可写 text-status-doing / bg-status-todo）---- */
     --color-status-backlog: var(--status-backlog);
     --color-status-todo: var(--status-todo);
@@ -126,6 +128,9 @@
     --chart-4: oklch(0.5 0.096 295);    /* 黛紫 */
     --chart-5: oklch(0.47 0.132 25);    /* 酒红 */
 
+    /* ---- 晨光：背景顶部的一层暖色渐晕（亮色 = 晨雾，暗色 = 灯下的暖褐）---- */
+    --glow: oklch(0.88 0.055 78);
+
     --radius: 0.5rem;
 
     --sidebar: oklch(0.955 0.01 84);
@@ -143,53 +148,61 @@
    背景变成深墨褐，卡片略亮于背景，色相保持不变但提高明度与彩度以适配深底。
    -------------------------------------------------------------------------- */
 .dark {
-    --background: oklch(0.19 0.012 65);
-    --foreground: oklch(0.93 0.01 80);
-    /* 卡片比背景亮一阶就行；差距太小则卡片会“浮不起来”，看不出边界 */
-    --card: oklch(0.265 0.015 65);
-    --card-foreground: oklch(0.93 0.01 80);
-    --popover: oklch(0.265 0.015 65);
-    --popover-foreground: oklch(0.93 0.01 80);
+    /* ---------------------------------------------------------------------------
+       暖度要点：暗色下的中性色**彩度必须比亮色更高**，不是更低。
+       原因：低亮度区域人眼对色相的感知被大幅压缩，chroma 0.012 的“暖褐”
+       实际读出来就是灰。想让暗色也“暖”，唯一有效的手段是加彩度。
+       这里取 0.022~0.034（约为原值的两倍），hue 统一在 58（红棕）附近。
+       --------------------------------------------------------------------------- */
+    --background: oklch(0.175 0.022 58);
+    --foreground: oklch(0.94 0.018 75);
+    /* 卡片比背景亮一阶且**更饱和**，否则卡片会“浮不起来” */
+    --card: oklch(0.245 0.028 58);
+    --card-foreground: oklch(0.94 0.018 75);
+    --popover: oklch(0.245 0.028 58);
+    --popover-foreground: oklch(0.94 0.018 75);
 
-    --primary: oklch(0.68 0.09 168);
-    --primary-foreground: oklch(0.18 0.02 168);
-    --secondary: oklch(0.32 0.016 65);
-    --secondary-foreground: oklch(0.92 0.01 80);
-    --muted: oklch(0.3 0.013 65);
-    --muted-foreground: oklch(0.7 0.014 75);
-    --accent: oklch(0.35 0.028 75);
-    --accent-foreground: oklch(0.94 0.01 80);
+    --primary: oklch(0.70 0.095 165);
+    --primary-foreground: oklch(0.16 0.03 165);
+    --secondary: oklch(0.315 0.032 58);
+    --secondary-foreground: oklch(0.93 0.018 75);
+    --muted: oklch(0.295 0.028 58);
+    --muted-foreground: oklch(0.73 0.028 72);
+    --accent: oklch(0.35 0.045 60);
+    --accent-foreground: oklch(0.95 0.016 75);
+
+    --glow: oklch(0.34 0.055 55);
 
     /* 暗底上把状态色整体提亮，否则墨绿/酒红会隐进背景 */
-    --status-todo: oklch(0.74 0.12 68);
-    --status-doing: oklch(0.68 0.09 168);
-    --status-blocked: oklch(0.66 0.15 25);
-    --status-done: oklch(0.68 0.1 145);
-    --status-review: oklch(0.68 0.11 295);
-    --status-backlog: oklch(0.55 0.03 80);
-    --status-cancelled: oklch(0.58 0.035 45);
-    --status-stale: oklch(0.72 0.16 62);
+    --status-todo: oklch(0.75 0.125 68);
+    --status-doing: oklch(0.70 0.095 165);
+    --status-blocked: oklch(0.67 0.15 25);
+    --status-done: oklch(0.70 0.105 145);
+    --status-review: oklch(0.70 0.11 295);
+    --status-backlog: oklch(0.58 0.04 70);
+    --status-cancelled: oklch(0.6 0.045 45);
+    --status-stale: oklch(0.74 0.16 62);
 
-    --destructive: oklch(0.66 0.15 25);
+    --destructive: oklch(0.67 0.15 25);
 
-    --border: oklch(0.36 0.016 65);
-    --input: oklch(0.37 0.018 65);
-    --ring: oklch(0.68 0.09 168);
+    --border: oklch(0.355 0.032 58);
+    --input: oklch(0.365 0.034 58);
+    --ring: oklch(0.7 0.095 165);
 
-    --chart-1: oklch(0.68 0.09 168);
-    --chart-2: oklch(0.74 0.12 68);
-    --chart-3: oklch(0.68 0.1 145);
-    --chart-4: oklch(0.68 0.11 295);
-    --chart-5: oklch(0.66 0.15 25);
+    --chart-1: oklch(0.70 0.095 165);
+    --chart-2: oklch(0.75 0.125 68);
+    --chart-3: oklch(0.70 0.105 145);
+    --chart-4: oklch(0.70 0.11 295);
+    --chart-5: oklch(0.67 0.15 25);
 
-    --sidebar: oklch(0.215 0.012 65);
-    --sidebar-foreground: oklch(0.93 0.01 80);
-    --sidebar-primary: oklch(0.68 0.09 168);
-    --sidebar-primary-foreground: oklch(0.18 0.02 168);
-    --sidebar-accent: oklch(0.33 0.022 72);
-    --sidebar-accent-foreground: oklch(0.94 0.01 80);
-    --sidebar-border: oklch(0.36 0.016 65);
-    --sidebar-ring: oklch(0.68 0.09 168);
+    --sidebar: oklch(0.205 0.024 58);
+    --sidebar-foreground: oklch(0.94 0.018 75);
+    --sidebar-primary: oklch(0.70 0.095 165);
+    --sidebar-primary-foreground: oklch(0.16 0.03 165);
+    --sidebar-accent: oklch(0.33 0.042 60);
+    --sidebar-accent-foreground: oklch(0.95 0.016 75);
+    --sidebar-border: oklch(0.355 0.032 58);
+    --sidebar-ring: oklch(0.7 0.095 165);
 }
 
 @layer base {
@@ -198,10 +211,11 @@
     }
   body {
     @apply bg-background text-foreground;
-    /* 纸面质感：一层极淡的暖色渐晕，避免大块纯色显得“死” */
+    /* 晨光：顶部一层暖色渐晕。用 --glow 而非 --primary——
+       墨绿 5% 混在暖米白上会偏灰绿，与"晨雾"的气氛相反。 */
     background-image: radial-gradient(
       ellipse 80% 60% at 50% -10%,
-      color-mix(in oklch, var(--primary) 5%, transparent),
+      color-mix(in oklch, var(--glow) 55%, transparent),
       transparent 70%
     );
     }

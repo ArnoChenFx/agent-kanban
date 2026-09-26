@@ -310,7 +310,7 @@ export function ensureAdminToken(
     now?: number;
     generate: () => string;
   },
-): { token: string; isNew: boolean; path: string } {
+): { token: string; isNew: boolean; path: string; source: "env" | "config" | "generated" } {
   const env = opts.env ?? process.env;
   const now = opts.now ?? Date.now();
   const path = join(kanbanDir, CONFIG_FILE);
@@ -323,6 +323,17 @@ export function ensureAdminToken(
   let source: "env" | "config" | "generated";
 
   if (fromEnv && fromEnv.length > 0) {
+    // 必须校验格式：否则 `KANBAN_ADMIN_TOKEN=admin` 也能登录，
+    // 而调用方会以为自己配了一个受保护的凭据。
+    // 直接报错而不是降级/警告——“看起来配了但没生效”比“启动失败”危险得多。
+    if (!/^k_[0-9a-f]{32}$/.test(fromEnv)) {
+      throw KanbanError.usage(
+        "环境变量 KANBAN_ADMIN_TOKEN 格式不合法",
+        "必须是 k_ + 32 位十六进制，例如：\n" +
+          "  k_0123456789abcdef0123456789abcdef\n" +
+          "生成一个：openssl rand -hex 16",
+      );
+    }
     token = fromEnv;
     source = "env";
   } else if (existing?.config.adminToken) {
@@ -349,7 +360,7 @@ export function ensureAdminToken(
   // 这是关键一步：没注册的话所有请求都会 401 “token 无效”
   ensureAdminTokenRegistered(opts.db, token, now, source);
 
-  return { token, isNew, path };
+  return { token, isNew, path, source };
 }
 
 /** 确保 tokens 表里有这条 admin 记录（已存在则不动） */

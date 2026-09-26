@@ -20,5 +20,5 @@
     // ---- 类型来源 ----
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "test/**/*.ts"]
 }

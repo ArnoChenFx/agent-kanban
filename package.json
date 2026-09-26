@@ -9,7 +9,8 @@
   },
   "files": [
     "src",
-    "docs"
+    "docs",
+    "web/dist"
   ],
   "scripts": {
     "kanban": "bun run src/cli.ts",
@@ -19,7 +20,10 @@
     "web:dev": "bun run --cwd web dev",
     "web:build": "bun run --cwd web build",
     "web:typecheck": "bun run --cwd web typecheck",
+    "gen:assets": "bun run scripts/gen-assets.ts",
+    "build:binary": "bun run web:build && bun run gen:assets && bun build --compile src/cli.ts --outfile dist/kanban",
     "verify:web": "bun run scripts/verify-web.ts",
+    "verify:deploy": "bun run scripts/verify-deploy.ts",
     "snapshot:web": "bun run scripts/snapshot-web.ts"
   },
   "keywords": [

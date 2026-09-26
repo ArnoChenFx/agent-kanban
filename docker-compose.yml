@@ -1,0 +1,77 @@
+# =============================================================================
+# agent-kanban 一键部署
+# -----------------------------------------------------------------------------
+# 三步：
+#     cp .env.example .env          # 填 KANBAN_ADMIN_TOKEN（openssl rand -hex 16）
+#     docker compose up -d
+#     docker compose exec kanban kanban admin project add my-app
+#     docker compose exec kanban kanban admin token create --project my-app --name ci
+#
+# 为什么只有两个服务：
+#   本项目的 server 不做 TLS，默认只绑回环——HTTPS 应当由既有基础设施承担
+#   （公司网关 / nginx / k8s Ingress / 带 VPN 的内网）。为一个看板额外维护一套
+#   证书体系不划算，反而多一个出错面。需要时把 KANBAN_BIND 改成 0.0.0.0
+#   挂到你自己的代理后面即可。
+#   ⚠ 裸 HTTP 下 token 是明文传输的，对外暴露前务必确认前面有 TLS。
+#
+# 为什么没有 "bootstrap" 之类的初始化服务：
+#   管理员 token 由 KANBAN_ADMIN_TOKEN 直接注入，建 project / 签 token
+#   都是一条命令就能做的事（见上面）。为此多一个一次性容器 + 一份脚本，
+#   收益仅仅是把 3 条命令包装成 1 条，却引入了自己的状态与失败模式。
+#
+# 前端是**内置在二进制里**的，镜像里没有单独的 web 目录。
+# =============================================================================
+
+name: agent-kanban
+
+services:
+  kanban:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # 默认用本地构建的镜像；推到 registry 后在 .env 里设 KANBAN_IMAGE 即可切到远程镜像
+    image: "${KANBAN_IMAGE:-agent-kanban:local}"
+
+    # ⚠ 默认只监听回环。要给内网其他机器用，把 .env 的 KANBAN_BIND 改成 0.0.0.0。
+    ports:
+      - "${KANBAN_BIND:-127.0.0.1}:${KANBAN_PORT:-7788}:7788"
+
+    environment:
+      # 容器内必须绑 0.0.0.0 才会收到来自 Docker 网络的流量；
+      # 对外暴露范围由上面 ports 的**宿主侧**绑定决定，两者是不同的东西
+      KANBAN_HOST: "0.0.0.0"
+      KANBAN_PORT: "7788"
+
+      # 管理员 token：必须是 k_ + 32 位十六进制。
+      # 留空则 server 首次启动自动生成并写入 /data/.kanban/config.toml（只在日志里显示一次）。
+      # 配了它就不会打印明文，也不会写进配置文件 —— 适合 CI / K8s Secret 等场景。
+      KANBAN_ADMIN_TOKEN: "${KANBAN_ADMIN_TOKEN:-}"
+
+    volumes:
+      # project、token、任务、交接、config.toml 全在这里。
+      # 换机器时 `docker run --rm -v kanban-data:/data -v $PWD:/out alpine tar czf /out/kanban.tgz -C /data .`
+      - kanban-data:/data
+
+    restart: unless-stopped
+    # server 内部有 30s 定时回收僵尸会话，容器层只管进程存活
+    stop_grace_period: 15s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7788/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  # 业务数据：SQLite 主库 + config.toml（含管理员 token 明文或哈希）
+  kanban-data:

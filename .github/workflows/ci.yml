@@ -1,0 +1,171 @@
+# =============================================================================
+# 持续集成：push / PR 时跑测试，不发布
+# =============================================================================
+# 与 release.yml 的 verify job 内容一致但独立存在，理由：
+#  - PR 上就应该知道测试是否通过，而不是等合并后打 tag 才发现
+#  - release.yml 的门禁是"最后一道"，不能替代日常 CI
+# =============================================================================
+
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1.4.2"
+
+jobs:
+  test:
+    name: 测试与构建
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 安装依赖
+        shell: bash
+        run: |
+          bun install --frozen-lockfile
+          cd web && bun install --frozen-lockfile
+
+      - name: 类型检查（后端）
+        run: bun run typecheck
+
+      - name: 类型检查（前端）
+        shell: bash
+        run: cd web && bun run typecheck
+
+      - name: 单元测试
+        run: bun test
+
+  build:
+    name: 前端构建与二进制冒烟
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 安装依赖
+        run: |
+          bun install --frozen-lockfile
+          cd web && bun install --frozen-lockfile
+
+      - name: 前端构建
+        run: bun run build
+        working-directory: web
+
+      - name: 前端产物完整性
+        run: |
+          test -f web/dist/index.html || { echo "::error::缺少 web/dist/index.html"; exit 1; }
+          grep -q 'id="root"' web/dist/index.html || { echo "::error::index.html 不是看板入口"; exit 1; }
+          echo "前端产物正常"
+
+      # 部署配置的结构校验
+      - name: 部署配置校验
+        run: bun run scripts/verify-deploy.ts
+
+      # 这个冒烟挡住的正是两件事：
+      #   1. schema.sql 没内嵌（编译期无感，运行期 ENOENT）
+      #   2. 前端资源没内嵌（二进制里没有 web/dist，`/` 会退回占位页）
+      - name: 编译 Linux 二进制并冒烟
+        run: |
+          set -euo pipefail
+          bun run gen:assets
+          mkdir -p dist smoke
+          bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/kanban
+          chmod +x dist/kanban
+          dist/kanban --version
+          ( cd smoke && ../dist/kanban init >/dev/null && \
+            ../dist/kanban task add "CI 冒烟" >/dev/null && \
+            ../dist/kanban --json task list | grep -q T-0001 )
+          echo "二进制冒烟通过"
+
+      - name: Docker 构建（不推送）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  binary:
+    name: 单文件二进制自包含验证
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - run: bun install --frozen-lockfile
+
+      - name: 前端构建
+        run: bun run build
+        working-directory: web
+
+      - name: 生成资源清单并编译
+        run: |
+          bun run gen:assets
+          mkdir -p dist-test
+          bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist-test/kanban
+
+      # 关键：在**没有源码、没有 web/dist** 的目录里验证二进制能独立跑通
+      # （验证 schema.sql 与前端资源确实被内嵌，而不是恰好能找到源码）
+      - name: 二进制自包含验证
+        run: bun run scripts/verify-binary.ts
+
+  e2e:
+    name: 端到端验证
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 安装依赖
+        run: |
+          bun install --frozen-lockfile
+          cd web && bun install --frozen-lockfile
+          cd web && bun run build
+
+      # 这些脚本各自起临时 server、用真实子进程走完整链路，比单测更能抓到
+      # "跨进程/跨环境才暴露"的问题（CLI 参数解析、token 传递、静态资源）
+      - name: 崩溃恢复
+        run: bun run scripts/verify-recovery.ts
+
+      - name: 事件重放与自证
+        run: bun run scripts/verify-rebuild.ts
+
+      - name: 配置与权限
+        run: bun run scripts/verify-auth.ts
+
+      - name: 远程双模式
+        run: bun run scripts/verify-remote.ts
+
+      - name: Web 看板
+        run: bun run scripts/verify-web.ts
+
+      - name: 部署配置校验
+        run: bun run scripts/verify-deploy.ts
