@@ -4,7 +4,7 @@
 # Triggered by pushing a tag shaped like v1.2.3
 #
 # Artifacts:
-#   - Self-contained binaries for 5 platforms (`bun build --compile`; download and
+#   - Self-contained binaries for 4 platforms (`bun build --compile`; download and
 #     run, no bun installation required)
 #   - Docker images (linux/amd64 + linux/arm64) pushed to GHCR only
 #   - GitHub Release with binaries and checksums
@@ -113,9 +113,6 @@ jobs:
           - target: bun-linux-x64
             os: ubuntu-latest
             asset: kanban-linux-x64
-          - target: bun-linux-arm64
-            os: ubuntu-latest
-            asset: kanban-linux-arm64
           - target: bun-darwin-x64
             os: macos-latest
             asset: kanban-darwin-x64
@@ -152,22 +149,13 @@ jobs:
 
       # Critical smoke test: a missing embedded schema.sql is invisible at compile
       # time, so the artifact must actually run `init` **on the target platform**.
-      # An arm64 artifact cannot execute on an x64 runner, hence the containerized check.
+      # Every target below can execute natively on its runner, so no emulation
+      # branch is needed.
       - name: Smoke test (version + init)
         shell: bash
         run: |
           set -euo pipefail
           BIN="dist/${{ matrix.asset }}"
-
-          if [ "${{ matrix.target }}" = "bun-linux-arm64" ]; then
-            # Cannot run arm64 on an x64 runner: go through qemu emulation
-            docker run --rm --platform linux/arm64 -v "$PWD/dist:/d" \
-              oven/bun:1.4.2-alpine /d/${{ matrix.asset }} --version
-            docker run --rm --platform linux/arm64 -v "$PWD/dist:/d" -v "$PWD/smoke:/w" \
-              -w /w oven/bun:1.4.2-alpine /d/${{ matrix.asset }} init
-            echo "arm64 smoke test passed (qemu)"
-            exit 0
-          fi
 
           chmod +x "$BIN" || true
           "$BIN" --version
@@ -305,7 +293,6 @@ jobs:
           | 平台 | 文件 |
           | --- | --- |
           | Linux x64 | \`kanban-linux-x64\` |
-          | Linux arm64 | \`kanban-linux-arm64\` |
           | macOS x64 | \`kanban-darwin-x64\` |
           | macOS arm64 | \`kanban-darwin-arm64\` |
           | Windows x64 | \`kanban-windows-x64.exe\` |
