@@ -6,6 +6,14 @@ import { resolve } from "node:path";
 // 仓库根目录：从本脚本位置推导。
 // 不能写死绝对路径 —— CI 上仓库克隆到 /home/runner/work/...，写死的路径必然 ENOENT。
 const ROOT = resolve(import.meta.dir, "..");
+
+// ⚠ 读文件一律走这里，归一化换行符。
+//   Windows runner 上 git 的 core.autocrlf 默认为 true，checkout 出来是 CRLF。
+//   本脚本大量检查是「行结构」正则（/^services:\n/、/^  (\w+):$/gm），
+//   CRLF 下它们会整段失配 —— 本机和 Linux CI 全绿，只有 Windows 报红。
+//   附带好处：归一化后「无行尾空格」这条才真正生效（CRLF 下 ` +$` 匹配不到）。
+const readText = (rel: string) => readFileSync(`${ROOT}/${rel}`, "utf8").replace(/\r\n/g, "\n");
+
 let fails = 0;
 const check = (label: string, ok: boolean, detail = "") => {
   console.log(`${ok ? "✓" : "✗"} ${label}${detail ? `  ${detail}` : ""}`);
@@ -13,7 +21,7 @@ const check = (label: string, ok: boolean, detail = "") => {
 };
 
 console.log("=== docker-compose.yml ===");
-const compose = readFileSync(`${ROOT}/docker-compose.yml`, "utf8");
+const compose = readText("docker-compose.yml");
 
 // 1. 缩进一致性（YAML 最常见的错）
 const lines = compose.split("\n");
@@ -51,11 +59,11 @@ check("无 deploy/ 目录（已去掉 bootstrap）", !existsSync(`${ROOT}/deploy
 check("compose 无 bootstrap 服务", !/\n  bootstrap:/.test(compose));
 check(
   "Dockerfile 说明不编译二进制",
-  /不编译二进制/.test(readFileSync(`${ROOT}/Dockerfile`, "utf8")),
+  /不编译二进制/.test(readText("Dockerfile")),
 );
 
 console.log("\n=== .env.example ===");
-const env = readFileSync(`${ROOT}/.env.example`, "utf8");
+const env = readText(".env.example");
 check("含 KANBAN_BIND", /KANBAN_BIND=/.test(env));
 check("含 KANBAN_PORT", /KANBAN_PORT=/.test(env));
 check("含 KANBAN_IMAGE 说明", /KANBAN_IMAGE/.test(env));
@@ -66,7 +74,7 @@ check("说明了 TLS 需自备", /TLS/.test(env));
 check("无行尾空格", !/ +$/m.test(env));
 
 console.log("\n=== Dockerfile ===");
-const df = readFileSync(`${ROOT}/Dockerfile`, "utf8");
+const df = readText("Dockerfile");
 check("多阶段（≥2 个 FROM）", (df.match(/^FROM/gm) ?? []).length >= 2);
 // 只看非注释行：Dockerfile 头部注释里会解释“为什么不 compile”，会误命中
 const dfCode = df
@@ -84,10 +92,10 @@ check("声明 VOLUME", /VOLUME/.test(df));
 check("无 tab 缩进", !/^\t/m.test(df));
 
 console.log("\n=== 前端资源内嵌（发布二进制用）===");
-const gen = readFileSync(`${ROOT}/scripts/gen-assets.ts`, "utf8");
+const gen = readText("scripts/gen-assets.ts");
 check("gen-assets 存在且扫描 dist", /readdirSync/.test(gen) && /web\/dist/.test(gen));
 check("生成 manifest 到 src/server", /assets\.generated\.ts/.test(gen));
-const manifest = readFileSync(`${ROOT}/src/server/assets.generated.ts`, "utf8");
+const manifest = readText("src/server/assets.generated.ts");
 // 必须严格是**空表占位**。只 grep `EMBEDDED_ASSETS` 是不够的 —— 真实清单里
 // 也有这个名字，于是检查永远是绿的，直到有人把构建产物提交上去：
 // 清单里全是 `import ... from "../../web/dist/assets/xxx.woff2"` 的字面量路径，
@@ -104,7 +112,7 @@ check(
   isPlaceholder,
   isPlaceholder ? "" : "检测到真实清单：它引用了 web/dist 的字面量路径，干净 checkout 上无法解析",
 );
-check("package.json 有 gen:assets", /"gen:assets"/.test(readFileSync(`${ROOT}/package.json`, "utf8")));
+check("package.json 有 gen:assets", /"gen:assets"/.test(readText("package.json")));
 
 console.log(`\n${fails === 0 ? "✓ 全部检查通过" : `✗ ${fails} 项失败`}`);
 process.exit(fails === 0 ? 0 : 1);
