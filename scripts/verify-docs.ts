@@ -131,12 +131,17 @@ check("compose 确实没有 caddy", !/^  caddy:/m.test(readFileSync(join(ROOT, "
 check("compose 确实只有 kanban 一个服务", (readFileSync(join(ROOT, "docker-compose.yml"), "utf8").match(/^  [a-z][\w-]*:$/gm) ?? []).length <= 2);
 
 // ---- 事实核对：开发文档提到的文件路径存在 ----
+// 构建产物必须排除：`web/dist` 是 `vite build` 生成的，已在 .gitignore 里，
+// 而 test job 从不构建前端（那正是 build job 的职责）。把它算进来会让
+// 干净 checkout 上的 verify:docs 必然失败。
+const GENERATED_PREFIXES = ["web/dist"];
 console.log(`\n=== Develop 文档引用的路径 ===`);
 for (const f of ["Develop.md", "Develop_zh.md"]) {
   const text = readFileSync(join(ROOT, f), "utf8");
   const paths = [...new Set([...text.matchAll(/`(src\/[\w./-]+|web\/[\w./-]+|docs\/[\w./-]+|scripts\/[\w./-]+)`/g)].map((m) => m[1]!))];
-  const missing = paths.filter((p) => !existsSync(join(ROOT, p)));
-  check(`${f} 引用的路径都存在`, missing.length === 0, `缺失：${missing.join(", ") || "无"}（共 ${paths.length} 个）`);
+  const tracked = paths.filter((p) => !GENERATED_PREFIXES.some((g) => p === g || p.startsWith(`${g}/`)));
+  const missing = tracked.filter((p) => !existsSync(join(ROOT, p)));
+  check(`${f} 引用的路径都存在`, missing.length === 0, `缺失：${missing.join(", ") || "无"}（共 ${tracked.length} 个）`);
 }
 
 console.log(`\n${fails === 0 ? "✓ 文档事实核对全部通过" : `✗ ${fails} 项失败`}`);

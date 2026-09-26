@@ -80,6 +80,8 @@ for (const file of FILES) {
     check("二进制冒烟含 schema 前置动作", /gen:assets[\s\S]*build --compile[\s\S]*kanban --version/.test(text));
     check("有自包含二进制验证", /verify-binary\.ts/.test(text));
     check("Docker 只构建不推送", /Build Docker image \(no push\)/.test(text) && /push: false/.test(text));
+    // GHA 缓存导出必须搭配 buildx：runner 默认的 `docker` driver 不支持导出
+    check("用 GHA 缓存前装了 buildx", /docker\/setup-buildx-action/.test(text) && /cache-to:\s*type=gha/.test(text));
     check("并发时取消旧任务", /cancel-in-progress: true/.test(text));
   } else {
     check("name: release", /^name: release$/m.test(text));

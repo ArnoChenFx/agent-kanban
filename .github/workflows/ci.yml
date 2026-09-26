@@ -120,6 +120,12 @@ jobs:
             ../dist/kanban --json task list | grep -q T-0001 )
           echo "Binary smoke test passed"
 
+      # Required before any `cache-to: type=gha`. The runner's default builder
+      # uses the `docker` driver, which cannot export to the GHA cache backend
+      # ("Cache export is not supported for the docker driver"). setup-buildx
+      # switches to the `docker-container` driver, which can.
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build Docker image (no push)
         uses: docker/build-push-action@v6
         with:
