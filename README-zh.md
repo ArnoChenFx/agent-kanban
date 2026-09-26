@@ -1,6 +1,6 @@
 # agent-kanban
 
-[English](README.md) · [中文](README_zh.md) · [开发者文档](Develop.md) · [Develop](Develop_zh.md)
+[English](README.md) · [中文](README-zh.md) · [开发者文档](Develop.md) · [Develop](Develop-zh.md)
 
 让多个 AI agent 会话共享同一份任务真相，并且在其中一个崩溃后接手它的工作。
 
@@ -309,7 +309,7 @@ harness 都能零配置接上。注意要从项目根启动 harness——`comman
 {
   "mcpServers": {
     "kanban": {
-      "command": "dist/kanban",
+      "command": "kanban",
       "args": ["mcp"]
     }
   }
@@ -439,7 +439,7 @@ project key 是由目录名派生的，所以新旧机器不同。`import` 会�
 
 ## 文档
 
-- [Develop_zh.md](Develop_zh.md) —— 架构、构建、发布、验证
+- [Develop-zh.md](Develop-zh.md) —— 架构、构建、发布、验证
 
 ## 许可证
 

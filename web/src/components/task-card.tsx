@@ -151,7 +151,9 @@ export function TaskCard({
         </p>
       )}
 
-      {/* 进度 + 检查项。进度条用**状态色**：拖到“待评审”的卡不该还是绿的 */}
+      {/* 进度 + 检查项。进度条用**状态色**：拖到“待评审”的卡不该还是绿的。
+          “还剩 N 项”独立于进度条渲染：新任务 progress=0 却已经有检查项时，
+          那一行也得看得见（早先它被包在 progress>0 里，创建完的卡上什么都没有）。 */}
       {task.progress > 0 && (
         <div className="flex flex-col gap-1">
           <Progress
@@ -159,16 +161,14 @@ export function TaskCard({
             className="h-1.5 text-primary"
             style={{ color: `var(${meta.colorVar})` }}
           />
-          <div className="text-muted-foreground flex items-center justify-between text-[11px]">
-            <span>{task.progress}%</span>
-            {checklistLeft > 0 && (
-              <span className="flex items-center gap-1">
-                <ListChecksIcon />
-                {checklistLeft === 1 ? t("card.checklistLeftOne") : t("card.checklistLeft", { n: checklistLeft })}
-              </span>
-            )}
-          </div>
+          <span className="text-muted-foreground text-[11px]">{task.progress}%</span>
         </div>
+      )}
+      {checklistLeft > 0 && (
+        <p className="text-muted-foreground flex items-center gap-1 text-[11px]">
+          <ListChecksIcon className="size-3" />
+          {checklistLeft === 1 ? t("card.checklistLeftOne") : t("card.checklistLeft", { n: checklistLeft })}
+        </p>
       )}
 
       {/* 等依赖：告诉用户"为什么还不能做" */}

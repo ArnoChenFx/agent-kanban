@@ -7,15 +7,22 @@
  * 这里是看板与"崩溃恢复"两条链路的交汇点：
  * 时间线回答"发生过什么"，交接回答"上一个 agent 想让你知道什么"。
  *
+ * 概览（描述 / 检查项 / 依赖）刻意放在页签**上方**而不是再开一个页签：
+ * 用户点开卡片九成是为了看"这活儿要做什么、还剩什么"，把它们藏在页签后面
+ * 等于没显示——这正是"创建完就看不到描述与检查项"的老毛病。
+ *
  * 语言：本文件与同目录其他组件一样只用 `t`；`Timeline` / `Handoffs` / `SessionsPanel`
  * 各自 `useI18n()`，不靠 props 传。
  */
 
 import { useEffect, useState } from "react"
 import {
+  CheckIcon,
   CircleDotIcon,
   FileTextIcon,
+  Link2Icon,
   ListChecksIcon,
+  SquareIcon,
   TriangleAlertIcon,
   UserRoundIcon,
 } from "lucide-react"
@@ -33,28 +40,38 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { fetchTaskDetail, type HandoffItem, type PlanItem, type SessionItem, type TaskItem } from "@/lib/api"
+import {
+  fetchTaskDetail,
+  type ChecklistItem,
+  type HandoffItem,
+  type PlanItem,
+  type SessionItem,
+  type TaskDetail,
+  type TaskItem,
+} from "@/lib/api"
 import type { KanbanEvent } from "@/lib/types"
 import { useI18n } from "@/lib/i18n"
+import { cn } from "@/lib/utils"
 import { PRIORITY_LABEL, STATUS_META, describeEvent, relativeTime, statusLabel } from "@/lib/status"
 
 export function TaskDetailSheet({
   task,
   token,
   project,
+  tasksById,
+  onSelect,
   onClose,
 }: {
   task: TaskItem | null
   token: string
   project: string
+  /** 当前看板上的任务索引：把依赖 / 父任务显示成"编号 + 标题"而不是光一个编号 */
+  tasksById?: Map<string, TaskItem>
+  /** 传入后依赖/父任务可点，直接跳到那张卡的详情 */
+  onSelect?: (taskId: string) => void
   onClose: () => void
 }) {
-  const [detail, setDetail] = useState<{
-    task: Record<string, unknown>
-    timeline: KanbanEvent[]
-    handoffs: HandoffItem[]
-    plan: PlanItem | null
-  } | null>(null)
+  const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { t } = useI18n()
@@ -144,6 +161,9 @@ export function TaskDetailSheet({
 
               {error && <p className="text-destructive text-sm">{error}</p>}
 
+              {/* 概览：描述 / 检查项 / 依赖。放在页签上方——这些是打开卡片就想看的东西 */}
+              {detail && <Overview detail={detail} tasksById={tasksById} onSelect={onSelect} />}
+
               {detail && (
                 <Tabs defaultValue="timeline">
                   <TabsList>
@@ -185,6 +205,172 @@ export function TaskDetailSheet({
         )}
       </SheetContent>
     </Sheet>
+  )
+}
+
+/**
+ * 概览：描述 + 检查项 + 依赖 / 父任务。
+ *
+ * 这一块是 "task.get" 已经在返回、但之前**没人渲染**的数据：
+ * 服务端 task.get 会带上 `body`、`checklist`（逐项，含 done_at/by）、`dependencies`，
+ * 详情抽屉却只画了时间线/交接/计划，结果就是"填了描述、勾了检查项，回头什么都看不到"。
+ *
+ * 空值全部直接不渲染——描述、检查项、依赖都是可选的，没填就不该占一块灰。
+ */
+function Overview({
+  detail,
+  tasksById,
+  onSelect,
+}: {
+  detail: TaskDetail
+  tasksById?: Map<string, TaskItem>
+  onSelect?: (taskId: string) => void
+}) {
+  const { t } = useI18n()
+  const parentId = typeof detail.task.parent_id === "string" ? detail.task.parent_id : null
+  // 依赖列表优先用 task.get 的 dependencies（全部依赖）；老服务端可能只给未完成的那部分
+  const depIds = detail.dependencies.length > 0 ? detail.dependencies : detail.unfinishedDependencies
+  // 父任务在前、依赖在后；pending 决定标签与配色（一眼分出“还欠着的那条”）
+  const related: Array<{ id: string; label: string; pending: boolean }> = [
+    ...(parentId ? [{ id: parentId, label: t("detail.parent"), pending: false }] : []),
+    ...depIds.map((id) => {
+      const pending = detail.unfinishedDependencies.includes(id)
+      return {
+        id,
+        pending,
+        label: pending ? t("detail.dep.unfinished") : t("detail.dep.done"),
+      }
+    }),
+  ]
+  if (related.length === 0 && !detail.description && detail.checklist.length === 0) return null
+
+  return (
+    <div className="flex flex-col gap-4">
+      {detail.description && (
+        <section className="flex flex-col gap-1.5">
+          <SectionTitle icon={FileTextIcon}>{t("detail.description")}</SectionTitle>
+          {/* whitespace-pre-wrap：描述是自由文本（可能带换行与列表），
+              不保留换行的话整段会挤成一行墙。不用 markdown 渲染器——
+              描述是用户数据，当纯文本展示最安全。 */}
+          <p className="text-sm whitespace-pre-wrap">{detail.description}</p>
+        </section>
+      )}
+
+      {detail.checklist.length > 0 && (
+        <section className="flex flex-col gap-1.5">
+          <SectionTitle icon={ListChecksIcon}>
+            {t("detail.checklist.title")}
+            <Badge variant="secondary" className="ml-1 font-mono text-[10px]">
+              {t("detail.checklist.count", {
+                done: detail.checklist.filter((c) => c.done).length,
+                total: detail.checklist.length,
+              })}
+            </Badge>
+          </SectionTitle>
+          <ul className="flex flex-col gap-1">
+            {detail.checklist.map((item, i) => (
+              <ChecklistRow key={`${i}-${item.text}`} item={item} />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {related.length > 0 && (
+        <section className="flex flex-col gap-1.5">
+          <SectionTitle icon={Link2Icon}>{t("detail.links")}</SectionTitle>
+          <ul className="flex flex-col gap-1 text-sm">
+            {related.map((r) => (
+              <li key={`${r.label}-${r.id}`}>
+                <RelatedTask
+                  id={r.id}
+                  title={tasksById?.get(r.id)?.title}
+                  onSelect={onSelect}
+                  label={r.label}
+                  pending={r.pending}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  )
+}
+
+/** 概览里的小节标题（图标 + 文字 + 可选尾巴） */
+function SectionTitle({ icon: Icon, children }: { icon: React.ElementType; children: React.ReactNode }) {
+  return (
+    <h3 className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
+      <Icon className="size-3.5 shrink-0" />
+      {children}
+    </h3>
+  )
+}
+
+/** 检查项一行：勾了的划线 + 勾的人/时间（“谁勾的”是协作里最常被问的一个问题） */
+function ChecklistRow({ item }: { item: ChecklistItem }) {
+  const { t } = useI18n()
+  return (
+    <li className="flex items-start gap-2 text-sm">
+      {item.done ? (
+        <CheckIcon className="text-status-done mt-0.5 size-4 shrink-0" />
+      ) : (
+        <SquareIcon className="text-muted-foreground/50 mt-0.5 size-4 shrink-0" />
+      )}
+      <span className={cn("flex-1", item.done && "text-muted-foreground line-through")}>{item.text}</span>
+      {item.done && (item.by || item.done_at) && (
+        <span className="text-muted-foreground shrink-0 text-[11px]">
+          {[item.by, item.done_at ? relativeTime(item.done_at, t) : null].filter(Boolean).join(" · ")}
+        </span>
+      )}
+    </li>
+  )
+}
+
+/**
+ * 关联任务（依赖 / 父任务）一行。
+ *
+ * 状态标签（未完成/已完成）**可见**而不只是 title 提示：
+ * “这条依赖还欠着”正是看关联任务的人最先要确认的事。
+ * 能查到就在编号后补标题，能跳转就做成按钮；没有 onSelect 或本地没这张卡时退化成纯文本，
+ * 不用 disabled 按钮占位。
+ */
+function RelatedTask({
+  id,
+  title,
+  label,
+  pending,
+  onSelect,
+}: {
+  id: string
+  title?: string
+  label: string
+  /** 依赖是否尚未完成（决定标签与配色） */
+  pending: boolean
+  onSelect?: (taskId: string) => void
+}) {
+  const content = (
+    <>
+      <span className="font-mono text-xs">{id}</span>
+      {title && <span className="truncate">{title}</span>}
+      <span className={cn("ml-auto shrink-0 text-[11px]", pending ? "text-status-todo" : "text-muted-foreground")}>
+        {label}
+      </span>
+    </>
+  )
+  const cls = cn(
+    "flex w-full items-center gap-2 rounded px-1.5 py-0.5 text-left text-sm",
+    pending ? "text-status-todo" : "text-muted-foreground",
+    onSelect && "hover:bg-muted/60 cursor-pointer",
+  )
+  // 没有 onSelect（或本地没这张卡）就退化成纯文本，不用 disabled 按钮占位
+  if (!onSelect || !title) {
+    return <span className={cls}>{content}</span>
+  }
+  return (
+    <button type="button" className={cls} onClick={() => onSelect(id)}>
+      {content}
+    </button>
   )
 }
 

@@ -1,6 +1,6 @@
 # 开发 agent-kanban
 
-[English](Develop.md) · [中文](Develop_zh.md) · [用户指南](README_zh.md) · [User guide](README.md)
+[English](Develop.md) · [中文](Develop_zh.md) · [用户指南](README-zh.md) · [User guide](README.md)
 
 架构、构建、发布，以及验证工具链。
 
@@ -179,7 +179,7 @@ bun run verify:all    # 全跑一遍，带汇总
 
 ## 文档约定
 
-- `README.md` / `README_zh.md` 面向**使用者**：功能、解决什么问题、怎么部署和配置。默认展示英文（`README.md`），中文版在 `README_zh.md`。
+- `README.md` / `README-zh.md` 面向**使用者**：功能、解决什么问题、怎么部署和配置。默认展示英文（`README.md`），中文版在 `README-zh.md`。
 - `Develop.md` / `Develop_zh.md` 面向**开发者**：架构、构建、发布、验证工具链。
 - 四份文档顶部互相链，用户可以随时切换语言。
 

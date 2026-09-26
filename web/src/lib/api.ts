@@ -154,11 +154,82 @@ export async function fetchProjects(token: string): Promise<ProjectInfo[]> {
  * 服务端 ops.ts 的 task.get 分支是 `{ ...taskToJson(task), body, checklist, dependencies, ... }`，
  * 所以这里必须带索引签名，否则读 plan_id / timeline 时 TS 会报错而运行时却是好的。
  */
-interface TaskGetData extends Partial<TaskItem> {
+interface TaskGetData extends Omit<Partial<TaskItem>, "checklist" | "unfinished_dependencies"> {
   /** timeline: true 时服务端同响应附带事件（旧服务端不返回，故可选） */
   timeline?: KanbanEvent[]
-  body?: string
+  /** 详细描述（数据库列名 body，契约字段名 description） */
+  body?: string | null
+  /** 检查项明细：文本 + 勾没勾 + 谁勾的。taskToJson 只给计数，这里才有逐项 */
+  checklist?: unknown
+  /** 依赖列表。注意实际形状是 TaskDep 对象数组（{taskId, dependsOnId, createdAt}），不是 id 数组 */
+  dependencies?: unknown
+  /** 未完成的依赖 id 数组 */
+  unfinished_dependencies?: unknown
   [key: string]: unknown
+}
+
+/** 检查项单项（与 src/core/types.ts 的 ChecklistItem 同形） */
+export interface ChecklistItem {
+  text: string
+  done: boolean
+  done_at?: number | null
+  by?: string | null
+}
+
+/** 详情抽屉消费的、已归一化的任务详情 */
+export interface TaskDetail {
+  /** 原始任务对象（保持扁平，与 CLI / MCP 同形，plan_id 等从这里读） */
+  task: Record<string, unknown>
+  /** 详细描述；没有描述时为 null */
+  description: string | null
+  /** 检查项明细；服务端没带或形状不对时是空数组 */
+  checklist: ChecklistItem[]
+  /** 依赖的任务 id（全部，已从 TaskDep 对象里抽出 dependsOnId） */
+  dependencies: string[]
+  /** 尚未完成的依赖 id（用于给依赖行标注“还没做完”） */
+  unfinishedDependencies: string[]
+  timeline: KanbanEvent[]
+  handoffs: HandoffItem[]
+  plan: PlanItem | null
+}
+
+/**
+ * 把服务端回的 checklist 归一化成 ChecklistItem[]。
+ *
+ * 为什么要在前端洗一遍：`checklist` 在库里是 TEXT（JSON 字符串），老数据可能是
+ * `null`、空串或手改坏的形状。详情面板不该因为一行坏数据整个打不开，
+ * 也不能把 `{text, done}` 的约定丢给每个渲染点自己判断。
+ */
+function normalizeChecklist(raw: unknown): ChecklistItem[] {
+  // 老服务端（不带明细）直接给的是 {total, done} 计数对象，这时没有明细可显示
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+    .map((x) => ({
+      text: String(x.text ?? ""),
+      done: x.done === true,
+      done_at: typeof x.done_at === "number" ? x.done_at : null,
+      by: typeof x.by === "string" ? x.by : null,
+    }))
+    .filter((x) => x.text !== "")
+}
+
+/**
+ * 归一化依赖 id 列表。
+ *
+ * 服务端 `task.get` 的 `dependencies` 是 **TaskDep 对象数组**（taskId/dependsOnId/createdAt），
+ * 不是 id 数组；`unfinished_dependencies` 才是 id 数组。
+ * 早先按“数组里都是字符串”来过滤，结果一个依赖都留不下——所以这里两种形状都接。
+ */
+function normalizeDeps(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((x) => {
+      if (typeof x === "string") return x
+      const id = (x as { dependsOnId?: unknown } | null)?.dependsOnId
+      return typeof id === "string" ? id : null
+    })
+    .filter((x): x is string => x !== null)
 }
 
 /**
@@ -173,7 +244,7 @@ export async function fetchTaskDetail(
   token: string,
   project: string,
   taskId: string,
-): Promise<{ task: Record<string, unknown>; timeline: KanbanEvent[]; handoffs: HandoffItem[]; plan: PlanItem | null }> {
+): Promise<TaskDetail> {
   // timeline: true 让服务端在同一次响应里带上事件，省一次往返
   const { data } = await executeOp<TaskGetData>(token, project, {
     kind: "task.get",
@@ -206,7 +277,16 @@ export async function fetchTaskDetail(
       : Promise.resolve(null),
   ])
 
-  return { task, timeline, handoffs, plan }
+  return {
+    task,
+    description: typeof data.body === "string" && data.body.trim() !== "" ? data.body : null,
+    checklist: normalizeChecklist(data.checklist),
+    dependencies: normalizeDeps(data.dependencies),
+    unfinishedDependencies: normalizeDeps(data.unfinished_dependencies),
+    timeline,
+    handoffs,
+    plan,
+  }
 }
 
 /** 恢复上下文：交接 / 失联会话 / 建议动作 */

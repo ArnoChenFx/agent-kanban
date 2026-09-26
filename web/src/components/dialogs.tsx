@@ -358,7 +358,8 @@ export function NewTaskDialog({
   onOpenChange: (v: boolean) => void
   onConfirm: (input: {
     title: string
-    body?: string
+    /** 详细描述。字段名与服务端 `task.create` 的 `description` 对齐，避免调用处再翻译一次 */
+    description?: string
     priority: number
     labels: string[]
     checklist: string[]
@@ -366,7 +367,7 @@ export function NewTaskDialog({
   }) => Promise<void> | void
 }) {
   const [title, setTitle] = useState("")
-  const [body, setBody] = useState("")
+  const [description, setDescription] = useState("")
   const [priority, setPriority] = useState(2)
   const [labels, setLabels] = useState("")
   const [checklist, setChecklist] = useState("")
@@ -377,7 +378,7 @@ export function NewTaskDialog({
   useEffect(() => {
     if (open) {
       setTitle("")
-      setBody("")
+      setDescription("")
       setPriority(2)
       setLabels("")
       setChecklist("")
@@ -397,7 +398,7 @@ export function NewTaskDialog({
     try {
       await onConfirm({
         title: title.trim(),
-        body: body.trim() || undefined,
+        description: description.trim() || undefined,
         priority,
         labels: splitList(labels),
         checklist: splitList(checklist),
@@ -428,14 +429,15 @@ export function NewTaskDialog({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="nt-body">{t("newTask.label.body")}</FieldLabel>
+            <FieldLabel htmlFor="nt-description">{t("newTask.label.body")}</FieldLabel>
             <Textarea
-              id="nt-body"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={2}
+              id="nt-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
               placeholder={t("newTask.placeholder.body")}
             />
+            <FieldDescription>{t("newTask.description.desc")}</FieldDescription>
           </Field>
           <Field>
             <FieldLabel>{t("newTask.label.priority")}</FieldLabel>

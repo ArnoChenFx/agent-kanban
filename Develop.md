@@ -1,6 +1,6 @@
 # Developing agent-kanban
 
-[English](Develop.md) · [中文](Develop_zh.md) · [User guide](README.md) · [用户指南](README_zh.md)
+[English](Develop.md) · [中文](Develop-zh.md) · [User guide](README.md) · [用户指南](README-zh.md)
 
 Architecture, build, release, and the verification harness.
 
@@ -180,8 +180,8 @@ Documentation rot is silent. Renaming a command or reassigning an exit code brea
 
 ## Documentation layout
 
-- `README.md` / `README_zh.md` for **users**: features, the problem it solves, how to deploy and configure. English is the default (`README.md`); the Chinese version lives in `README_zh.md`.
-- `Develop.md` / `Develop_zh.md` for **developers**: architecture, build, release, verification.
+- `README.md` / `README-zh.md` for **users**: features, the problem it solves, how to deploy and configure. English is the default (`README.md`); the Chinese version lives in `README-zh.md`.
+- `Develop.md` / `Develop-zh.md` for **developers**: architecture, build, release, verification.
 - All four cross-link at the top, so readers can switch languages at any point.
 
 ## Tests and SQLite

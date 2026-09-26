@@ -42,7 +42,7 @@ claude mcp add kanban -- cmd kanban mcp
 {
   "mcpServers": {
     "kanban": {
-      "command": "dist/kanban.exe",
+      "command": "kanban",
       "args": ["mcp"]
     }
   }

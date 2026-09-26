@@ -7,10 +7,12 @@
  * 而服务端（以及 CLI / MCP）一直返回**任务本体**，
  * 结果点开任务详情就抛 `Cannot read properties of undefined (reading 'plan_id')`。
  *
- * 这里钉住三件事：
+ * 这里钉住五件事：
  * 1. `task.get` 的 data 就是任务本体（不是包装对象），且带上前端要读的字段
  * 2. 前端 `web/src/lib/api.ts` 不能再出现 `data.task` 这种拆包装的写法
  * 3. `handoff.list` / `task.transition` 这类前端在调的 Op 必须真的存在（曾长期是"未实现"）
+ * 4. 描述字段的参数名是 `description`（曾写成 `body` → 服务端静默忽略 → 填了等于没填）
+ * 5. `task.get` 必须真的返回描述与检查项**明细**（详情抽屉概览区的数据源）
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -201,6 +203,71 @@ describe("前端在调、服务端必须存在的 Op", () => {
   });
 });
 
+describe("描述与检查项：写得进也要读得回（Web 概览区的两端）", () => {
+  test("task.create 的参数名是 description，写进去后 task.get 用 body 返回", async () => {
+    const created = await callOp<{ id: string }>({
+      kind: "task.create",
+      params: {
+        title: "带描述的卡",
+        description: "背景、约束、验收标准",
+        checklist: ["写实现", "补测试"],
+      },
+    });
+    expect(created.ok).toBe(true);
+
+    const res = await callOp<Record<string, unknown>>({
+      kind: "task.get",
+      params: { task_id: created.data.id },
+    });
+    // 库里的列名是 body，对外的字段名是 description——两边都要钉住，
+    // 否则前端就会像上次那样拿 body 去创建（静默丢数据）
+    expect(res.data.body).toBe("背景、约束、验收标准");
+
+    // 概览区要逐项渲染检查项，所以必须是带 text/done 的数组，不能只有计数
+    const checklist = res.data.checklist as Array<{ text: string; done: boolean }>;
+    expect(Array.isArray(checklist)).toBe(true);
+    expect(checklist.map((c) => c.text)).toEqual(["写实现", "补测试"]);
+    expect(checklist.every((c) => c.done === false)).toBe(true);
+  });
+
+  test("参数名写成 body 不会报错，但也存不进去（这正是那次静默丢数据）", async () => {
+    // 这条不是期望行为，而是把坑钉死：多余字段被忽略，调用方不会收到任何提示，
+    // 所以前端那边必须有静态守卫（见下一个 describe）盯着参数名。
+    const created = await callOp<{ id: string }>({
+      kind: "task.create",
+      params: { title: "参数名写错的卡", body: "这段描述会被丢掉" } as unknown as { title: string },
+    });
+    expect(created.ok).toBe(true);
+
+    const res = await callOp<Record<string, unknown>>({
+      kind: "task.get",
+      params: { task_id: created.data.id },
+    });
+    expect(res.data.body ?? null).toBeNull();
+  });
+
+  test("task.get 返回依赖列表（概览区的“关联任务”）", async () => {
+    const upstream = await callOp<{ id: string }>({ kind: "task.create", params: { title: "上游" } });
+    const downstream = await callOp<{ id: string }>({ kind: "task.create", params: { title: "下游" } });
+    const added = await callOp<{ ok: boolean }>({
+      kind: "task.dep.add",
+      params: { task_id: downstream.data.id, depends_on: upstream.data.id },
+    });
+    expect(added.ok).toBe(true);
+
+    const res = await callOp<Record<string, unknown>>({
+      kind: "task.get",
+      params: { task_id: downstream.data.id },
+    });
+    // 形状陷阱：dependencies 是 TaskDep 对象数组（前端要抽 dependsOnId），
+    // 而 unfinished_dependencies 已经是 id 数组。曾按“都是字符串”过滤，一个依赖都留不下。
+    const deps = res.data.dependencies as Array<{ taskId: string; dependsOnId: string }>;
+    expect(Array.isArray(deps)).toBe(true);
+    expect(deps.map((d) => d.dependsOnId)).toEqual([upstream.data.id]);
+    expect(res.data.unfinished_dependencies).toEqual([upstream.data.id]);
+  });
+});
+
 describe("前端源码不得再拆 { task } 包装（本次 bug 的静态守卫）", () => {
   /** web/src 下的所有源码（前端不在根 tsc 编译范围，只能静态扫） */
   function readWebSources(): Array<[string, string]> {
@@ -231,5 +298,26 @@ describe("前端源码不得再拆 { task } 包装（本次 bug 的静态守卫�
     // 未实现的 Op 会让整段交互静默失效（前端 .catch 吞掉），所以这里逐个钉住
     const missing = [...kinds].filter((k) => !opsSrc.includes(`case "${k}":`));
     expect(missing).toEqual([]);
+  });
+
+  test("task.create 传的是 description，不是 body（写错会被服务端静默忽略）", () => {
+    const sources = readWebSources();
+    const opsSrc = readFileSync(join(ROOT, "src", "core", "ops.ts"), "utf8");
+    // 契约字段名以服务端 CreateTaskParams 为准，改契约时这条会一起提醒改前端
+    expect(opsSrc).toContain("description?: string | null");
+
+    // 取每个 `kind: "task.create"` 之后紧跟的那段 params 字面量
+    const blocks: string[] = [];
+    for (const [, src] of sources) {
+      for (const m of src.matchAll(/kind:\s*"task\.create"/g)) {
+        blocks.push(src.slice(m.index!, m.index! + 600));
+      }
+    }
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      expect(block).toContain("description:");
+      // params 里出现 body: 只会让描述丢失，且没有任何报错
+      expect(/\bbody:/.test(block)).toBe(false);
+    }
   });
 });

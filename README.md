@@ -1,6 +1,6 @@
 # agent-kanban
 
-[English](README.md) · [中文](README_zh.md) · [For developers](Develop.md) · [开发者文档](Develop_zh.md)
+[English](README.md) · [中文](README-zh.md) · [For developers](Develop.md) · [开发者文档](Develop-zh.md)
 
 A project-scoped task board that lets multiple AI agent sessions share one source of truth — and pick up each other's work when they crash.
 
@@ -313,7 +313,7 @@ directory, and the board itself is found by walking up from there.
 {
   "mcpServers": {
     "kanban": {
-      "command": "dist/kanban",
+      "command": "kanban",
       "args": ["mcp"]
     }
   }

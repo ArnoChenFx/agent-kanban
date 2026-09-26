@@ -572,7 +572,19 @@ export function Board() {
       </div>
 
       {/* ---------- 对话框 ---------- */}
-      <TaskDetailSheet task={selected} token={token} project={project ?? ""} onClose={() => setSelected(null)} />
+      {/* tasksById 传进详情抽屉：依赖/父任务要显示成"编号 + 标题"，
+          只给编号的话用户还得自己回看板上去找那张卡。 */}
+      <TaskDetailSheet
+        task={selected}
+        token={token}
+        project={project ?? ""}
+        tasksById={tasksById}
+        onSelect={(id) => {
+          const target = tasksById.get(id)
+          if (target) setSelected(target)
+        }}
+        onClose={() => setSelected(null)}
+      />
 
       <NewTaskDialog
         open={newTaskOpen}
@@ -583,7 +595,10 @@ export function Board() {
               kind: "task.create",
               params: {
                 title: input.title,
-                body: input.body,
+                // 契约字段名是 `description`（CreateTaskParams），不是 `body`：
+                // 写成 body 会被服务端静默忽略，用户在"新建任务"里填的描述就丢了。
+                // 服务端收到 description 后自己存进 tasks.body 列。
+                description: input.description,
                 priority: input.priority,
                 labels: input.labels,
                 checklist: input.checklist,

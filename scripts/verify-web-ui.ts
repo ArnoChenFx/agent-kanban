@@ -78,8 +78,9 @@ try {
   if (!token) throw new Error("未能从 server 启动输出中取得管理员 token");
   const env = { KANBAN_SERVER: BASE, KANBAN_PROJECT: PROJECT, KANBAN_KEY: token };
 
-  // ---- 造一张“时间线/交接/计划”三样都有的卡 ----
+  // ---- 造一张“描述/检查项/依赖 + 时间线/交接/计划”全都有的卡 ----
   // 注意：plan save 默认就挂到任务上（要“不挂”才加 --no-attach）
+  // 上游任务放在最后建：这样 CARD_TITLE 仍然是 T-0001，脚本后面的断言不用改
   const seeds: string[][] = [
     ["session", "start", "--agent", "pi-fix", "--harness", "pi"],
     ["task", "add", CARD_TITLE, "-p", "0", "--check", "第一步,第二步", "-d", "详情页要能打开"],
@@ -87,6 +88,8 @@ try {
     ["task", "progress", "T-0001", "--pct", "50", "--check", "第一步", "--note", "做了一半"],
     ["plan", "save", "--task", "T-0001", "--title", "T-0001 的计划", "--body", "1. 修前端 2. 补测试"],
     ["handoff", "--task", "T-0001", "--summary", "交接摘要：前半段完成", "--next", "收尾"],
+    ["task", "add", "上游任务", "-p", "2"],
+    ["task", "dep", "add", "T-0001", "T-0002"],
   ];
   for (const args of seeds) {
     const r = await run(args, env);
@@ -212,6 +215,15 @@ try {
   let sheet = await sheetText();
   check("详情抽屉已打开", sheet.role === "dialog", `role=${sheet.role}`);
   check("抽屉显示任务号", sheet.text.includes("T-0001"));
+  // 描述 / 检查项 / 依赖：这三样服务端 task.get 一直都在返回，之前的详情面板压根没渲染，
+  // 于是“新建任务时填的描述、勾的检查项，创建完就再也看不到”。几何与文案都钉死。
+  check("抽屉显示描述正文", sheet.text.includes("详情页要能打开"), "");
+  check("抽屉显示检查项标题", sheet.text.includes("检查项"));
+  check("检查项逐项列出（已勾/未勾都在）", sheet.text.includes("第一步") && sheet.text.includes("第二步"));
+  check("检查项带完成计数", /1\s*\/\s*2\s*完成/.test(sheet.text), "");
+  check("抽屉显示关联任务与依赖", sheet.text.includes("关联任务") && sheet.text.includes("T-0002"));
+  // 依赖行右侧的可见标签：T-0002 还没做，所以必须是“未完成”而不是“已完成”
+  check("依赖行标出未完成", /T-0002[\s\S]{0,40}未完成/.test(sheet.text), "");
   check("无「plan_id」运行时异常", ![...exceptions, ...consoleErrors].some((e) => e.includes("plan_id")));
   check("无未捕获异常", exceptions.length === 0, exceptions[0]?.split("\n")[0] ?? "");
   check("无控制台 error", consoleErrors.length === 0, [...new Set(consoleErrors)][0]?.slice(0, 120) ?? "");
@@ -222,7 +234,6 @@ try {
   check("交接页签有角标计数（handoff.list 生效）", Number(badge?.[1] ?? 0) > 0, `count=${badge?.[1] ?? "无"}`);
   // 计划页签只有 plan.show 成功才会渲染
   check("有「计划」页签（plan_id + plan.show 生效）", sheet.text.includes("计划"));
-
   const tabHandoff = await openTab("交接");
   sheet = await sheetText();
   check("交接页签可点开", tabHandoff);
@@ -371,6 +382,34 @@ try {
   // 词典漏键会在控制台打 warn（开发构建）；运行时不至于，但至少不能有运行时异常
   check("切语言后无未捕获异常", exceptions.length === 0, exceptions[0]?.split("\n")[0] ?? "");
   check("切语言后无控制台 error", consoleErrors.length === 0, [...new Set(consoleErrors)][0]?.slice(0, 120) ?? "");
+
+  // 详情抽屉的概览区（描述 / 检查项 / 关联任务）也必须跟着切语言。
+  // 这三条是新加的键，最容易在补 en 词典时漏掉，而漏掉的表现是"英文界面里露出中文标题"。
+  console.log("\n=== 界面语言：详情抽屉概览区 ===");
+  await evaluate<boolean>(`(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === ${JSON.stringify(CARD_TITLE)});
+    if (!btn) return false;
+    btn.click();
+    return true;
+  })()`);
+  await sleep(1800);
+  const enSheet = await sheetText();
+  check("英文界面显示 Description / Checklist / Related tasks",
+    enSheet.text.includes("Description") && enSheet.text.includes("Checklist") && enSheet.text.includes("Related tasks"),
+    enSheet.text.slice(0, 200).replace(/\n/g, " / "));
+  // 只查概览区的**小节标题**（h3），不查整段文本：
+  // 事件流里的“检查项更新（1/2 完成）”是后端事件数据，按约定不翻译，
+  // 拿整段文本去扫中文字会把合法的数据判成漏翻。
+  const enHeadings = await evaluate<string[]>(
+    `[...document.querySelectorAll('[role="dialog"] h3')].map((e) => e.textContent.trim())`,
+  );
+  check("概览小节标题是英文（没漏翻）", enHeadings.length > 0 && enHeadings.every((s) => !/[一-鿿]/.test(s)), enHeadings.join(" / "));
+  await evaluate(`(() => {
+    const close = document.querySelector('[data-slot="sheet-close"]');
+    if (close) close.click();
+    return true;
+  })()`);
+  await sleep(500);
 
   console.log("\n=== 界面语言：管理页（/admin）===");
   await send("Page.navigate", { url: `${BASE}/admin` });

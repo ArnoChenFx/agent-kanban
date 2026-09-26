@@ -204,7 +204,7 @@ MCP server 用的是**和 CLI 完全相同的配置解析**，所以 `.kanban/co
 {
   "mcpServers": {
     "kanban": {
-      "command": "dist/kanban.exe",
+      "command": "kanban",
       "args": ["mcp"]
     }
   }
