@@ -407,18 +407,13 @@ kanban_session_end(session_id="s-4k9d2m")
 
 ### 方式三：agent skill
 
-```bash
-npx skills add ArnoChenFx/agent-kanban
-```
-
 skill 是第三种方式，也是唯一一种教 agent **工作流**而不是接口的方式。协议文件说的是"开工先跑
 `agent-kanban context`"；skill 说的是拿到退出码 3 时该换卡而不是加 `--force`、`task progress` 顺带续租、
 `doing → done` 会被守卫拦下所以要绕 `review`。agent 容易踩的那些点被拆成了几个 reference：
 完整命令参考、MCP 工具对照、本地与远程的差异，以及一张按退出码索引的排障表。
 
 ```bash
-npx skills add ArnoChenFx/agent-kanban            # 安装
-npx skills add ArnoChenFx/agent-kanban --list     # 看会装些什么
+npx skills add ArnoChenFx/agent-kanban --skill agent-kanban            # 安装
 ```
 
 skill 实体放在本仓库的 `skills/` 下，所以任何项目都能装，不只是本仓库。装到已经建好看板的项目里，

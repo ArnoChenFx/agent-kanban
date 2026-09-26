@@ -414,10 +414,6 @@ the same code and `name` the CLI would exit with, so an agent can branch on them
 
 ### Option 3 — the agent skill
 
-```bash
-npx skills add ArnoChenFx/agent-kanban
-```
-
 A skill is the third option, and it is the one that teaches an agent the *workflow* rather than
 the interface. The protocol file says "run `agent-kanban context` first"; the skill says what to do when
 `task claim` returns exit code 3, that `task progress` doubles as lease renewal, and that
@@ -426,8 +422,7 @@ keeps getting wrong as reference files: the full command reference, the MCP tool
 local-versus-remote differences, and a troubleshooting table keyed by exit code.
 
 ```bash
-npx skills add ArnoChenFx/agent-kanban            # install
-npx skills add ArnoChenFx/agent-kanban --list     # what would be installed
+npx skills add ArnoChenFx/agent-kanban --skill agent-kanban            # install
 ```
 
 Skills live in this repo under `skills/`, so the install works on any project, not just this one.
