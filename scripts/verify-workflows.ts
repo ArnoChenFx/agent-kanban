@@ -93,7 +93,9 @@ for (const file of FILES) {
     check("5 个平台矩阵", (text.match(/target: bun-/g) ?? []).length === 5, `${(text.match(/target: bun-/g) ?? []).length} 个`);
     check("arm64 走 qemu", /--platform linux\/arm64/.test(text));
     check("生成校验和", /sha256sum/.test(text) && /shasum -a 256/.test(text));
-    check("推 GHCR 与 Docker Hub", /ghcr\.io/.test(text) && /DOCKERHUB_USERNAME/.test(text));
+    // 只推 GHCR：release.yml 已移除 Docker Hub 步骤（secrets 在 step 级 if 里
+    // 不可用，会直接让 workflow 文件解析失败）
+    check("只推 GHCR", /ghcr\.io/.test(text) && !/DOCKERHUB/.test(text));
     check("release notes 仍为中文（产品内容）", /多会话 agent 共享的项目级任务看板/.test(text));
     check("产物必须先内嵌前端", /cd web && bun run build[\s\S]*gen:assets/.test(text));
   }

@@ -6,7 +6,7 @@
 # Artifacts:
 #   - Self-contained binaries for 5 platforms (`bun build --compile`; download and
 #     run, no bun installation required)
-#   - Docker images (linux/amd64 + linux/arm64) pushed to GHCR and Docker Hub
+#   - Docker images (linux/amd64 + linux/arm64) pushed to GHCR only
 #   - GitHub Release with binaries and checksums
 #
 # Three hard constraints (read before editing this workflow):
@@ -224,14 +224,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to Docker Hub
-        # Skipped when secrets are unset (GHCR always works, Docker Hub is optional)
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Build and push (GHCR)
         uses: docker/build-push-action@v6
         with:
@@ -246,19 +238,6 @@ jobs:
             org.opencontainers.image.description=Project-scoped shared task board for multi-agent sessions (server)
             org.opencontainers.image.version=${{ github.ref_name }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Push to Docker Hub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' }}
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/agent-kanban:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/agent-kanban:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

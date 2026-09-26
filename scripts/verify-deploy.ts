@@ -50,8 +50,11 @@ check("有健康检查", /healthcheck:/.test(compose));
 check("有 restart 策略", /restart:\s*unless-stopped/.test(compose));
 check("数据卷已声明", /kanban-data:/.test(compose));
 check("日志轮转已配置", /max-size/.test(compose));
-check("镜像名可覆盖", /KANBAN_IMAGE:-agent-kanban:local/.test(compose));
-check("注释说明了为何不带代理", /既有基础设施/.test(compose));
+check("镜像名可覆盖", /KANBAN_IMAGE:-\s*ghcr\.io\/[\w-]+\/agent-kanban/.test(compose));
+// 默认拉 GHCR 而非本地构建；build 块已降为注释掉的可选项
+check("默认用 GHCR 镜像", /KANBAN_IMAGE:-\s*ghcr\.io\//.test(compose));
+check("本地 build 已降为可选项", !/^\s{4}build:$/m.test(compose));
+check("注释说明了为何不带代理", /already has it|corporate gateway/i.test(compose));
 
 console.log("\n=== deploy/ 与 bootstrap ===");
 const { existsSync } = await import("node:fs");
@@ -68,10 +71,17 @@ check("含 KANBAN_BIND", /KANBAN_BIND=/.test(env));
 check("含 KANBAN_PORT", /KANBAN_PORT=/.test(env));
 check("含 KANBAN_IMAGE 说明", /KANBAN_IMAGE/.test(env));
 check("含 KANBAN_ADMIN_TOKEN", /^KANBAN_ADMIN_TOKEN=/m.test(env));
-check("说明了 token 格式要求", /32 位十六进制/.test(env));
+check("说明了 token 格式要求", /32 lowercase hex/i.test(env));
 check("无 KANBAN_DOMAIN（已移除 TLS 方案）", !/^KANBAN_DOMAIN=/m.test(env));
 check("说明了 TLS 需自备", /TLS/.test(env));
 check("无行尾空格", !/ +$/m.test(env));
+
+// 部署配置是给部署者读的，不只是给维护者读：这两个文件里不该出现中文，
+// 和 verify-workflows.ts 对 workflow 的要求是同一条约定。
+for (const [label, text] of [["docker-compose.yml", compose], [".env.example", env]] as const) {
+  const cjk = text.match(/[\u4e00-\u9fff]+/g) ?? [];
+  check(`${label} 注释为英文（无中文）`, cjk.length === 0, cjk.slice(0, 3).join(" | "));
+}
 
 console.log("\n=== Dockerfile ===");
 const df = readText("Dockerfile");
