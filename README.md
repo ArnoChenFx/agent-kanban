@@ -418,9 +418,6 @@ terminator before exposing it: without TLS, tokens go over the wire in plaintext
 ## Documentation
 
 - [Develop.md](Develop.md) — architecture, build, release, verification
-- `docs/plan/001-总体设计.md` — design and data model
-- `docs/plan/002-接口契约.md` — HTTP API and Op protocol
-- `docs/note/` — implementation notes and post-mortems
 
 ## License
 

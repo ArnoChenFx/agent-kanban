@@ -405,9 +405,6 @@ project key 是由目录名派生的，所以新旧机器不同。`import` 会�
 ## 文档
 
 - [Develop_zh.md](Develop_zh.md) —— 架构、构建、发布、验证
-- `docs/plan/001-总体设计.md` —— 设计与数据模型
-- `docs/plan/002-接口契约.md` —— HTTP API 与 Op 协议
-- `docs/note/` —— 实施记录与踩坑笔记
 
 ## 许可证
 

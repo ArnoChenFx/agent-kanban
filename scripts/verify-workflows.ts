@@ -35,10 +35,8 @@ function parseYaml(text: string): { jobs: string[]; steps: number; ok: boolean }
   return { jobs, steps, ok };
 }
 
-// Release notes 的 heredoc 是产品内容，保留中文；这里显式列出豁免区间
-const RELEASE_NOTES_START = "cat > release-notes.md <<EOF";
-const RELEASE_NOTES_END = "          EOF";
-
+// Workflow 文件（含 release notes heredoc）全文应为英文：这些内容面向 GitHub 界面
+// 与国际使用者，无豁免区间。
 for (const file of FILES) {
   console.log(`\n=== ${file} ===`);
   const path = join(ROOT, ".github", "workflows", file);
@@ -52,17 +50,13 @@ for (const file of FILES) {
   check("有 jobs 段且非空", jobs.length > 0, jobs.join(", "));
   check("有 steps", steps > 5, `${steps} 个`);
 
-  // ---- 中文残留检查（豁免 release notes 正文）----
+  // ---- 中文残留检查（全文，无豁免）----
   const cjk = /[一-鿿]/;
   const offenders: string[] = [];
-  let inNotes = false;
   lines.forEach((line, i) => {
-    if (line.includes(RELEASE_NOTES_START)) inNotes = true;
-    if (line.trim() === RELEASE_NOTES_END.trim()) inNotes = false;
-    if (inNotes) return;
     if (cjk.test(line)) offenders.push(`${i + 1}: ${line.trim().slice(0, 60)}`);
   });
-  check("工作流机制部分无中文", offenders.length === 0, offenders.slice(0, 3).join(" | "));
+  check("全文无中文", offenders.length === 0, offenders.slice(0, 3).join(" | "));
 
   // ---- 关键结构 ----
   check("有 bun 版本固定", /BUN_VERSION:\s*"[\d.]+"/.test(text));
@@ -90,14 +84,64 @@ for (const file of FILES) {
     check("不一致时报错退出", /::error::tag version/.test(text));
     check("需要 verify 门禁", /needs: verify/.test(text));
     check("release 依赖 binary 与 docker", /needs: \[binary, docker\]/.test(text));
-    check("5 个平台矩阵", (text.match(/target: bun-/g) ?? []).length === 5, `${(text.match(/target: bun-/g) ?? []).length} 个`);
-    check("arm64 走 qemu", /--platform linux\/arm64/.test(text));
+    // 只数 matrix 条目（`- target: bun-`），不能数全文：注释里提到这个字符串会被计入
+    const codeLines = text
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("#"))
+      .join("\n");
+    check("4 个平台矩阵", (codeLines.match(/- target: bun-/g) ?? []).length === 4, `${(codeLines.match(/- target: bun-/g) ?? []).length} 个`);
+
+    // ---- artifact 下载必须带 pattern ----
+    // 踩过的坑：`cache-to: type=gha` 会额外产生 `<owner>~<repo>~<id>.dockerbuild`，
+    // 不带 pattern 的 download-artifact 会把构建缓存也当产物拉下来；它很大且易拉取
+    // 失败（见过 “Artifact download failed after 5 retries”），直接把整个 Release 拖垮，
+    // 尽管二进制早已下载完成。
+    const dlIdx = text.indexOf("actions/download-artifact@v4");
+    const dl = dlIdx === -1 ? "" : text.slice(dlIdx, text.indexOf("\n\n", dlIdx));
+    check("download-artifact 带 pattern", /pattern:\s*bin-\*/.test(dl), dl.trim().replace(/\s+/g, " ").slice(0, 90));
+    check("download-artifact 过滤掉 dockerbuild 缓存", !/dockerbuild/.test(dl));
+    check("产物数量按 matrix 校验", /EXPECTED=\$\(grep -c /.test(codeLines));
+    check("产物数量不符则报错退出", /::error::expected \$\{EXPECTED\} platform binaries/.test(codeLines));
+    // arm64 二进制已移除：Docker 镜像多架构覆盖，且 arm64 独立产物只能用 qemu 冒烟
+    check("不再发布 linux-arm64 二进制", !/bun-linux-arm64/.test(text) && !/kanban-linux-arm64/.test(text));
+    // 只要求**冒烟测试里**没有 qemu 分支；setup-qemu-action 本身仍需要，
+    // 因为 Docker 镜像本身就是多架构（linux/amd64 + linux/arm64）。
+    check("冒烟测试不再有 qemu 分支", !/platform linux\/arm64/.test(text));
+    check("Docker 仍构建多架构", /platforms:\s*linux\/amd64,linux\/arm64/.test(text));
+    check("release notes 指向 Docker 替代 arm64", /linux-arm64|aarch64|arm64/i.test(text));
+
+    // ---- digest 记录 ----
+    // 曾用 `| head -c 200` 截断多行 JSON 再写 $GITHUB_OUTPUT，GitHub 按 key=value
+    // 逐行解析，遇到 JSON 片段直接报 Invalid format。现在必须产出**单行**值。
+    check("digest 提取不截断多行输出", !/head -c \d+/.test(text), "仍有 head -c 截断");
+    check("digest 从 imagetools inspect 取 sha256", /imagetools inspect[\s\S]*sha256:/.test(text));
+    check("digest 通过 job outputs 传给 release", /outputs:[\s\S]*steps\.digest\.outputs\.digest/.test(text));
+    check("release notes 展示 digest", /needs\.docker\.outputs\.digest/.test(text));
     check("生成校验和", /sha256sum/.test(text) && /shasum -a 256/.test(text));
     // 只推 GHCR：release.yml 已移除 Docker Hub 步骤（secrets 在 step 级 if 里
     // 不可用，会直接让 workflow 文件解析失败）
     check("只推 GHCR", /ghcr\.io/.test(text) && !/DOCKERHUB/.test(text));
-    check("release notes 仍为中文（产品内容）", /多会话 agent 共享的项目级任务看板/.test(text));
+    check("release notes 已改为英文", /project-scoped task board shared by multiple agent sessions/.test(text));
     check("产物必须先内嵌前端", /cd web && bun run build[\s\S]*gen:assets/.test(text));
+
+    // ---- registry 路径必须全小写 ----
+    // 踩过的坑：github.repository 的 owner 可以带大写（ArnoChenFx），直接拼进 tag
+    // 会被 buildx 拒绝（repository name must be lowercase），而且只在真推送时才炸。
+    // 固化成门禁，并要求“先小写化，再引用”。
+    check(
+      "tag 未直接拼接 github.repository",
+      !/ghcr\.io\/\$\{\{ github\.repository \}\}/.test(text),
+      "有直接拼 ${{ github.repository }} 的地方",
+    );
+    check("镜像坐标经小写化步骤产出", /tr '\[:upper:\]'\ '\[:lower:\]'/.test(text) && /steps\.meta\.outputs\.ghcr/.test(text));
+    check("镜像路径不重复拼仓库名", !/github\.repository \}\}\/agent-kanban:/.test(text));
+
+    // compose 的默认镜像必须与 release 推送到的是同一个（小写、同一路径）
+    const composeImg =
+      /image:\s*"?ghcr\.io\/([\w.\/-]+)/.exec(readFileSync(`${ROOT}/docker-compose.yml`, "utf8"))?.[1] ?? "";
+    check("compose 默认镜像已解析", composeImg.length > 0, composeImg);
+    check("compose 默认镜像全小写", composeImg === composeImg.toLowerCase(), composeImg);
+    check("compose 默认镜像不含大写 owner", !/ArnoChenFx/.test(composeImg), composeImg);
   }
 }
 

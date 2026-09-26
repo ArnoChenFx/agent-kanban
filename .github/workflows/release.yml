@@ -286,70 +286,99 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ⚠ **pattern is required, not an optimisation.**
+      #   `cache-to: type=gha` in the docker jobs creates an extra artifact named
+      #   `<owner>~<repo>~<id>.dockerbuild`. Downloading "everything" pulls that
+      #   build cache in too, and it is large, short-lived, and can fail to fetch
+      #   (observed: "Artifact download failed after 5 retries") — taking the whole
+      #   Release down even though the binaries had downloaded fine.
+      #   The Release only ever needs the four bin-* artifacts.
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: bin-*
           merge-multiple: true
 
       - name: Collect assets
         run: |
+          set -euo pipefail
           mkdir -p release-assets
-          find artifacts -type f \( -name 'kanban-*' \) -exec cp {} release-assets/ \;
+          find artifacts -type f -name 'kanban-*' -exec cp {} release-assets/ \;
           ls -lh release-assets/
+          # Fail loudly if a platform artifact is missing, rather than publishing a
+          # Release that silently offers one fewer download.
+          # The expected count is derived from the binary matrix, so adding or
+          # removing a platform later needs no edit here.
+          EXPECTED=$(grep -c 'target: bun-' "$GITHUB_WORKSPACE/.github/workflows/release.yml")
+          COUNT=$(ls -1 release-assets/kanban-* 2>/dev/null | grep -vc '\.sha256$' || true)
+          if [ "$COUNT" -ne "$EXPECTED" ]; then
+            echo "::error::expected ${EXPECTED} platform binaries, found ${COUNT}:"
+            ls -1 release-assets/ || true
+            exit 1
+          fi
+          echo "collected ${COUNT}/${EXPECTED} platform binaries"
 
-      # Release notes stay in Chinese on purpose: they are product content for the
-      # people who download and use this project, not workflow machinery.
+      # Release notes are user-facing product content, so they follow the repository
+      # default (English) rather than the workflow's English-only rule for machinery.
       - name: Generate release notes
         run: |
           cat > release-notes.md <<EOF
           ## agent-kanban ${{ github.ref_name }}
 
-          多会话 agent 共享的项目级任务看板：任务共享、进度可追溯，agent 崩溃后能恢复上下文与交接。
+          A project-scoped task board shared by multiple agent sessions: tasks are shared,
+          progress stays traceable, and a crashed agent can be picked up mid-task with its
+          context and handoff intact.
 
-          ### 下载
+          ### Download
 
-          | 平台 | 文件 |
+          | Platform | File |
           | --- | --- |
           | Linux x64 | \`kanban-linux-x64\` |
           | macOS x64 | \`kanban-darwin-x64\` |
           | macOS arm64 | \`kanban-darwin-arm64\` |
           | Windows x64 | \`kanban-windows-x64.exe\` |
 
-          二进制是**自包含**的（内嵌 bun 运行时与数据库 schema），下载即用，无需安装 bun。
-          Linux 版本需给执行权限：\`chmod +x kanban-linux-x64\`。
+          The binaries are **self-contained** (the Bun runtime and the database schema are
+          embedded), so download and run, no bun installation required.
+          On Linux: \`chmod +x kanban-linux-x64\`.
+
+          No Linux arm64 binary is published. Use the Docker image, which resolves the
+          architecture for you.
 
           ### Docker
 
           \`\`\`bash
-          # 启动 server（Web 看板 + CLI 远程后端）
+          # Start the server (web board + remote backend for the CLI)
           docker run -d --name kanban -p 7788:7788 -v kanban-data:/data \\
             ${{ steps.meta.outputs.ghcr }}:${{ steps.meta.outputs.version }}
 
-          # 首次启动会打印管理员 token，用它签发 project token
+          # First boot prints the admin token once; use it to issue project tokens
           docker logs kanban
           \`\`\`
 
-          数据卷 \`/data\` 存放 project、token、任务与交接；换机器时备份这个目录即可迁移。
+          The \`/data\` volume holds projects, tokens, tasks, and handoffs. Back up that one
+          directory to move the board to another machine.
 
-          镜像 digest（可 pin 到确切版本）：
+          Image digest (pin an exact build with it):
 
           \`\`\`
           ${{ needs.docker.outputs.image }}
           ${{ needs.docker.outputs.digest }}
           \`\`\`
 
-          常用环境变量：\`KANBAN_PORT\`（默认 7788）、\`KANBAN_HOST\`（默认 0.0.0.0）、\`KANBAN_WEB_DIR\`。
+          Common environment variables: \`KANBAN_PORT\` (default 7788), \`KANBAN_HOST\`
+          (default 0.0.0.0), \`KANBAN_WEB_DIR\`.
 
-          ### 快速开始
+          ### Quick start
 
           \`\`\`bash
-          kanban init                      # 初始化本地看板
+          kanban init                      # create a local board
           kanban session start --agent pi-main
-          kanban task add "实现存储层"
-          kanban context                   # 读现场：交接 / 在做 / 可认领
+          kanban task add "implement the storage layer"
+          kanban context                   # read the situation: handoffs, your cards, what is free
           \`\`\`
 
-          校验和（SHA-256）见同名 \`.sha256\` 文件。
+          SHA-256 checksums are in the matching \`.sha256\` files.
           EOF
 
       - name: Create Release
