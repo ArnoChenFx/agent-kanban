@@ -27,3 +27,4 @@ Thumbs.db
 .tmp/
 *.tmp
 skills-lock.json
+src/server/assets.generated.ts

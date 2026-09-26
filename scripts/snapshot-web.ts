@@ -98,7 +98,7 @@ await run(["task", "claim", "T-0002"], env);
 await run(["task", "progress", "T-0002", "--pct", "100", "--note", "迁移已写好"], env);
 await run(["task", "review", "T-0002"], env);
 await run(["task", "done", "T-0001", "--note", "核心逻辑完成，剩下写测试"], env);
-await run(["handoff", "--task", "T-0004", "--summary", "主题定稿：晨雾 Paper（暖米白 + 墨绿/赭石/酒红）", "--next", "把令牌接进 Tailwind，做亮暗双模式", "--open", "字体用衬线标题还是全无衬线？"], env);
+await run(["handoff", "--task", "T-0004", "--summary", "主题定稿：中性灰 + 白底，状态色保留彩色", "--next", "确认暗色灰阶是否够分层", "--open", "字体用衬线标题还是全无衬线？"], env);
 
 // ---- 浏览器截图 ----
 const chromePaths = [

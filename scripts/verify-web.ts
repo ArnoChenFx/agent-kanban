@@ -67,7 +67,7 @@ try {
   await run(["task", "add", "补 SSE 实时刷新"], env);
   await run(["task", "claim", "T-0001"], env);
   await run(["task", "progress", "T-0001", "--pct", "60", "--check", "主题"], env);
-  await run(["handoff", "--task", "T-0001", "--summary", "主题定稿：晨雾 Paper", "--next", "做布局"], env);
+  await run(["handoff", "--task", "T-0001", "--summary", "主题定稿：中性灰 + 白底，状态色保留彩色", "--next", "做布局"], env);
 
   console.log("\n=== 1. 静态资源 ===");
   const root = await fetch(BASE + "/");
@@ -83,8 +83,8 @@ try {
     const css = await fetch(BASE + cssMatch[1]!);
     const text = await css.text();
     check("CSS 可访问", css.status === 200, `${text.length} 字节`);
-    // 晨雾 Paper 的主色必须出现在编译产物里（证明主题令牌生效）
-    check("主题令牌已编译（墨绿主色）", text.includes("--primary"), "");
+    // 主题令牌必须出现在编译产物里（证明 index.css 被打进了 bundle）
+    check("主题令牌已编译", text.includes("--primary"), "");
   }
 
   // 资源文件真的能取到

@@ -69,7 +69,7 @@ try {
     const css = await fetch(BASE + cssMatch[1]!);
     const cssText = await css.text();
     check("CSS 从二进制内读出", css.status === 200, `${(cssText.length / 1024).toFixed(0)} KB`);
-    check("CSS 含晨雾 Paper 主色", cssText.includes("--primary"));
+    check("CSS 含主题令牌", cssText.includes("--primary"));
   }
 
   // 字体（woff2 是内嵌里最大的部分，抽一个验证）
