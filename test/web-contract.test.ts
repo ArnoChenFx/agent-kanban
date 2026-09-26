@@ -345,4 +345,19 @@ describe("前端源码不得再拆 { task } 包装（本次 bug 的静态守卫�
       expect(/\bbody:/.test(block)).toBe(false);
     }
   });
+
+  test("界面不得直接渲染后端的 next_actions（那是给 agent 看的中文串）", () => {
+    // 曾经的写法：`context.next_actions.map(...)` → 英文界面的建议区漏出中文。
+    // 现在必须走 localizedNextActions（web/src/lib/next-actions.ts）按代号选词典。
+    //
+    // 只扫组件层：lib/api.ts 作为传输层读 `env.next_actions` 解析整个包络是应该的，
+    // 它不渲染任何东西。禁令针对的是「把中文串画到界面上」。
+    const offenders: string[] = [];
+    for (const [file, src] of readWebSources()) {
+      if (!/components[\\/]/.test(file)) continue;
+      if (src.includes("next-actions")) continue; // 映射表自身不算
+      if (/\.next_actions\b/.test(src)) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
+  });
 });

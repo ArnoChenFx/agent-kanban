@@ -361,7 +361,7 @@ describe("token 权限模型（ADR-13）", () => {
     });
     expect(afterRes.status).toBe(401);
     const body = (await afterRes.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("吊销");
+    expect(body.error.message).toContain("has been revoked");
   });
 
   test("过期后失效", async () => {

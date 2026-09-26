@@ -25,27 +25,29 @@ import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./arg
 import { createOutput } from "./output.ts";
 import type { Scope } from "../core/tasks.ts";
 
-const USAGE = `用法：agent-kanban export | import | snapshot | compact
+const USAGE = `Usage: agent-kanban export | import | snapshot | compact
 
-  export   [--out <目录>] [--since <ts>]   导出事件 journal（按天分文件）
-  import   <文件|目录>... [--dry-run]      从 journal 重建库（按 seq 幂等去重）
+  export   [--out <dir>] [--since <ts>]          Export the event journal (one file per day)
+  import   <file|dir>... [--dry-run]             Rebuild the database from a journal (idempotent, deduped by seq)
               [--project <key>] [--keep-project]
-  snapshot [--out <文件>]                  写看板快照（人可读 JSON，不可 import）
-  compact  [--keep-days 30]                裁剪旧事件（先自动快照再删）
+  snapshot [--out <file>]                        Write a board snapshot (human-readable JSON, cannot be imported)
+  compact  [--keep-days 30]                      Trim old events (takes a snapshot first, then deletes)
 
-说明：
-  · .kanban/kanban.db 不入 git，跨机器迁移靠 export + import
-  · events 是唯一事实来源，所以重放 journal 能完整恢复，不需要备份 db 文件
-  · project key 由目录名派生，新旧机器不同。import 默认把事件改写到当前 project；
-    要保留原 key（多 project 迁移）用 --keep-project
-  · compact 不可逆：它会先写一份快照到 .kanban/snapshots/
-  · 这几个命令只在本地模式可用（远程模式的真身在 server 上）
+Notes:
+  · .kanban/kanban.db is not in git; cross-machine migration relies on export + import
+  · events are the single source of truth, so replaying a journal fully restores the board
+    and there is no need to back up the db file
+  · the project key is derived from the directory name, so it differs between machines. import
+    rewrites the events to the current project by default; pass --keep-project to keep the
+    original key (multi-project migration)
+  · compact is irreversible: it first writes a snapshot to .kanban/snapshots/
+  · these commands only work in local mode (in remote mode the real data lives on the server)
 
-示例：
+Examples:
   agent-kanban export --out .kanban/journal
   agent-kanban import .kanban/journal --dry-run
   agent-kanban import .kanban/journal
-  agent-kanban rebuild --write        # 重放后重建投影
+  agent-kanban rebuild --write        # rebuild the projections after replaying
   agent-kanban compact --keep-days 30`;
 
 /** 打开本地库并解析 project */
@@ -79,7 +81,7 @@ export async function cmdBackup(argv: string[]): Promise<ExitCodeValue> {
       process.stdout.write(USAGE + "\n");
       return ExitCode.OK;
     default:
-      throw KanbanError.usage(`未知子命令：${sub}`, USAGE);
+      throw KanbanError.usage(`unknown command: ${sub}`, USAGE);
   }
 }
 
@@ -97,7 +99,7 @@ function doExport(argv: string[]): ExitCodeValue {
     const dir = getString(args, "out") ?? join(local.paths.dir, "journal");
     const sinceRaw = getString(args, "since");
     if (sinceRaw !== undefined && Number.isNaN(Number(sinceRaw))) {
-      throw KanbanError.usage("--since 需要 epoch 毫秒时间戳", `收到：${sinceRaw}`);
+      throw KanbanError.usage("--since needs an epoch millisecond timestamp", `got: ${sinceRaw}`);
     }
 
     const result = exportEvents(local.db.raw, {
@@ -108,15 +110,15 @@ function doExport(argv: string[]): ExitCodeValue {
 
     out.data({ files: result.files, events: result.events, projects: result.projects });
     if (result.events === 0) {
-      out.line(`${style.yellow("没有可导出的事件")}（库是空的，或 --since 把范围筛空了）`);
+      out.line(`${style.yellow("no events to export")} (the database is empty, or --since filtered everything out)`);
       return ExitCode.OK;
     }
     out.line(
-      `${style.green("✓")} 已导出 ${result.events} 个事件 → ${style.gray(`${result.files.length} 个文件`)}`,
+      `${style.green("✓")} exported ${result.events} events → ${style.gray(`${result.files.length} files`)}`,
     );
     for (const f of result.files) out.line(`  ${style.gray(f)}`);
     out.blank();
-    out.line(style.gray("在新机器上：agent-kanban import <该目录> && agent-kanban rebuild --write"));
+    out.line(style.gray("On a new machine: agent-kanban import <that dir> && agent-kanban rebuild --write"));
     return ExitCode.OK;
   } finally {
     local.close();
@@ -137,7 +139,7 @@ function doImport(argv: string[]): ExitCodeValue {
 
   const dirOpt = getString(args, "dir");
   if (args.positionals.length === 0 && !dirOpt) {
-    throw KanbanError.usage("import 需要至少一个文件或目录", USAGE);
+    throw KanbanError.usage("import needs at least one file or directory", USAGE);
   }
 
   const local = openLocal();
@@ -155,8 +157,8 @@ function doImport(argv: string[]): ExitCodeValue {
 
     const unreadable = verifyReadable(targets);
     if (unreadable.length > 0) {
-      throw KanbanError.state(`${unreadable.length} 个文件读不了`, {
-        hint: `检查路径与权限：${unreadable.join(", ")}`,
+      throw KanbanError.state(`${unreadable.length} files could not be read`, {
+        hint: `check the paths and permissions: ${unreadable.join(", ")}`,
       });
     }
 
@@ -175,30 +177,30 @@ function doImport(argv: string[]): ExitCodeValue {
 
     // project 重映射必须显式告知：它改了事件归属，事后很难自己看出来
     for (const r of result.remapped) {
-      out.line(`${style.yellow("↻")} project 重映射：${style.gray(`${r.from} → ${r.to}`)}`);
+      out.line(`${style.yellow("↻")} project remapped: ${style.gray(`${r.from} → ${r.to}`)}`);
     }
     if (result.remapped.length === 0 && getBool(args, "keep-project", false)) {
-      out.line(style.gray("已保留 journal 里的原始 project_key（--keep-project）"));
+      out.line(style.gray("the original project_key from the journal is kept (--keep-project)"));
     }
 
     for (const p of result.plans) {
       if (p.error) {
         out.line(`${style.red("✗")} ${p.file}  ${p.error}`);
       } else {
-        const dup = p.duplicates > 0 ? style.gray(`（${p.duplicates} 条已存在，将跳过）`) : "";
-        out.line(`${style.green("✓")} ${p.file}  ${p.lines} 条${dup}`);
+        const dup = p.duplicates > 0 ? style.gray(` (${p.duplicates} already present, will be skipped)`) : "";
+        out.line(`${style.green("✓")} ${p.file}  ${p.lines} events${dup}`);
       }
     }
 
     const hasError = result.plans.some((p) => p.error);
     out.blank();
     if (dryRun) {
-      out.line(style.yellow("这是 --dry-run，没有写入任何东西。"));
-      out.line(style.gray("去掉 --dry-run 真正导入，然后跑 `agent-kanban rebuild --write` 重建投影。"));
+      out.line(style.yellow("This is a --dry-run, nothing was written."));
+      out.line(style.gray("Drop --dry-run to import for real, then run `agent-kanban rebuild --write` to rebuild the projections."));
     } else {
       out.line(
-        `${style.green("✓")} 已导入 ${result.applied} 个事件。` +
-          style.gray(" 投影还是旧的，跑 `agent-kanban rebuild --write` 用事件重算。"),
+        `${style.green("✓")} imported ${result.applied} events.` +
+          style.gray(" The projections are still stale, run `agent-kanban rebuild --write` to recompute them from the events."),
       );
     }
     return hasError ? ExitCode.STATE : ExitCode.OK;
@@ -225,7 +227,7 @@ function doSnapshot(argv: string[]): ExitCodeValue {
     writeFileSync(file, JSON.stringify(snap, null, 2), "utf8");
 
     out.data({ file, tasks: snap.tasks.length, counts: snap.counts });
-    out.line(`${style.green("✓")} 看板快照已写入 ${style.gray(file)}  ${snap.tasks.length} 个任务`);
+    out.line(`${style.green("✓")} board snapshot written to ${style.gray(file)}  ${snap.tasks.length} tasks`);
     return ExitCode.OK;
   } finally {
     local.close();
@@ -255,13 +257,13 @@ function doCompact(argv: string[]): ExitCodeValue {
 
     out.data(result);
     out.line(
-      `${style.green("✓")} 事件 ${result.before} → ${result.after}（删除 ${result.removed} 条；` +
-        `保留最近 ${keepDays} 天、进行中任务的相关事件，以及保底 1000 条）`,
+      `${style.green("✓")} events ${result.before} → ${result.after} (removed ${result.removed}; ` +
+        `kept the last ${keepDays} days, the events of in-progress tasks, and a floor of 1000)`,
     );
-    out.line(`  ${style.gray("裁剪前快照：" + result.snapshotFile)}`);
+    out.line(`  ${style.gray("snapshot before trimming: " + result.snapshotFile)}`);
     if (result.removed > 0) {
       out.blank();
-      out.line(style.gray("注意：被裁掉的事件无法从 journal 重放，那段历史只存在于上面的快照里。"));
+      out.line(style.gray("Note: trimmed events cannot be replayed from the journal, that history only lives in the snapshot above."));
     }
     return ExitCode.OK;
   } finally {

@@ -267,22 +267,24 @@ export function writeConfigFile(kanbanDir: string, config: KanbanConfigFile): st
   }
   if (config.db) obj.db = config.db;
 
+  // 文件头注释：写进用户项目的文档，所以跟着 CLI 文风一起英文化
+  // （中文协议正文在 src/core/protocol.ts，那是另一类内容，由 install-protocol 落盘）
   const header = [
-    "agent-kanban 项目配置",
+    "agent-kanban project configuration",
     "",
-    "本文件让同一个项目的设置固定下来，日常使用无需再传 --server/--project/--key。",
+    "This file pins a project's settings so you don't have to pass --server/--project/--key every time.",
     "",
-    "优先级：命令行选项 > 环境变量 > 本文件",
+    "Precedence: command-line options > environment variables > this file",
     "",
-    "字段说明：",
-    '  mode = "local" | "remote"    有 server.url 时自动视为 remote',
-    "  server.url                   远程 server 地址，如 https://kanban.corp:7788",
-    "  server.token                 访问 token（用 `agent-kanban admin token create` 签发）",
-    "  project.key                  project 标识（一个 token 可同时授权多个 project）",
+    "Fields:",
+    '  mode = "local" | "remote"    treated as remote automatically when server.url is set',
+    "  server.url                   Remote server address, e.g. https://kanban.corp:7788",
+    "  server.token                 Access token (issue one with `agent-kanban admin token create`)",
+    "  project.key                  Project key (one token can authorize several projects)",
     "",
-    "本地模式无需这些字段：数据默认存在 .kanban/kanban.db。",
+    "None of these are needed in local mode: the data lives in .kanban/kanban.db by default.",
     "",
-    "⚠ 本文件含 token，**不要提交到公开仓库**。",
+    "⚠ This file contains a token — **do not commit it to a public repository**.",
   ].join("\n");
 
   writeFileSync(path, stringifyTomlWithHeader(obj, header), "utf8");
@@ -328,10 +330,11 @@ export function ensureAdminToken(
     // 直接报错而不是降级/警告——“看起来配了但没生效”比“启动失败”危险得多。
     if (!/^k_[0-9a-f]{32}$/.test(fromEnv)) {
       throw KanbanError.usage(
-        "环境变量 KANBAN_ADMIN_TOKEN 格式不合法",
-        "必须是 k_ + 32 位十六进制，例如：\n" +
+        "the KANBAN_ADMIN_TOKEN environment variable is malformed",
+        "It must be k_ followed by 32 hex digits, for example:\n" +
           "  k_0123456789abcdef0123456789abcdef\n" +
-          "生成一个：openssl rand -hex 16",
+          "Generate one with: openssl rand -hex 16",
+        { reason: "invalid_admin_token_format" },
       );
     }
     token = fromEnv;
@@ -381,10 +384,10 @@ function ensureAdminTokenRegistered(
      VALUES (?, ?, 'admin', NULL, ?, ?, NULL, NULL, NULL, NULL, ?)`,
   ).run(
     token,
-    "server 管理员",
+    "server admin",
     hashApiKey(token),
     now,
-    `首次由 ${source === "generated" ? "自动生成" : source} 建立`,
+    `first created by ${source === "generated" ? "auto-generation" : source}`,
   );
 }
 

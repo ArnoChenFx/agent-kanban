@@ -25,15 +25,15 @@ import { assertKnownOptions, getBool, getString, parseArgs, requirePositional } 
 import { closeCtx, openCtx } from "./context.ts";
 import { createOutput } from "./output.ts";
 
-const PROJECT_USAGE = `用法：agent-kanban project <子命令>
+const PROJECT_USAGE = `Usage: agent-kanban project <subcommand>
 
-  list              列出可见的 project
-  show [key]        显示 project 详情
-  add <key>         创建 project 并生成 API key（本地库上执行，远程需在 server 端）
-  rename <key>      重命名
-  key <key>         重新生成 API key（旧 key 立即失效）
+  list              list the visible projects
+  show [key]        show project details
+  add <key>         create a project and generate its API key (runs on the local db; remotely it must run on the server)
+  rename <key>      rename
+  key <key>         regenerate the API key (the old key stops working immediately)
 
-选项：--name <名称> --root <路径> --json`;
+Options: --name <name> --root <path> --json`;
 
 
 /** project 概要信息（CLI 与 admin API 共用） */
@@ -82,7 +82,7 @@ export async function cmdProject(argv: string[]): Promise<ExitCodeValue> {
       process.stdout.write(PROJECT_USAGE + "\n");
       return ExitCode.OK;
     default:
-      throw KanbanError.usage(`未知子命令：project ${sub}`, PROJECT_USAGE);
+      throw KanbanError.usage(`unknown subcommand: project ${sub}`, PROJECT_USAGE);
   }
 }
 
@@ -121,13 +121,15 @@ async function projectList(argv: string[]): Promise<ExitCodeValue> {
         return ExitCode.OK;
       }
       const list = data as Array<Record<string, unknown>>;
-      out.line(`project（${list.length}）`.padEnd(14) + "名称".padEnd(20) + "任务数".padEnd(10) + "需要 key");
+      out.line(
+        "  " + `project (${list.length})`.padEnd(12) + "Name".padEnd(20) + "Tasks".padEnd(10) + "Requires key",
+      );
       for (const p of list) {
         out.line(
           padEndWidth(String(p.key), 14) +
             padEndWidth(String(p.name), 20) +
             padEndWidth("-", 10) +
-            (p.requires_key ? "是" : "否"),
+            (p.requires_key ? "yes" : "no"),
         );
       }
       return ExitCode.OK;
@@ -153,10 +155,10 @@ async function projectList(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
     if (projects.length === 0) {
-      out.line("（还没有 project）运行任意命令会自动创建本地 project");
+      out.line("(no project yet) running any command creates a local project automatically");
       return ExitCode.OK;
     }
-    out.line(`project（${projects.length}）`.padEnd(16) + "名称".padEnd(22) + "根目录");
+    out.line("  " + `project (${projects.length})`.padEnd(14) + "Name".padEnd(22) + "Root path");
     for (const p of projects) {
       out.line(
         padEndWidth(p.key, 16) + padEndWidth(p.name, 22) + (p.rootPath ?? "-"),
@@ -164,7 +166,7 @@ async function projectList(argv: string[]): Promise<ExitCodeValue> {
     }
     if (projects.length === 1) {
       out.line("");
-      out.line(style.gray("本地模式：`.kanban/` 目录对应这一个 project，无需传 --project"));
+      out.line(style.gray("Local mode: the `.kanban/` directory maps to this single project; no --project needed"));
     }
     return ExitCode.OK;
   } finally {
@@ -198,11 +200,11 @@ async function projectShow(argv: string[]): Promise<ExitCodeValue> {
     const p = data as Record<string, unknown>;
     out.line("");
     out.line(`${style.bold(String(p.name))}  ${style.cyan(`(${p.key})`)}`);
-    out.line(`  根目录    ${p.root_path ?? "-"}`);
-    out.line(`  任务数    ${p.task_count}`);
-    out.line(`  事件数    ${p.event_count}`);
-    out.line(`  需要 key  ${p.requires_key ? "是" : "否（本地模式）"}`);
-    out.line(`  创建于    ${new Date(Number(p.created_at)).toISOString()}`);
+    out.line(`  Root path     ${p.root_path ?? "-"}`);
+    out.line(`  Tasks         ${p.task_count}`);
+    out.line(`  Events        ${p.event_count}`);
+    out.line(`  Requires key  ${p.requires_key ? "yes" : "no (local mode)"}`);
+    out.line(`  Created at    ${new Date(Number(p.created_at)).toISOString()}`);
     out.line("");
     return ExitCode.OK;
   } finally {
@@ -225,7 +227,7 @@ async function projectAdd(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "no-key", "name", "root", "db"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const key = requirePositional(args, 0, "project key", "用法：agent-kanban project add <key> [--name <名称>] [--root <路径>]");
+  const key = requirePositional(args, 0, "project key", "Usage: agent-kanban project add <key> [--name <name>] [--root <path>]");
 
   const handle = openLocalDb(process.cwd(), getString(args, "db"));
   try {
@@ -242,18 +244,18 @@ async function projectAdd(argv: string[]): Promise<ExitCodeValue> {
       out.data({ ...project, api_key: apiKey });
       return ExitCode.OK;
     }
-    out.line(`${style.green("✓")} project 已创建：${style.cyan(project.key)}`);
-    out.line(`  名称：${project.name}`);
-    if (project.rootPath) out.line(`  根目录：${project.rootPath}`);
+    out.line(`${style.green("✓")} project created: ${style.cyan(project.key)}`);
+    out.line(`  Name: ${project.name}`);
+    if (project.rootPath) out.line(`  Root path: ${project.rootPath}`);
     if (apiKey) {
       out.line("");
-      out.line(`${style.yellow("API key（只显示这一次，请立即保存）：")}`);
+      out.line(`${style.yellow("API key (shown only once, save it now):")}`);
       out.line(`  ${style.bold(apiKey)}`);
       out.line("");
-      out.line(style.gray("客户端使用："));
+      out.line(style.gray("Client usage:"));
       out.line(`  kanban --server http://<host>:7788 --project ${project.key} --key ${apiKey} task list`);
     } else {
-      out.line(`  ${style.gray("未生成 key（--no-key）：该 project 不鉴权，仅建议本机使用")}`);
+      out.line(`  ${style.gray("No key generated (--no-key): this project is not authenticated, local machine use only")}`);
     }
     return ExitCode.OK;
   } finally {
@@ -270,14 +272,14 @@ async function projectRename(argv: string[]): Promise<ExitCodeValue> {
   });
   assertKnownOptions(args, ["json", "help", "name", "db"]);
   const out = createOutput(getBool(args, "json"));
-  const key = requirePositional(args, 0, "project key", "用法：agent-kanban project rename <key> --name <新名>");
+  const key = requirePositional(args, 0, "project key", "Usage: agent-kanban project rename <key> --name <new-name>");
   const name = getString(args, "name");
-  if (!name) throw KanbanError.usage("缺少 --name", "用法：agent-kanban project rename <key> --name <新名>");
+  if (!name) throw KanbanError.usage("missing --name", "Usage: agent-kanban project rename <key> --name <new-name>");
 
   const handle = openLocalDb(process.cwd(), getString(args, "db"));
   try {
     handle.raw.query("UPDATE projects SET name = ? WHERE key = ?").run(name, key);
-    out.line(`${style.green("✓")} ${style.cyan(key)} 重命名为 ${name}`);
+    out.line(`${style.green("✓")} ${style.cyan(key)} renamed to ${name}`);
     out.data({ key, name });
     return ExitCode.OK;
   } finally {
@@ -294,7 +296,7 @@ async function projectKey(argv: string[]): Promise<ExitCodeValue> {
   });
   assertKnownOptions(args, ["json", "help", "rotate", "db"]);
   const out = createOutput(getBool(args, "json"));
-  const key = requirePositional(args, 0, "project key", "用法：agent-kanban project key <key>");
+  const key = requirePositional(args, 0, "project key", "Usage: agent-kanban project key <key>");
 
   const handle = openLocalDb(process.cwd(), getString(args, "db"));
   try {
@@ -303,9 +305,9 @@ async function projectKey(argv: string[]): Promise<ExitCodeValue> {
       out.data({ project: key, api_key: apiKey });
       return ExitCode.OK;
     }
-    out.line(`${style.green("✓")} ${style.cyan(key)} 的 API key 已轮换`);
+    out.line(`${style.green("✓")} API key of ${style.cyan(key)} rotated`);
     out.line(`  ${style.bold(apiKey)}`);
-    out.line(`  ${style.yellow("旧 key 已立即失效；此 key 只显示这一次")}`);
+    out.line(`  ${style.yellow("The old key stopped working immediately; this key is shown only once")}`);
     return ExitCode.OK;
   } finally {
     handle.raw.close();

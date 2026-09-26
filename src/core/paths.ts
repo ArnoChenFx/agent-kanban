@@ -101,9 +101,10 @@ export function resolvePaths(
       return buildPaths(join(resolve(cwd), KANBAN_DIR), join(resolve(cwd), KANBAN_DIR, DB_FILENAME));
     }
     throw KanbanError.notInit(
-      `未找到看板数据目录（在 ${cwd} 向上 ${MAX_LOOKUP_DEPTH} 层内没有 ${KANBAN_DIR}/${DB_FILENAME}）`,
+      `board data directory not found (no ${KANBAN_DIR}/${DB_FILENAME} within ${MAX_LOOKUP_DEPTH} levels above ${cwd})`,
       {
-        hint: "在项目根目录运行 `agent-kanban init` 初始化看板；已有 journal 可用 `agent-kanban import` 恢复",
+        reason: "kanban_dir_not_found",
+        hint: "Run `agent-kanban init` in the project root to create the board; if a journal already exists you can restore it with `agent-kanban import`",
         cwd: resolve(cwd),
       },
     );

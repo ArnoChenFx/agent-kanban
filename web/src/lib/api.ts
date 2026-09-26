@@ -465,6 +465,37 @@ export interface HandoffItem {
   consumed_by: string | null
 }
 
+/**
+ * 后端建议动作的代号（与 `src/core/context.ts` 的 `NextActionCode` 一一对应）。
+ *
+ * 这是跨语言边界的契约：后端给「代号 + 参数」，界面给「怎么把参数说成人话」。
+ * 后端新增代号而前端没翻，编译期报错（`keyFor` 的 `never` 分支），
+ * 万一前端旧、服务端新，则退回展示后端的中文串而不是崩掉。
+ */
+export type NextActionCode =
+  | "takeover"
+  | "read_handoff"
+  | "crash_handoffs"
+  | "continue_mine"
+  | "blocked_needs_human"
+  | "claim_new"
+  | "claim_after"
+  | "idle"
+
+export interface NextActionItem {
+  code: NextActionCode
+  args: {
+    n?: number
+    id?: number | string
+    task?: string
+    summary?: string
+    /** 按本地标点列举（中文顿号、英文逗号） */
+    tasks?: string[]
+    /** 可直接执行的命令行，用 " / " 列举（斜杠分隔代码，不随语言变） */
+    commands?: string[]
+  }
+}
+
 export interface PlanItem {
   id: string
   title: string
@@ -502,5 +533,11 @@ export interface RecoveryContext {
   }>
   blocked: Array<{ id: string; title: string; reason: string | null }>
   ready: Array<{ id: string; title: string; priority: number; reason: string }>
+  /** 给 agent 看的中文串（CLI / MCP / --json 的读者） */
   next_actions: string[]
+  /**
+   * 同一批建议的结构化形态：界面按 code 选词典条目自己拼文案。
+   * 可选——老服务端不发这个字段，前端退回展示 next_actions（中文）。
+   */
+  next_action_items?: NextActionItem[]
 }

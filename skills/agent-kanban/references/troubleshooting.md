@@ -13,7 +13,7 @@
 | 退出码 3 | 卡在别人手里，租约还活着 | [冲突](#冲突) |
 | 退出码 4 | 数据库被锁 | [数据库被锁](#数据库被锁) |
 | 退出码 2 + `legal_transitions` | 非法流转或被守卫拦下 | [流转被守卫拦下](#流转被守卫拦下) |
-| `缺少会话标识` | 没跑 `session start`，或**远程模式不会写 `.kanban/session`** | [远程模式](#远程模式看板在别的机器上) |
+| `missing session id` | 没跑 `session start`，或**远程模式不会写 `.kanban/session`** | [远程模式](#远程模式看板在别的机器上) |
 | 改完代码，看板还显示 0% | 忘了 `task progress` | [租约与"看板说谎"](#租约与看板说谎) |
 | 照着 `next_actions` 跑却撞退出码 2 | 流转类建议要对照当前状态校验 | [已知的转移缺口](#已知的转移缺口review-打回重做) |
 | 卡片莫名回到 `todo`，进度还在 | 上一个会话 `session end` 释放了它 | [租约与"看板说谎"](#租约与看板说谎) |
@@ -44,9 +44,9 @@
 ## 冲突（退出码 3）
 
 ```
-错误[CONFLICT]：任务 T-0004 正在被 s-agentc 处理（进度 0%，租约剩 15 分钟）
-提示：该卡正被别人处理。改做 `agent-kanban task list --ready` 里的任务；确实需要接管请人工确认后用 --force
-当前持有者：s-agentc（agent-c） 进度 0%
+Error[CONFLICT]: task T-0004 is being worked on by s-agentc (progress 0%, 15 minute(s) left on the lease)
+Hint: Someone else is working on this task. Pick a task from `agent-kanban task list --ready` instead; if you really need to take over, have a human confirm and use --force
+Current holder: s-agentc (agent-c)  progress 0%
 ```
 
 `--json` 模式下 `details.holder` 里有 `session_id` / `agent_name` / `progress` / `lease_left_min` / `last_event`。
@@ -67,17 +67,17 @@
 
 | 报错 | 原因 | 怎么办 |
 |---|---|---|
-| `该操作需要 --reason 参数`（退出码 1） | `block` / `cancel` / `reopen` 缺 `--reason` | 补上原因，这是硬要求 |
-| `任务 T-0001 进度为 40%，未完成；确认请加 --force` | 某条转移需要 100% | 先 `task progress T-0001 --pct 100`，或确实要跳过就 `--force` |
-| `从 doing 直接变为 done 需要 --force` | `todo`/`doing` → `done` 是 `forceOnly` | **正常路径是 `review` → `done`**：`task review T-0007` 然后 `task done T-0007`（`review` → `done` 不需要 force） |
-| `任务 T-0001 不能从 X 变为 Y；合法后继状态：…`（退出码 2） | 非法转移 | 按错误里的 `legal_transitions` 走 |
+| `this transition requires a --reason argument`（退出码 1） | `block` / `cancel` / `reopen` 缺 `--reason` | 补上原因，这是硬要求 |
+| `task T-0001 is at 40%, not finished; pass --force to confirm` | 某条转移需要 100% | 先 `task progress T-0001 --pct 100`，或确实要跳过就 `--force` |
+| `moving from doing straight to done requires --force` | `todo`/`doing` → `done` 是 `forceOnly` | **正常路径是 `review` → `done`**：`task review T-0007` 然后 `task done T-0007`（`review` → `done` 不需要 force） |
+| `task T-0001 cannot move from X to Y; legal transitions: …`（退出码 2） | 非法转移 | 按错误里的 `legal_transitions` 走 |
 
 ### 已知的转移缺口：`review` 打回重做
 
 `task review` 之后的 `next_actions` 会提示 `agent-kanban task reopen T-0007 --reason "..."`，**但这条建议会失败**：
 
 ```
-错误[STATE]：任务 T-0001 不能从 review 变为 todo；合法后继状态：done, doing, cancelled
+Error[STATE]: task T-0001 cannot move from review to todo; legal transitions: done, doing, cancelled
 ```
 
 原因：`reopen` 固定转移到 `todo`，而 `review` 的合法后继只有 `done` / `doing` / `cancelled`。CLI 和 MCP 都没暴露通用的 `review → doing` 转移（那条边只有 Web 看板拖拽走得到）。
@@ -124,12 +124,12 @@ agent-kanban config path      # 配置文件在哪
 
 ## 远程模式（看板在别的机器上）
 
-先判定：`agent-kanban config show` → 「模式」那行。完整版见 [remote.md](remote.md)，这里只列排障要点。
+先判定：`agent-kanban config show` → `Effective config` 里的 `mode` 行。完整版见 [remote.md](remote.md)，这里只列排障要点。
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
-| `缺少会话标识，无法确定是谁在操作` | **远程模式下 `session start` 不写 `.kanban/session`**，紧接着的写命令就找不到身份 | `export KANBAN_SESSION=<session_id>`，或每条命令带 `--session`；id 用 `agent-kanban session start --agent X --json` 取 |
-| `export` / `import` / `snapshot` / `compact` / `project list` 报退出码 5 | 这些命令直连本地库，远程模式本地没库 | 去 **server 机器**上跑。错误里的「没有 `.kanban/kanban.db`」是误导，看板没坏 |
+| `missing session id, cannot tell who is operating` | **远程模式下 `session start` 不写 `.kanban/session`**，紧接着的写命令就找不到身份 | `export KANBAN_SESSION=<session_id>`，或每条命令带 `--session`；id 用 `agent-kanban session start --agent X --json` 取 |
+| `export` / `import` / `snapshot` / `compact` / `project list` 报退出码 5 | 这些命令直连本地库，远程模式本地没库 | 去 **server 机器**上跑。错误里的 `board data directory not found` 是误导，看板没坏 |
 | 崩溃后 `context` 还显示那张卡有人做 | 回收在 server 侧按 `--reap-interval`（默认 30s）跑，与你的命令无关 | 等 30s + 失联宽限（默认 10 分钟）；急的话去 server 跑 `doctor --fix`。别反复 `claim --force` |
 | 远程目录里跑过 `init` 之后 `export` 不报错了 | `init` 建了个没人用的本地 `kanban.db` 当"诱饵"，`export` 静默导这个空库 | 删掉那个本地 `kanban.db`（配置在 `config.toml`，不会丢），备份去 server 做 |
 | 时好时坏、退出码 7 | 网络抖动被当成认证失败 | `agent-kanban config show` 确认配置没变；重试一次；**别因为一次失败就以为租约丢了** |
@@ -172,10 +172,10 @@ agent-kanban init && agent-kanban import .kanban/journal && agent-kanban rebuild
 | 现象 | 原因 | 应对 |
 |---|---|---|
 | `agent-kanban export --help` 真的导出了 | `export`/`import`/`snapshot`/`compact` **不处理 `--help`**，会直接执行 | 删掉误产出的文件；`compact` 删了事件就用 `.kanban/snapshots/pre-compact-*.json` 恢复 |
-| `agent-kanban task claim --help` 报"缺少参数" | 子命令**先校验位置参数**再看 `--help`，`--help` 被当已知选项忽略 | 只有 `agent-kanban task --help` 打印用法；子命令选项查 [commands.md](commands.md) |
+| `agent-kanban task claim --help` 报 USAGE `missing argument <task id>` | 子命令**先校验位置参数**再看 `--help`，`--help` 被当已知选项忽略 | 只有 `agent-kanban task --help` 打印用法；子命令选项查 [commands.md](commands.md) |
 | 在子目录跑 `init` 没建新看板 | 看板靠**向上查找 `.kanban/`** 定位，找到就复用 | 要隔离得把目录放到仓库外面 |
 | 远程目录里 `init` 之后 `export` 不报错了 | `init` 建了"诱饵"本地库 | 删掉本地 `kanban.db`；见 [远程模式](#远程模式看板在别的机器上) |
-| 时间线里某条显示 `(undefined)` | 事件类型的中文描述未覆盖（展示层小瑕疵，不影响数据） | 忽略；以 `agent-kanban task show --json` 的结构化字段为准 |
+| 时间线里某条显示 `(undefined)` | 事件类型的描述未覆盖（展示层小瑕疵，不影响数据） | 忽略；以 `agent-kanban task show --json` 的结构化字段为准 |
 | 改了 `.kanban/config.toml` 没生效 | CLI 参数优先级最高 | `agent-kanban config show` 看来源 |
 | `session end` 后我的卡变成 `todo` 了 | 这是设计：释放租约、进度保留 | 正常；要保留持有就别 `session end` |
 
@@ -183,8 +183,8 @@ agent-kanban init && agent-kanban import .kanban/journal && agent-kanban rebuild
 
 | 现象 | 原因 | 应对 |
 |---|---|---|
-| 工具报"缺少会话上下文" | MCP 不读 `.kanban/session`，必须显式传 | 先 `kanban_session_start` 拿到 `session_id`，之后每次调用都带上 |
+| 工具报 USAGE "missing session id" | MCP 不读 `.kanban/session`，必须显式传 | 先 `kanban_session_start` 拿到 `session_id`，之后每次调用都带上 |
 | 看板定位到别的项目 | `command` 路径相对 harness 工作目录；看板靠 cwd 向上查找 | 从项目根目录启动 harness |
 | 工具列表里没有 `plan history` / `task cancel` / `rebuild` | MCP 只暴露核心 20 个工具 | 这些走 CLI |
 | stdout 出现非 JSON 文本 | `agent-kanban mcp` 的 stdout 是 JSON-RPC 通道 | 诊断信息走 stderr；把 stdout 当纯协议流读 |
-| 某个工具报 `USAGE` "未知工具" | 名字拼错 | 错误 `hint` 里列了全部可用工具名 |
+| 某个工具报 `USAGE` "unknown tool" | 名字拼错 | 错误 `hint` 里列了全部可用工具名 |

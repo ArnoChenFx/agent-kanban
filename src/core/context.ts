@@ -51,6 +51,57 @@ export interface ContextInput {
   consumeHandoffs?: boolean;
 }
 
+/**
+ * 一条建议的**机器可读**形态：稳定代号 + 插值参数。
+ *
+ * 为什么已经有纯文本的 `next_actions` 还要这一份：那些串是写给 agent 看的
+ * （CLI / MCP / `--json`），而 Web 看板是给**人**看的多语言界面。把它们
+ * 直接塞进英文界面，等于让界面替 agent 说话；可在前端翻成英文，那条纯文本
+ * 又会变成词典之外的第二份真相。折中办法是同一份建议同时给出
+ * 「代号 + 参数」和多语言渲染结果，顺序、数量、措辞都不可能各自漂移。
+ *
+ * 代号是**契约**：前端按它选词典条目，后端新增代号而前端没翻，
+ * 界面上会退回展示后端的中文串（而不是白屏或漏掉这条建议）。
+ */
+export type NextActionCode =
+  /** 接管失联会话留下的卡（进度保留） */
+  | "takeover"
+  /** 读上一位 agent 主动写的交接 */
+  | "read_handoff"
+  /** 有崩溃自动合成的交接还没人接手 */
+  | "crash_handoffs"
+  /** 继续自己手上正在做的卡 */
+  | "continue_mine"
+  /** 有卡阻塞中，agent 只能提醒，得有人介入 */
+  | "blocked_needs_human"
+  /** 直接领新活 */
+  | "claim_new"
+  /** 手上还有活，先干完再领 */
+  | "claim_after"
+  /** 看板是空的，给条兜底建议 */
+  | "idle";
+
+/** 建议的插值参数。数组留给界面按语言拼接，不在这里拼死标点。 */
+export interface NextActionArgs {
+  /** 数量（"有 N 张卡…"这类句式） */
+  n?: number;
+  /** 交接号 / 任务号，按代号而定 */
+  id?: number | string;
+  /** 任务号 */
+  task?: string;
+  /** 交接摘要（已在后端截断，两种语言看到的长度一致） */
+  summary?: string;
+  /** 任务号或 `T-0001(40%)` 这类片段，按本地标点列举 */
+  tasks?: string[];
+  /** 可直接执行的命令行，按 " / " 列举（代码之间用斜杠，与语言无关） */
+  commands?: string[];
+}
+
+export interface NextActionItem {
+  code: NextActionCode;
+  args: NextActionArgs;
+}
+
 /** 恢复上下文输出（JSON 形状，与 CLI/MCP/HTTP 共用） */
 export interface RecoveryContext {
   project: { key: string; name: string };
@@ -102,8 +153,10 @@ export interface RecoveryContext {
   blocked: Array<{ id: string; title: string; reason: string | null }>;
   /** 可认领（依赖已满足、无人持有） */
   ready: Array<{ id: string; title: string; priority: number; reason: string }>;
-  /** 建议的下一步（写给 agent 看） */
+  /** 建议的下一步（写给 agent 看的纯文本串，由 next_action_items 渲染而来） */
   next_actions: string[];
+  /** 同一批建议的结构化形态：界面按 code 选词典条目自己拼文案 */
+  next_action_items: NextActionItem[];
 }
 
 /**
@@ -147,7 +200,7 @@ export function buildContext(input: ContextInput): RecoveryContext {
         last_seen_at: session.lastSeenAt,
         silent_minutes: Math.round((now - session.lastSeenAt) / 60000),
         tasks: [{ id: task.id, title: task.title, progress: task.progress }],
-        suggestion: `运行 \`agent-kanban resume ${task.id}\` 接管（进度会自动保留）`,
+        suggestion: `Run \`agent-kanban resume ${task.id}\` to take it over (progress is kept automatically)`,
       });
     }
   }
@@ -159,7 +212,7 @@ export function buildContext(input: ContextInput): RecoveryContext {
     return {
       id: h.id,
       task_id: h.taskId,
-      task_title: task?.title ?? "(任务已删除)",
+      task_title: task?.title ?? "(task deleted)",
       from_session: h.sessionId,
       kind: h.kind,
       summary: h.summary,
@@ -225,11 +278,13 @@ export function buildContext(input: ContextInput): RecoveryContext {
       id: t.id,
       title: t.title,
       priority: t.priority,
-      reason: t.assigneeSessionId ? "原持有者已失联，可接管" : "依赖已满足",
+      reason: t.assigneeSessionId
+        ? "the previous holder lost contact, you can take over"
+        : "dependencies are satisfied",
     }));
 
   // ---- 7. 建议下一步 ----
-  const nextActions = buildNextActions({
+  const nextActionItems = buildNextActions({
     sessionId: input.sessionId,
     zombie_sessions,
     pending_handoffs,
@@ -250,12 +305,13 @@ export function buildContext(input: ContextInput): RecoveryContext {
     in_progress,
     blocked,
     ready,
-    next_actions: nextActions,
+    next_actions: nextActionItems.map(renderNextAction),
+    next_action_items: nextActionItems,
   };
 }
 
 /**
- * 生成建议动作。
+ * 生成建议动作（结构化）。
  *
  * 排序依据是"阻塞新工作的时间"：先处理别人留下的烂摊子，再做自己的活，
  * 最后才是新任务。这与人的直觉一致，但 agent 不一定会自己这么排。
@@ -269,62 +325,113 @@ function buildNextActions(input: {
   blocked: RecoveryContext["blocked"];
   ready: RecoveryContext["ready"];
   projectKey: string;
-}): string[] {
-  const actions: string[] = [];
+}): NextActionItem[] {
+  const actions: NextActionItem[] = [];
   const { zombie_sessions, pending_handoffs, my_tasks, blocked, ready, projectKey } = input;
 
   // 1. 别人失联留下的卡（优先级最高：不处理会一直占着）
   const orphanTasks = new Set(zombie_sessions.map((z) => z.tasks[0]?.id).filter(Boolean) as string[]);
   if (orphanTasks.size > 0) {
-    const ids = [...orphanTasks].slice(0, 3);
-    actions.push(
-      `接管失联会话留下的任务（进度已保留）：${ids.map((id) => `agent-kanban resume ${id}`).join(" / ")}`,
-    );
+    actions.push({
+      code: "takeover",
+      args: { commands: [...orphanTasks].slice(0, 3).map((id) => `agent-kanban resume ${id}`) },
+    });
   }
 
   // 2. 主动交接：上一个 agent 明确交代的
   const voluntary = pending_handoffs.filter((h) => h.kind === "voluntary");
   if (voluntary.length > 0) {
     const h = voluntary[0]!;
-    actions.push(
-      `读交接 #${h.id}（${h.task_id}）：${h.summary.slice(0, 60)}${h.summary.length > 60 ? "…" : ""}`,
-    );
+    actions.push({
+      code: "read_handoff",
+      args: {
+        id: h.id,
+        task: h.task_id,
+        // 截断放在构建期：纯文本串与前端各自拼文案，但两边看到的摘要长度一致
+        summary: h.summary.slice(0, 60) + (h.summary.length > 60 ? "…" : ""),
+      },
+    });
   }
   const crash = pending_handoffs.filter((h) => h.kind === "crash");
   if (crash.length > 0) {
-    actions.push(
-      `有 ${crash.length} 条崩溃自动交接待处理：${crash.map((h) => h.task_id).join(", ")}`,
-    );
+    actions.push({
+      code: "crash_handoffs",
+      args: { n: crash.length, tasks: crash.map((h) => h.task_id) },
+    });
   }
 
   // 3. 自己正在做的（别丢下）
   if (my_tasks.length > 0) {
-    actions.push(
-      `继续你正在做的：${my_tasks.map((t) => `${t.id}(${t.progress}%)`).join(", ")}`,
-    );
+    actions.push({
+      code: "continue_mine",
+      args: { tasks: my_tasks.map((t) => `${t.id}(${t.progress}%)`) },
+    });
   }
 
   // 4. 阻塞（需要人处理，agent 只能提醒）
   if (blocked.length > 0) {
-    actions.push(`有 ${blocked.length} 张卡阻塞中（可能需要人介入）：${blocked.map((b) => b.id).join(", ")}`);
+    actions.push({
+      code: "blocked_needs_human",
+      args: { n: blocked.length, tasks: blocked.map((b) => b.id) },
+    });
   }
 
   // 5. 领新活
   if (my_tasks.length === 0 && ready.length > 0) {
-    actions.push(
-      `认领新任务：${ready.slice(0, 2).map((r) => `agent-kanban task claim ${r.id}`).join(" / ")}`,
-    );
+    actions.push({
+      code: "claim_new",
+      args: { commands: ready.slice(0, 2).map((r) => `agent-kanban task claim ${r.id}`) },
+    });
   } else if (ready.length > 0) {
-    actions.push(`完成手上的后，可认领：${ready[0]!.id}`);
+    actions.push({ code: "claim_after", args: { id: ready[0]!.id } });
   }
 
   // 6. 兜底
   if (actions.length === 0) {
-    actions.push("没有待办任务。可用 `agent-kanban task add \"标题\"` 新建，或 `agent-kanban board` 复查看板。");
+    actions.push({ code: "idle", args: {} });
   }
 
   void projectKey;
   return actions;
+}
+
+/**
+ * 把一条结构化建议渲染成给 agent 看的串。
+ *
+ * ⚠ 产出的是 `next_actions`（终端/agent 读的纯文本），与 Web 无关：
+ *   界面走的是 `next_action_items` 的 `code` + `args`，由前端查自己的词典渲染。
+ *   两个字段各自独立演进，本函数只决定终端那一侧的措辞。
+ *
+ * 穷尽性检查与 `executeOp` 里的 `default` 分支同源：新增代号忘记写文案，
+ * 会在 tsc 阶段报错，而不是界面上少一条建议。
+ */
+export function renderNextAction(item: NextActionItem): string {
+  const a = item.args;
+  // 列表项用 ", " 拼接，命令行之间用 " / "（斜杠两边都有代码，不是语言的一部分）
+  const join = (xs?: string[]) => (xs ?? []).join(", ");
+  const joinCmds = (xs?: string[]) => (xs ?? []).join(" / ");
+  switch (item.code) {
+    case "takeover":
+      return `Take over the task(s) left behind by a lost session (progress is kept): ${joinCmds(a.commands)}`;
+    case "read_handoff":
+      return `Read handoff #${a.id} (${a.task}): ${a.summary}`;
+    case "crash_handoffs":
+      return `${a.n} auto-synthesized crash handoff(s) are waiting: ${join(a.tasks)}`;
+    case "continue_mine":
+      return `Keep going with what you are already doing: ${join(a.tasks)}`;
+    case "blocked_needs_human":
+      return `${a.n} task(s) are blocked (this may need a human): ${join(a.tasks)}`;
+    case "claim_new":
+      return `Claim a new task: ${joinCmds(a.commands)}`;
+    case "claim_after":
+      return `Once the current one is done, you can claim: ${a.id}`;
+    case "idle":
+      return "There is nothing to do. Create one with `agent-kanban task add \"Title\"`, or review the board with `agent-kanban board`.";
+    default: {
+      const exhaustive: never = item.code;
+      throw new Error(`unhandled next-action code: ${String(exhaustive)}`);
+    }
+  }
 }
 
 // =============================================================================
@@ -490,23 +597,23 @@ function buildResumeActions(
 
   // 先读交接/计划（避免重复劳动）
   if (handoff) {
-    actions.push(`交接（${handoff.kind === "crash" ? "崩溃自动合成" : "主动"}）：${handoff.summary}`);
+    actions.push(`Handoff (${handoff.kind === "crash" ? "auto-synthesized after a crash" : "voluntary"}): ${handoff.summary}`);
     if (handoff.nextStep) actions.push(handoff.nextStep);
     for (const q of handoff.openQuestions) {
-      actions.push(`待确认：${q}`);
+      actions.push(`To confirm: ${q}`);
     }
   }
   if (plan) {
-    actions.push(`读计划全文：agent-kanban plan show ${plan.id}`);
+    actions.push(`Read the full plan: agent-kanban plan show ${plan.id}`);
   }
   if (remaining.length > 0) {
-    actions.push(`剩余工作：${remaining.join("、")}`);
+    actions.push(`Remaining work: ${remaining.join(", ")}`);
   } else if (progress < 100) {
-    actions.push(`checklist 已全部勾选但进度 ${progress}%，先确认实际完成情况`);
+    actions.push(`The checklist is fully ticked but progress is ${progress}%, confirm what is actually done`);
   }
 
-  actions.push(`推进时更新进度：agent-kanban task progress ${taskId} --pct <数字> --note "<做了什么>"`);
-  actions.push(`收工前写交接：agent-kanban handoff --task ${taskId} --summary "..." --next "..."`);
+  actions.push(`Update progress while you work: agent-kanban task progress ${taskId} --pct <number> --note "<what you did>"`);
+  actions.push(`Write a handoff before wrapping up: agent-kanban handoff --task ${taskId} --summary "..." --next "..."`);
 
   return actions;
 }
@@ -519,24 +626,25 @@ function buildResumeActions(
 function describeEventBrief(event: KanbanEvent): string {
   const d = event.data;
   switch (event.type) {
-    case "task_created": return "创建任务";
-    case "task_claimed": return d.prev_assignee ? `被 ${d.prev_assignee} 抢占` : "认领";
-    case "task_progress": return `进度 ${d.prev_pct ?? "?"}% → ${d.pct}%${d.note ? `：${d.note}` : ""}`;
-    case "task_note": return `备注：${String(d.text ?? "").slice(0, 50)}`;
-    case "task_blocked": return `阻塞：${d.reason ?? ""}`;
-    case "task_unblocked": return "自动解除阻塞";
-    case "task_reclaimed": return d.holder_crashed ? "持有者失联，被自动回收" : "被强制回收";
-    case "task_released": return "被释放";
-    case "task_review": return "提交评审";
-    case "task_done": return "完成";
-    case "task_cancelled": return "取消";
-    case "task_reopened": return "重新打开";
-    case "handoff_created": return `写了交接（${d.kind}）`;
-    case "handoff_consumed": return `交接被 ${d.by_session} 接手`;
-    case "dep_added": return `新增依赖 ${d.depends_on_id}`;
-    case "dep_removed": return `移除依赖 ${d.depends_on_id}`;
-    case "plan_created": return `保存计划 v${d.version}`;
-    case "task_updated": return "更新元信息";
+    case "task_created": return "created task";
+    case "task_claimed": return d.prev_assignee ? `taken over from ${d.prev_assignee}` : "claimed";
+    case "task_progress": return `progress ${d.prev_pct ?? "?"}% → ${d.pct}%${d.note ? `: ${d.note}` : ""}`;
+    case "task_note": return `note: ${String(d.text ?? "").slice(0, 50)}`;
+    case "task_blocked": return `blocked: ${d.reason ?? ""}`;
+    case "task_unblocked": return "auto-unblocked";
+    case "task_reclaimed": return d.holder_crashed ? "holder lost contact, reclaimed automatically" : "force reclaimed";
+    case "task_released": return "released";
+    case "task_review": return "submitted for review";
+    case "task_done": return "done";
+    case "task_cancelled": return "cancelled";
+    case "task_reopened": return "reopened";
+    // kind 在 data.handoff 里（事件携带的是完整交接行），见 events.describeEvent 同处注释
+    case "handoff_created": return `handoff written (${(d.handoff as { kind?: string } | undefined)?.kind ?? "voluntary"})`;
+    case "handoff_consumed": return `handoff taken over by ${d.by_session}`;
+    case "dep_added": return `added dependency ${d.depends_on_id}`;
+    case "dep_removed": return `removed dependency ${d.depends_on_id}`;
+    case "plan_created": return `saved plan v${d.version}`;
+    case "task_updated": return "updated fields";
     default: return event.type;
   }
 }
@@ -545,11 +653,11 @@ function describeEventBrief(event: KanbanEvent): string {
 function relativeTimeOf(ts: number, now: number): string {
   const diff = Math.max(0, now - ts);
   const min = Math.floor(diff / 60000);
-  if (min < 1) return "刚刚";
-  if (min < 60) return `${min}m 前`;
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
   const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour}h 前`;
-  return `${Math.floor(hour / 24)}d 前`;
+  if (hour < 24) return `${hour}h ago`;
+  return `${Math.floor(hour / 24)}d ago`;
 }
 
 /** 供 command 层使用：在事务里执行 resume */

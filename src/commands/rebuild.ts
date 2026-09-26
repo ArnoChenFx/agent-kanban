@@ -16,18 +16,20 @@ import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./arg
 import { closeCtx, openCtx } from "./context.ts";
 import { createOutput } from "./output.ts";
 
-const USAGE = `用法：
-  agent-kanban rebuild                  # 只校验：比对投影与事件流，不改任何数据
-  agent-kanban rebuild --write          # 用事件流重算结果覆盖投影（需无漂移，或配合 --force）
-  agent-kanban rebuild --write --force  # 有漂移也强制覆盖
-  agent-kanban rebuild --from-seq 100   # 只重放 seq >= 100 的事件（排查局部问题）
+const USAGE = `Usage:
+  agent-kanban rebuild                  # verify only: compare the projections with the event stream, change nothing
+  agent-kanban rebuild --write          # overwrite the projections with the recomputed result (no drift required, or pair it with --force)
+  agent-kanban rebuild --write --force  # force the overwrite even when there is drift
+  agent-kanban rebuild --from-seq 100   # replay only the events with seq >= 100 (to isolate a local problem)
   agent-kanban rebuild --json
 
-说明：
-  · 默认只读，可以放心随时跑（CI 里也可以跑）
-  · \`lease_expires_at\` 与 \`updated_at\` 不参与比较：它们由心跳/续租前移，
-    而续租不写事件（否则事件量会被心跳淹没）。这是设计上的正常现象。
-  · 升级到计划版本化之前的历史交接事件不带完整内容，会被列进"无法重建"而不是误报漂移`;
+Notes:
+  · Read-only by default, so it is safe to run at any time (including in CI)
+  · \`lease_expires_at\` and \`updated_at\` are not compared: they move forward on
+    heartbeat/lease renewal, and a renewal writes no event (otherwise the event
+    stream would be flooded by heartbeats). This is expected by design.
+  · Handoff events written before plans were versioned carry no full content; they are
+    listed under "cannot be rebuilt" instead of being reported as drift`;
 
 export async function cmdRebuild(argv: string[]): Promise<ExitCodeValue> {
   const args = parseArgs(argv, {
@@ -50,7 +52,7 @@ export async function cmdRebuild(argv: string[]): Promise<ExitCodeValue> {
     const force = getBool(args, "force");
 
     if (force && !write) {
-      out.line("错误：--force 需要与 --write 一起用");
+      out.line("Error: --force requires --write");
       out.line("");
       out.line(USAGE);
       return ExitCode.USAGE;
@@ -76,20 +78,20 @@ export async function cmdRebuild(argv: string[]): Promise<ExitCodeValue> {
     const c = report.counts;
     out.line("");
     out.line(
-      `${style.bold(report.project_key)}  重放 ${style.cyan(report.events_replayed)} 个事件 ` +
+      `${style.bold(report.project_key)}  replayed ${style.cyan(report.events_replayed)} events ` +
         style.gray(`(${report.elapsed_ms}ms)`),
     );
     out.line(
       style.gray(
-        `  重算结果：任务 ${c.tasks} · 依赖 ${c.deps} · 计划 ${c.plans} · 交接 ${c.handoffs}`,
+        `  Recomputed: tasks ${c.tasks} · deps ${c.deps} · plans ${c.plans} · handoffs ${c.handoffs}`,
       ),
     );
 
     if (report.ok && report.incomplete.length === 0) {
       out.line("");
-      out.line(`${style.green("✓")} 投影与事件流完全一致`);
-      out.line(style.gray("  这证明写入路径没有隐藏 bug（ADR-1 的自证）"));
-      if (report.written) out.line(style.green("  已用重算结果覆盖投影"));
+      out.line(`${style.green("✓")} the projections match the event stream exactly`);
+      out.line(style.gray("  this proves the write path has no hidden bugs (ADR-1 self-verification)"));
+      if (report.written) out.line(style.green("  the projections have been overwritten with the recomputed result"));
       out.line("");
       return ExitCode.OK;
     }
@@ -98,37 +100,37 @@ export async function cmdRebuild(argv: string[]): Promise<ExitCodeValue> {
     if (report.drift.length > 0) {
       out.line("");
       out.line(
-        `${style.red("✗")} 发现 ${report.drift.length} 处漂移` +
-          style.gray("（库里现有投影 ≠ 从事件重算的结果）"),
+        `${style.red("✗")} found ${report.drift.length} drifts` +
+          style.gray(" (the stored projections ≠ the result recomputed from the events)"),
       );
       for (const d of report.drift.slice(0, 20)) {
         out.line(
-          `  ${style.yellow(d.table + "." + d.id)} ${style.gray("字段 " + d.field)}`,
+          `  ${style.yellow(d.table + "." + d.id)} ${style.gray("field " + d.field)}`,
         );
-        out.line(`    ${style.gray("库里:")} ${formatValue(d.actual)}`);
-        out.line(`    ${style.gray("重算:")} ${formatValue(d.expected)}`);
+        out.line(`    ${style.gray("stored:     ")} ${formatValue(d.actual)}`);
+        out.line(`    ${style.gray("recomputed: ")} ${formatValue(d.expected)}`);
       }
       if (report.drift.length > 20) {
-        out.line(style.gray(`  ... 还有 ${report.drift.length - 20} 处`));
+        out.line(style.gray(`  ... and ${report.drift.length - 20} more`));
       }
       out.line("");
       if (!report.written) {
-        out.line(style.gray(`  修复：agent-kanban rebuild --write${report.drift.length > 0 ? " --force" : ""}`));
-        out.line(style.gray("  （--write 会用事件流覆盖 tasks/plans/handoffs/task_deps）"));
+        out.line(style.gray(`  Fix: agent-kanban rebuild --write${report.drift.length > 0 ? " --force" : ""}`));
+        out.line(style.gray("  (--write overwrites tasks/plans/handoffs/task_deps with the event stream)"));
       }
     }
 
     // ---- 无法重建（历史事件 payload 不足）----
     if (report.incomplete.length > 0) {
       out.line("");
-      out.line(`${style.yellow("⚠")} ${report.incomplete.length} 条记录无法从事件流重建`);
+      out.line(`${style.yellow("⚠")} ${report.incomplete.length} records cannot be rebuilt from the event stream`);
       for (const inc of report.incomplete.slice(0, 5)) {
-        out.line(`   ${style.gray(inc.id)} ${inc.field}：${inc.reason}`);
+        out.line(`   ${style.gray(inc.id)} ${inc.field}: ${inc.reason}`);
       }
       if (report.incomplete.length > 5) {
-        out.line(style.gray(`   ... 还有 ${report.incomplete.length - 5} 条`));
+        out.line(style.gray(`   ... and ${report.incomplete.length - 5} more`));
       }
-      out.line(style.gray("  这不影响使用：这些是旧版本写入的历史数据"));
+      out.line(style.gray("  this does not affect usage: these are historical records written by older versions"));
     }
 
     out.line("");
@@ -141,7 +143,7 @@ export async function cmdRebuild(argv: string[]): Promise<ExitCodeValue> {
 }
 
 function formatValue(v: unknown): string {
-  if (v === null || v === undefined) return style.gray("(无)");
+  if (v === null || v === undefined) return style.gray("(none)");
   if (typeof v === "string") return v.length > 80 ? `${v.slice(0, 77)}…` : v;
   return JSON.stringify(v);
 }

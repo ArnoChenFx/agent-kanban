@@ -5,6 +5,8 @@
 让多个 AI agent 会话共享同一份任务真相，并且在其中一个崩溃后接手它的工作。
 
 ---
+![Screenshot](docs\images\screenshot.png)
+![Task](docs\images\task.png)
 
 ## 要解决的问题
 
@@ -51,11 +53,23 @@
 
 ```console
 $ agent-kanban rebuild
-重放 412 个事件...
-4 个字段与已存投影不一致。
+agent-kanban  replayed 412 events (23ms)
+  Recomputed: tasks 18 · deps 6 · plans 4 · handoffs 5
 
-$ agent-kanban rebuild --write
-重放 412 个事件... 4 处漂移已在单个事务中修复。
+✗ found 4 drifts (the stored projections ≠ the result recomputed from the events)
+  tasks.T-0012 field status
+    stored:     todo
+    recomputed: doing
+  ... and 3 more
+  Fix: agent-kanban rebuild --write --force
+  (--write overwrites tasks/plans/handoffs/task_deps with the event stream)
+
+$ agent-kanban rebuild --write --force
+agent-kanban  replayed 412 events (19ms)
+  Recomputed: tasks 18 · deps 6 · plans 4 · handoffs 5
+
+✓ the projections match the event stream exactly
+  the projections have been overwritten with the recomputed result
 ```
 
 事件流和投影一旦不一致，你会被告知，不会等到六周后才发现。
@@ -337,7 +351,7 @@ agent-kanban install-protocol      # 往 <项目>/AGENTS.md 写一个受管区�
 agent-kanban install-protocol --check   # CI 门禁：缺失或落后则退出码 2
 ```
 
-区块夹在 `<!-- kanban:begin -->` 与 `<!-- kanban:end -->` 之间，命令只碰这一段，
+区块夹在 `<!-- agent-kanban:begin -->` 与 `<!-- agent-kanban:end -->` 之间，命令只碰这一段，
 所以你可以在同一个文件里写自己的规范。`agent-kanban doctor` 会报出区块是否落后于 CLI 版本。
 
 只要 agent 会读 `AGENTS.md`（或 `CLAUDE.md`、或你 harness 认的那个文件名），
@@ -347,8 +361,8 @@ agent-kanban install-protocol --check   # CI 门禁：缺失或落后则退出�
 ### 方式二：MCP 工具
 
 ```bash
-pi mcp add kanban -- cmd agent-kanban mcp
-claude mcp add kanban -- cmd agent-kanban mcp
+pi mcp add agent-kanban -- cmd agent-kanban mcp
+claude mcp add agent-kanban -- cmd agent-kanban mcp
 ```
 
 本仓库已经自带：根目录的 `.mcp.json` 注册的就是本地构建产物，任何读取标准 MCP 配置的
@@ -490,6 +504,7 @@ project key 是由目录名派生的，所以新旧机器不同。`import` 会�
 ## 文档
 
 - [Develop-zh.md](Develop-zh.md) —— 架构、构建、发布、验证
+- 文档配图用的演示看板：`bun run seed:demo` 会往 `.kanban/kanban.db` 灌一份模拟看板，详见 Develop-zh.md 的“演示看板（截图用）”一节
 
 ## 许可证
 

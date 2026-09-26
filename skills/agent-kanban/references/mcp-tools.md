@@ -151,7 +151,7 @@ kanban_session_end(session_id="s-4k9d2m")
 成功：
 
 ```json
-{ "ok": true, "data": { "...": "..." }, "next_actions": ["继续：..."] }
+{ "ok": true, "data": { "...": "..." }, "next_actions": ["Continue: ..."] }
 ```
 
 失败（`ok: false`，`error.code` / `error.name` 与 CLI 退出码一一对应）：
@@ -162,14 +162,14 @@ kanban_session_end(session_id="s-4k9d2m")
   "error": {
     "code": 3,
     "name": "CONFLICT",
-    "message": "任务 T-0004 正在被 s-agentc 处理（进度 0%，租约剩 15 分钟）",
-    "hint": "改做 kanban_task_list(ready=true) 里的任务；确实需要接管请人工确认后用 force"
+    "message": "task T-0004 is being worked on by s-agentc (progress 0%, 15 minute(s) left on the lease)",
+    "hint": "Someone else is working on this task. Pick a task from `agent-kanban task list --ready` instead; if you really need to take over, have a human confirm and use --force"
   }
 }
 ```
 
 - **按 `error.code` / `error.name` 分支**，不要解析 `message`。
-- `next_actions` 是工具写给 agent 的建议下一步，照着走比自己猜可靠。
+- `next_actions` 是工具写给 agent 的建议（英文串），照着走比自己猜可靠。
 
 ## MCP 与 CLI 的行为差异
 

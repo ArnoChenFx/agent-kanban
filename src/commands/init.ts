@@ -24,19 +24,19 @@ import { createOutput } from "./output.ts";
 import { style } from "../core/format.ts";
 import { CONFIG_FILE, readConfigFile, writeConfigFile } from "../core/config.ts";
 
-const USAGE = `用法：agent-kanban init [--name <项目名>] [--project <key>] [--ttl <分钟>] [--grace <分钟>] [--force]
+const USAGE = `Usage: agent-kanban init [--name <name>] [--project <key>] [--ttl <minutes>] [--grace <minutes>] [--force]
 
-选项：
-  --name      显示名（默认取当前目录名）
-  --project   project key（默认由目录名派生；小写字母/数字/连字符）
-  --ttl       默认租约时长（分钟，默认 15）
-  --grace     失联宽限时长（分钟，默认 10）
-  --force     **删掉现有数据库重建**（会丢失全部任务与历史，不可逆）
+Options:
+  --name      Display name (defaults to the current directory name)
+  --project   project key (derived from the directory name by default; lowercase letters/digits/hyphens)
+  --ttl       Default lease duration (minutes, default 15)
+  --grace     Lost-contact grace (minutes, default 10)
+  --force     **delete the existing database and rebuild** (loses all tasks and history, irreversible)
 
-说明：
-  · 本地模式：.kanban/ 对应唯一一个 project（ADR-9），零配置可用。
-  · init 会同时生成 .kanban/config.toml（mode = "local"），以后的命令不必再传参数。
-  · 改配置用 \`agent-kanban config set\`；改成远程用 \`agent-kanban config set mode remote\`。`;
+Notes:
+  · Local mode: .kanban/ maps to exactly one project (ADR-9), zero configuration needed.
+  · init also writes .kanban/config.toml (mode = "local"), so later commands need no arguments.
+  · Change the config with \`agent-kanban config set\`; switch to remote with \`agent-kanban config set mode remote\`.`;
 
 export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
   const args = parseArgs(argv, {
@@ -60,10 +60,10 @@ export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
   const ttlMinutes = getInt(args, "ttl");
   const graceMinutes = getInt(args, "grace");
   if (ttlMinutes !== undefined && ttlMinutes <= 0) {
-    throw KanbanError.usage("--ttl 必须为正整数（分钟）", USAGE);
+    throw KanbanError.usage("--ttl must be a positive integer (minutes)", USAGE);
   }
   if (graceMinutes !== undefined && graceMinutes <= 0) {
-    throw KanbanError.usage("--grace 必须为正整数（分钟）", USAGE);
+    throw KanbanError.usage("--grace must be a positive integer (minutes)", USAGE);
   }
 
   // ---- 幂等保护：已初始化时不重建，但会补齐缺失的配置项 ----
@@ -86,10 +86,10 @@ export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
       const project = resolveLocalProject(handle.raw, { rootPath: paths.projectRoot });
       handle.raw.close();
 
-      out.line(`看板已存在于 ${paths.dir}（schema v${version}），未做修改`);
-      out.line(`  project：${style.cyan(project.key)} ${project.name}`);
+      out.line(`board already exists at ${paths.dir} (schema v${version}), nothing was changed`);
+      out.line(`  project: ${style.cyan(project.key)} ${project.name}`);
       if (existsSync(paths.journalDir)) {
-        out.line(`提示：检测到 journal 目录，如需从事件恢复可运行 \`agent-kanban import <journal>/*.jsonl\``);
+        out.line(`Hint: a journal directory was detected, run \`agent-kanban import <journal>/*.jsonl\` to recover from the events`);
       }
       out.data({ ok: true, already_initialized: true, dir: paths.dir, db: paths.db, project: project.key });
       return ExitCode.OK;
@@ -150,28 +150,28 @@ export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
   }
   const effective = readConfigFile(paths.dir)?.config;
 
-  out.line(`${style.green("✓")} 看板已初始化：${paths.dir}`);
-  out.line(`  project  ：${style.cyan(project.key)} ${project.name}`);
-  out.line(`  租约：${ttlMinutes ?? DEFAULT_TTL_MS / 60000} 分钟 · 失联宽限：${graceMinutes ?? DEFAULT_GRACE_MS / 60000} 分钟`);
+  out.line(`${style.green("✓")} board initialized: ${paths.dir}`);
+  out.line(`  project : ${style.cyan(project.key)} ${project.name}`);
+  out.line(`  lease   : ${ttlMinutes ?? DEFAULT_TTL_MS / 60000} min · lost-contact grace: ${graceMinutes ?? DEFAULT_GRACE_MS / 60000} min`);
   out.line(
-    `  配置    ：${style.cyan(`${paths.dir}/${CONFIG_FILE}`)}` +
+    `  config  : ${style.cyan(`${paths.dir}/${CONFIG_FILE}`)}` +
       (configExisted
-        ? style.gray("（已存在，未覆盖）")
-        : style.green("（已生成，mode = local）")),
+        ? style.gray(" (already existed, not overwritten)")
+        : style.green(" (created, mode = local)")),
   );
   if (effective?.mode === "remote") {
-    out.line(style.yellow(`  注意：现有配置是 mode = "remote"（${effective.server ?? "?"}），命令实际会走远程`));
+    out.line(style.yellow(`  Note: the current config is mode = "remote" (${effective.server ?? "?"}); commands will actually go remote`));
   }
   out.line("");
-  out.line("下一步：");
-  out.line("  1. 注册会话：agent-kanban session start --agent pi-main --harness pi");
-  out.line("  2. 开工前读取现场：agent-kanban context");
-  out.line('  3. 创建任务：agent-kanban task add "实现存储层"');
+  out.line("Next:");
+  out.line("  1. Register a session: agent-kanban session start --agent pi-main --harness pi");
+  out.line("  2. Read the situation before starting: agent-kanban context");
+  out.line('  3. Create a task: agent-kanban task add "Implement the storage layer"');
   out.line("");
-  out.line(style.gray("要让多台机器共享同一份看板（server 端）："));
-  out.line("  agent-kanban serve                              → 启动服务（自动生成管理员 token）");
-  out.line("  agent-kanban admin project add <key>            → 创建 project 并签发 token");
-  out.line(style.gray("客户端切到远程："));
+  out.line(style.gray("To share one board across machines (server side):"));
+  out.line("  agent-kanban serve                              → start the server (an admin token is generated on first run)");
+  out.line("  agent-kanban admin project add <key>            → create a project and issue its token");
+  out.line(style.gray("Point the client at it:"));
   out.line("  agent-kanban config set mode remote");
   out.line("  agent-kanban config set server.url http://<host>:7788");
   out.line("  agent-kanban config set project.key <key>");

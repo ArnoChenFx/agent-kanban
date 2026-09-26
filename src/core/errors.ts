@@ -82,8 +82,17 @@ export class KanbanError extends Error {
   // ---- 工厂方法：让调用点保持简洁，且错误信息措辞集中管理 ----
 
   /** 用法错误：命令参数不对 */
-  static usage(message: string, usage?: string): KanbanError {
-    return new KanbanError(ExitCode.USAGE, ErrorName.USAGE, message, usage ? { usage } : {});
+  static usage(
+    message: string,
+    usage?: string,
+    details: Record<string, unknown> = {},
+  ): KanbanError {
+    return new KanbanError(
+      ExitCode.USAGE,
+      ErrorName.USAGE,
+      message,
+      usage ? { ...details, usage } : details,
+    );
   }
 
   /** 状态错误：数据层面不允许的操作 */
@@ -121,10 +130,10 @@ export class KanbanError extends Error {
     to: string,
     legalTransitions: string[],
   ): KanbanError {
-    const list = legalTransitions.length > 0 ? legalTransitions.join(", ") : "（无）";
+    const list = legalTransitions.length > 0 ? legalTransitions.join(", ") : "(none)";
     return KanbanError.state(
-      `任务 ${taskId} 不能从 ${from} 变为 ${to}；合法后继状态：${list}`,
-      { task_id: taskId, from, to, legal_transitions: legalTransitions },
+      `task ${taskId} cannot move from ${from} to ${to}; legal transitions: ${list}`,
+      { reason: "illegal_transition", task_id: taskId, from, to, legal_transitions: legalTransitions },
     );
   }
 }
@@ -145,8 +154,12 @@ export function toKanbanError(err: unknown): KanbanError {
   // SQLITE_BUSY(5) / SQLITE_LOCKED(6)：与 busy_timeout 有关的竞争
   if (rawCode === "SQLITE_BUSY" || rawCode === "SQLITE_LOCKED" || /database is locked/i.test(message)) {
     return KanbanError.busy(
-      "数据库繁忙（可能有其他 agent 正在写入），请退避 1 秒后重试，最多 3 次",
-      { sqlite_code: rawCode ?? null, hint: "重试命令；若持续出现请运行 agent-kanban doctor" },
+      "database busy (another agent may be writing), back off 1 second and retry, at most 3 times",
+      {
+        reason: "sqlite_busy",
+        sqlite_code: rawCode ?? null,
+        hint: "Retry the command; if it keeps happening run agent-kanban doctor",
+      },
     );
   }
 
@@ -164,18 +177,20 @@ export function toKanbanError(err: unknown): KanbanError {
     /disk I\/O error/i.test(message)
   ) {
     return KanbanError.busy(
-      "数据库瞬时 I/O 冲突（Windows 上 SQLite WAL 的已知现象），请退避后重试",
+      "transient database I/O conflict (a known SQLite WAL behaviour on Windows), back off and retry",
       {
+        reason: "sqlite_io_error",
         sqlite_code: rawCode ?? null,
         retryable: true,
-        hint: "直接重试同一命令即可；若持续出现请运行 agent-kanban doctor",
+        hint: "Just retry the same command; if it keeps happening run agent-kanban doctor",
       },
     );
   }
 
   // 唯一约束冲突：通常是并发下重复分配 ID（正常竞争，可安全重试）
   if (rawCode === "SQLITE_CONSTRAINT_UNIQUE" || /UNIQUE constraint failed/i.test(message)) {
-    return KanbanError.conflict("唯一约束冲突（可能是并发下的正常竞争），可安全重试一次", {
+    return KanbanError.conflict("unique constraint failed (usually a normal race under concurrency), safe to retry once", {
+      reason: "unique_constraint",
       sqlite_code: rawCode ?? null,
     });
   }

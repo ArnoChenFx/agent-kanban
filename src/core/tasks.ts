@@ -104,8 +104,8 @@ const TRANSITIONS: Record<TaskStatus, Partial<Record<TaskStatus, TransitionDef>>
 /** 非法转移错误里"合法后继"的计算：包含普通转移 + 始终可用的取消/重开 */
 export function legalTransitions(status: TaskStatus): string[] {
   const list = Object.keys(TRANSITIONS[status] ?? {});
-  if (status === "todo" || status === "doing") list.push("doing (通过 agent-kanban task claim 抢占)");
-  if (status === "doing") list.push("todo (通过 agent-kanban task release 释放)");
+  if (status === "todo" || status === "doing") list.push("doing (via agent-kanban task claim)");
+  if (status === "doing") list.push("todo (via agent-kanban task release)");
   return list;
 }
 
@@ -272,7 +272,11 @@ export function createTask(ctx: TxContext, input: CreateTaskInput): Task {
   const now = ctx.now();
   const status = input.status ?? "todo";
   if (!TASK_STATUSES.includes(status)) {
-    throw KanbanError.usage(`未知状态：${status}`, `可选：${TASK_STATUSES.join(", ")}`);
+    throw KanbanError.usage(
+      `unknown status: ${status}`,
+      `One of: ${TASK_STATUSES.join(", ")}`,
+      { reason: "invalid_status" },
+    );
   }
   const id = nextTaskId(db, ctx.projectKey);
   const priority = Math.max(0, Math.min(4, input.priority ?? 2));
@@ -382,7 +386,11 @@ export function editTask(ctx: TxContext, taskId: string, input: EditTaskInput): 
   }
 
   if (sets.length === 0) {
-    throw KanbanError.usage("没有要修改的字段", "可用：--title / -d / --priority / --label / --estimate");
+    throw KanbanError.usage(
+      "no field to update",
+      "Available: --title / -d / --priority / --label / --estimate",
+      { reason: "no_fields_to_update" },
+    );
   }
 
   // 显式按固定顺序取值，避免与 sets 的顺序错位
@@ -679,9 +687,10 @@ function buildConflictError(db: Database, current: Task, actor: Actor, now: numb
     : 0;
 
   return KanbanError.conflict(
-    `任务 ${current.id} 正在被 ${holderSessionId ?? "其他会话"} 处理` +
-      `（进度 ${current.progress}%，租约剩 ${leaseLeftMin} 分钟）`,
+    `task ${current.id} is being worked on by ${holderSessionId ?? "another session"}` +
+      ` (progress ${current.progress}%, ${leaseLeftMin} minute(s) left on the lease)`,
     {
+      reason: "not_lease_holder",
       task_id: current.id,
       holder: {
         session_id: holderSessionId,
@@ -694,7 +703,7 @@ function buildConflictError(db: Database, current: Task, actor: Actor, now: numb
       last_event: lastEvent
         ? { type: lastEvent.type, ts: lastEvent.ts, data: safeParse(lastEvent.data) }
         : null,
-      hint: "该卡正被别人处理。改做 `agent-kanban task list --ready` 里的任务；确实需要接管请人工确认后用 --force",
+      hint: "Someone else is working on this task. Pick a task from `agent-kanban task list --ready` instead; if you really need to take over, have a human confirm and use --force",
     },
   );
 }
@@ -753,8 +762,12 @@ export function updateProgress(
       const item = checklist.find((c) => c.text === text && !c.done);
       if (!item) {
         throw KanbanError.state(
-          `任务 ${id} 的检查项里没有未完成的「${text}」`,
-          { task_id: id, available: checklist.filter((c) => !c.done).map((c) => c.text) },
+          `task ${id} has no unfinished checklist item "${text}"`,
+          {
+            reason: "checklist_item_not_found",
+            task_id: id,
+            available: checklist.filter((c) => !c.done).map((c) => c.text),
+          },
         );
       }
       item.done = true;
@@ -830,7 +843,7 @@ export function updateProgress(
       type: "task_note",
       taskId: id,
       data: {
-        text: `检查项更新（${checklist.filter((c) => c.done).length}/${checklist.length} 完成）`,
+        text: `checklist updated (${checklist.filter((c) => c.done).length}/${checklist.length} done)`,
         checklist: checklist.map((c) => ({ text: c.text, done: c.done })),
       },
     });
@@ -895,22 +908,33 @@ export function transition(
 
   // ---- 守卫检查 ----
   if (def.requireReason && !input.reason) {
-    throw KanbanError.usage(`该操作需要 --reason 参数`, "用法：--reason \"原因说明\"");
+    throw KanbanError.usage(
+      "this transition requires a --reason argument",
+      'Usage: --reason "why"',
+      { reason: "reason_required" },
+    );
   }
   if (def.requireProgress100 && before.progress < 100 && !input.force) {
     throw KanbanError.state(
-      `任务 ${id} 进度为 ${before.progress}%，未完成；确认请加 --force`,
+      `task ${id} is at ${before.progress}%, not finished; pass --force to confirm`,
       {
+        reason: "progress_not_complete",
         task_id: id,
         progress: before.progress,
-        hint: "用 `agent-kanban task progress " + id + " --pct 100` 标记完成，或直接 --force",
+        hint: "Mark it finished with `agent-kanban task progress " + id + " --pct 100`, or just pass --force",
       },
     );
   }
   if (def.forceOnly && !input.force) {
     throw KanbanError.state(
-      `从 ${before.status} 直接变为 ${to} 需要 --force（推荐走正常流程）`,
-      { task_id: id, from: before.status, to, legal_transitions: legalTransitions(before.status) },
+      `moving from ${before.status} straight to ${to} requires --force (going through the normal flow is recommended)`,
+      {
+        reason: "force_required",
+        task_id: id,
+        from: before.status,
+        to,
+        legal_transitions: legalTransitions(before.status),
+      },
     );
   }
 
@@ -1005,8 +1029,13 @@ export function removeTask(ctx: TxContext, taskId: string, force = false): { id:
   const task = requireTask(scopeOf(ctx), id);
   if (task.status !== "cancelled" && !force) {
     throw KanbanError.state(
-      `任务 ${id} 处于 ${task.status}，只有 cancelled 状态可直接删除；确认请加 --force`,
-      { task_id: id, status: task.status, legal_transitions: legalTransitions(task.status) },
+      `task ${id} is in status ${task.status}; only cancelled tasks can be deleted directly, pass --force to confirm`,
+      {
+        reason: "task_not_cancelled",
+        task_id: id,
+        status: task.status,
+        legal_transitions: legalTransitions(task.status),
+      },
     );
   }
   // 先取出将被一并删除的依赖（emit 在 DELETE 之后，所以必须提前查）
@@ -1062,20 +1091,22 @@ export function addDependency(
   // 自依赖必须先于环检测判定：否则 T-0001 → T-0001 会被当成“长度为 1 的环”，
   // 报出误导性的“会形成环”而不是“不能依赖自己”
   if (dep === id) {
-    throw KanbanError.state(`任务 ${id} 不能依赖自己`, {
+    throw KanbanError.state(`task ${id} cannot depend on itself`, {
+      reason: "self_dependency",
       task_id: id,
-      hint: "依赖用于表达“先做哪个”，自己依赖自己没有意义",
+      hint: "A dependency expresses what has to be done first, so depending on itself is meaningless",
     });
   }
 
   if (wouldCreateCycle(db, ctx.projectKey, id, dep)) {
     throw KanbanError.state(
-      `添加依赖会形成环：${id} → ${dep}`,
+      `adding this dependency would create a cycle: ${id} → ${dep}`,
       {
+        reason: "dependency_cycle",
         task_id: id,
         depends_on_id: dep,
         cycle: findCyclePath(db, ctx.projectKey, id, dep),
-        hint: "依赖必须是有向无环图：先做完的排在前面",
+        hint: "Dependencies must form a directed acyclic graph: the task to be done first comes first",
       },
     );
   }
@@ -1084,7 +1115,7 @@ export function addDependency(
   ctx.emit({ type: "dep_added", taskId: id, data: { depends_on_id: dep } });
 
   // 若依赖已全部完成，立即把任务放回待办（或至少发通知）
-  notifyDependentsReady(ctx, id, "依赖已满足");
+  notifyDependentsReady(ctx, id, "dependencies satisfied");
   return getDependencies(scopeOf(ctx), id);
 }
 

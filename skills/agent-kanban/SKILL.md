@@ -32,7 +32,7 @@ agent-kanban config show      # 看「模式」那行：本地 还是 远程
 | `export`/`import`/`snapshot`/`compact`/`project list` | 可用 | ❌ 退出码 5（本地没库），要在 **server 机器上**跑 |
 
 最容易被坑的一条：**远程模式下 `agent-kanban session start` 不会写 `.kanban/session`**，紧接着的 `task claim` 会报
-`缺少会话标识`。补救：`export KANBAN_SESSION=s-xxxx`（或每条命令带 `--session`）。
+`missing session id, cannot tell who is operating`。补救：`export KANBAN_SESSION=s-xxxx`（或每条命令带 `--session`）。
 详见 [references/remote.md](references/remote.md)。
 
 ## 开工：两条命令读现场
@@ -167,7 +167,7 @@ CLI **没有** `plan diff` 子命令（`plan.diff` 只在 core 与 MCP 层暴露
 - `--json`（或 `-j`）对所有命令有效，写在子命令前或后都行。
 - **脚本、循环、CI 里一律加 `--json`**；人类输出带颜色和排版，不要去解析。
 - 成功 → stdout 一个 JSON 对象。失败 → **stderr** 一个 `{"error":{"code","name","message","details"}}`，stdout 保持干净。
-- 写命令的返回体带 `next_actions`（JSON 模式下是 `next_actions` 字段），是工具写给 agent 的建议下一步。**优先照着它走，比自己猜可靠；但流转类建议要对照当前状态校验**（例：`task review` 之后提示的 `task reopen` 会撞守卫，见上面"状态机"）。
+- 写命令的返回体带 `next_actions`（JSON 模式下是 `next_actions` 字段），是工具写给 agent 的建议，**英文串**。**优先照着它走，比自己猜可靠；但流转类建议要对照当前状态校验**（例：`task review` 之后提示的 `task reopen` 会撞守卫，见上面"状态机"）。
 
 ## 更多细节按需读
 
@@ -183,5 +183,5 @@ CLI **没有** `plan diff` 子命令（`plan.diff` 只在 core 与 MCP 层暴露
 - `agent-kanban export` / `import` / `snapshot` / `compact` **不处理 `--help`**——加上 `--help` 会**真的执行该操作**（导出、裁剪事件）。要看用法去读文档，不是敲 `--help`。
 - `agent-kanban task <子命令> --help` **不打印帮助**，而是真去执行该命令、因缺位置参数报 USAGE。只有 `agent-kanban task --help` 打印用法。
 - 在**仓库的子目录**里跑 `agent-kanban init` 不会建新看板——它向上找到已有的 `.kanban/` 就复用。要隔离测试得把目录放到仓库外面。
-- 远程模式的目录里跑 `agent-kanban export` 会报 `NOT_INIT 未找到看板数据目录`——**这个提示是误导的**，你的看板在 server 上好好的。备份要去 server 机器跑。
+- 远程模式的目录里跑 `agent-kanban export` 会报 NOT_INIT（找不到 `.kanban/`）——**这个提示是误导的**，你的看板在 server 上好好的。备份要去 server 机器跑。
 - `--force` 不是"再试一次"的意思。

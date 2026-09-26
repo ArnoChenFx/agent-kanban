@@ -159,7 +159,7 @@ try {
   step(11, "config show：显示生效配置与来源");
   const show = await run(["config", "show"], { cwd: clientDir });
   console.log(show.out.split("\n").map((l) => "  " + l).join("\n"));
-  check("config show 显示远程模式", show.out.includes("远程"));
+  check("config show 显示远程模式", show.out.includes("remote"));
 
   // ---- 12. 管理页面 ----
   step(12, "管理页面 /admin");

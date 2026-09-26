@@ -116,18 +116,18 @@ export function openCtx(opts: CtxOptions = {}): Ctx {
   // 远程模式但配置不完整：明确告诉用户缺什么（而不是含糊报"鉴权失败"）
   if (isRemote) {
     const missing: string[] = [];
-    if (!cfg.server) missing.push("server.url（远程 server 地址）");
-    if (!cfg.project) missing.push("project.key（project 标识）");
-    if (!cfg.token) missing.push("server.token（访问 token）");
+    if (!cfg.server) missing.push("server.url (remote server address)");
+    if (!cfg.project) missing.push("project.key (project identifier)");
+    if (!cfg.token) missing.push("server.token (access token)");
     throw KanbanError.usage(
-      `远程模式配置不完整，缺少：${missing.join("、")}`,
-      "补齐方式（任选其一）：\n" +
-        "  1. 编辑 .kanban/config.toml 填上上述字段\n" +
-        "  2. 用命令行参数覆盖：--server <url> --project <key> --key <token>\n" +
-        "  3. 用环境变量：KANBAN_SERVER / KANBAN_PROJECT / KANBAN_KEY\n" +
+      `remote mode is not fully configured, missing: ${missing.join(", ")}`,
+      "How to fix (pick one):\n" +
+        "  1. edit .kanban/config.toml and fill in the fields above\n" +
+        "  2. override on the command line: --server <url> --project <key> --key <token>\n" +
+        "  3. use environment variables: KANBAN_SERVER / KANBAN_PROJECT / KANBAN_KEY\n" +
         (resolved.sources.configFile
-          ? `当前配置文件：${resolved.sources.configFile}`
-          : `未找到配置文件（应在 ${paths.dir}/${CONFIG_FILE}）`),
+          ? `current config file: ${resolved.sources.configFile}`
+          : `no config file found (expected at ${paths.dir}/${CONFIG_FILE})`),
     );
   }
 
@@ -231,20 +231,20 @@ function openRemoteCtx(input: {
 
   // 远程模式必须显式指定 project（ADR-12：猜错 project 的代价大于多打几个字）
   if (!input.project || input.project.length === 0) {
-    throw KanbanError.auth("远程模式需要指定 project", {
+    throw KanbanError.auth("remote mode requires a project", {
       server,
       hint:
-        "用法：kanban --server <url> --project <key> --key k_xxx <命令>\n" +
-        "或先保存配置：agent-kanban config set server.url <url> / project.key <key> / server.token <token>",
+        "Usage: kanban --server <url> --project <key> --key k_xxx <command>\n" +
+        "or save the config first: agent-kanban config set server.url <url> / project.key <key> / server.token <token>",
     });
   }
   const projectKey = validateProjectKey(input.project);
 
   if (!input.key || input.key.length === 0) {
-    throw KanbanError.auth(`project "${projectKey}" 需要访问 token`, {
+    throw KanbanError.auth(`project "${projectKey}" requires an access token`, {
       project: projectKey,
       server,
-      hint: "用 `agent-kanban config set server.token <token>` 保存，或用 --key 临时指定",
+      hint: "save it with `agent-kanban config set server.token <token>`, or pass --key for one call",
     });
   }
 
@@ -318,11 +318,11 @@ export function resolveSessionId(ctx: Ctx, explicit?: string): string {
   if (fromFile && fromFile.length > 0) return fromFile;
 
   throw KanbanError.usage(
-    "缺少会话标识，无法确定是谁在操作",
-    "三种方式任选其一：\n" +
-      "  1. 命令行加 --session <id>\n" +
-      "  2. 设置环境变量 KANBAN_SESSION\n" +
-      "  3. 先运行 `agent-kanban session start --agent <名字>` 写入默认会话",
+    "missing session id, cannot tell who is operating",
+    "Pick one of three:\n" +
+      "  1. add --session <id> on the command line\n" +
+      "  2. set the KANBAN_SESSION environment variable\n" +
+      "  3. run `agent-kanban session start --agent <name>` first to write the default session",
   );
 }
 

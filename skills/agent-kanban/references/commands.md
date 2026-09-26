@@ -88,7 +88,7 @@ agent-kanban task show T-0007 [--timeline] [--tail <n>] [--json]
 
 - `--ready` = 依赖已满足**且无人持有**（租约过期的持有者也算无人持有）。
 - `--all` 才包含 `done` / `cancelled`。
-- `task show` 默认输出描述、checklist 逐项、依赖（id + 标题 + 完成状态），末尾附**可用操作**。
+- `task show` 默认输出描述、checklist 逐项、依赖（id + 标题 + 完成状态），末尾附**可用的下一步命令**（`Available actions:`）。
   （`--body` 是遗留的兼容参数：早先描述要靠它才显示，现在默认就显示，传了也不报错。）
 - 短选项：`-j` json、`-a` all、`-m` mine、`-s` status、`-l` label。
 
@@ -159,7 +159,7 @@ agent-kanban plan attach <计划号> --task T-0007          # 把任务指向某
 ```
 
 - 计划号形如 **`PL-T-0007-02`**（`PL-<任务号>-<版本号>`）。`show` / `history` 的位置参数是**计划号**，不支持 `--task`。
-- `--ts` 只收**数字**（毫秒 epoch），ISO 时间串会报 `选项 --ts 需要数字`。
+- `--ts` 只收**数字**（毫秒 epoch），ISO 时间串会被当成缺参数，报 `missing --ts <epoch milliseconds>`。
 - 每次 `save` 都产生新版本，旧版本转 `superseded`（不会丢）。带 `--task` 保存后自动挂到该任务上，等价于 `attach`。
 - **CLI 没有 `plan diff` 子命令**（`plan.diff` 只存在于 core 与 MCP 层）。要比版本：用 MCP 的 `kanban_plan_diff`，或分别 `plan show` 两个计划号。
 - `plan show --json` 的对象：
@@ -246,7 +246,7 @@ agent-kanban init && agent-kanban import .kanban/journal && agent-kanban rebuild
   "created_at": 1790433273910, "updated_at": 1790434174040,
   "started_at": 1790433273978, "finished_at": null, "body": null,
   "dependencies": [], "unfinished_dependencies": [],
-  "next_actions": ["继续：agent-kanban task progress T-0002 --pct 30 --note \"...\""]
+  "next_actions": ["Continue: agent-kanban task progress T-0002 --pct 30 --note \"...\""]
 }
 ```
 
@@ -259,14 +259,14 @@ agent-kanban init && agent-kanban import .kanban/journal && agent-kanban rebuild
   "error": {
     "code": 3,
     "name": "CONFLICT",
-    "message": "任务 T-0004 正在被 s-agentc 处理（进度 0%，租约剩 15 分钟）",
+    "message": "task T-0004 is being worked on by s-agentc (progress 0%, 15 minute(s) left on the lease)",
     "details": {
       "task_id": "T-0004",
       "holder": { "session_id": "s-agentc", "agent_name": "agent-c", "progress": 0,
                   "last_seen_at": 1790433279457, "lease_expires_at": 1790434185172,
                   "lease_left_min": 15 },
       "last_event": { "type": "task_claimed", "ts": 1790433285173, "data": { "...": "..." } },
-      "hint": "该卡正被别人处理。改做 `agent-kanban task list --ready` 里的任务；确实需要接管请人工确认后用 --force"
+      "hint": "Someone else is working on this task. Pick a task from `agent-kanban task list --ready` instead; if you really need to take over, have a human confirm and use --force"
     }
   }
 }

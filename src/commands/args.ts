@@ -80,7 +80,7 @@ export function parseArgs(argv: string[], spec: ParseSpec = {}): ParsedArgs {
       if (strings.has(name)) {
         const value = argv[i + 1];
         if (value === undefined || value.startsWith("-")) {
-          throw KanbanError.usage(`选项 --${name} 需要一个值`, `用法：--${name} <value>`);
+          throw KanbanError.usage(`option --${name} needs a value`, `Usage: --${name} <value>`);
         }
         options[name] = value;
         i += 2;
@@ -106,7 +106,7 @@ export function parseArgs(argv: string[], spec: ParseSpec = {}): ParsedArgs {
         const ch = chars[c]!;
         const long = short[ch];
         if (long === undefined) {
-          throw KanbanError.usage(`未知短选项 -${ch}`, `可用短选项：${Object.keys(short).join(" ")}`);
+          throw KanbanError.usage(`unknown short option -${ch}`, `Usage: available short options: ${Object.keys(short).join(" ")}`);
         }
         if (booleans.has(long)) {
           options[long] = true;
@@ -120,7 +120,7 @@ export function parseArgs(argv: string[], spec: ParseSpec = {}): ParsedArgs {
         }
         const value = argv[i + 1];
         if (value === undefined || value.startsWith("-")) {
-          throw KanbanError.usage(`选项 -${ch} 需要一个值`, `用法：-${ch} <value>`);
+          throw KanbanError.usage(`option -${ch} needs a value`, `-${ch} <value>`);
         }
         options[long] = value;
         i++;
@@ -160,7 +160,7 @@ export function getNumber(args: ParsedArgs, name: string): number | undefined {
   if (value === undefined) return undefined;
   const num = Number(value);
   if (Number.isNaN(num)) {
-    throw KanbanError.usage(`选项 --${name} 需要数字，收到 "${value}"`);
+    throw KanbanError.usage(`option --${name} needs a number, got "${value}"`);
   }
   return num;
 }
@@ -170,7 +170,7 @@ export function getInt(args: ParsedArgs, name: string): number | undefined {
   const num = getNumber(args, name);
   if (num === undefined) return undefined;
   if (!Number.isInteger(num)) {
-    throw KanbanError.usage(`选项 --${name} 需要整数，收到 ${num}`);
+    throw KanbanError.usage(`option --${name} needs an integer, got ${num}`);
   }
   return num;
 }
@@ -201,8 +201,8 @@ export function assertKnownOptions(args: ParsedArgs, allowed: string[]): void {
   const bad = Object.keys(args.options).filter((k) => !allowedSet.has(k));
   if (bad.length > 0) {
     throw KanbanError.usage(
-      `未知选项：${bad.map((b) => `--${b}`).join(" ")}`,
-      `可用选项：${allowed.map((a) => `--${a}`).join(" ")}`,
+      `unknown option: ${bad.map((b) => `--${b}`).join(" ")}`,
+      `available options: ${allowed.map((a) => `--${a}`).join(" ")}`,
     );
   }
 }
@@ -211,7 +211,7 @@ export function assertKnownOptions(args: ParsedArgs, allowed: string[]): void {
 export function requirePositional(args: ParsedArgs, index: number, name: string, usage: string): string {
   const value = args.positionals[index];
   if (value === undefined || value.length === 0) {
-    throw KanbanError.usage(`缺少参数 <${name}>`, usage);
+    throw KanbanError.usage(`missing argument <${name}>`, usage);
   }
   return value;
 }

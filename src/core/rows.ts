@@ -267,14 +267,16 @@ export function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(",");
 }
 
-/** 统一的"任务不存在"错误（带上 project，便于定位是哪张看板上没有这张卡） */
+/** 统一的“任务不存在”错误（带上 project，便于定位是哪张看板上没有这张卡） */
 export function taskNotFound(taskId: string, projectKey?: string): KanbanError {
   return KanbanError.state(
-    `任务 ${taskId} 不存在${projectKey ? `（project: ${projectKey}）` : ""}`,
+    `task ${taskId} not found${projectKey ? ` (project: ${projectKey})` : ""}`,
     {
+      reason: "task_not_found",
       task_id: taskId,
       project: projectKey,
-      hint: "用 `agent-kanban task list` 查看现有任务；任务号形如 T-0007，且在每个 project 内**独立编号**",
+      hint:
+        "Run `agent-kanban task list` to see the existing tasks; task ids look like T-0007 and are numbered independently inside each project",
     },
   );
 }

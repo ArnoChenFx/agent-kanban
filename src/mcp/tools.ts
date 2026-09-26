@@ -30,7 +30,7 @@ const TASK_STATUS_SET = new Set<string>(TASK_STATUSES);
 function msToTtl(ms: number | undefined): string | undefined {
   if (ms === undefined) return undefined;
   if (!Number.isFinite(ms) || ms <= 0) {
-    throw KanbanError.usage("ttl_ms 必须是正数毫秒");
+    throw KanbanError.usage("ttl_ms must be a positive number of milliseconds");
   }
   const s = Math.round(ms / 1000);
   if (s % 3600 === 0) return `${s / 3600}h`;
@@ -78,10 +78,10 @@ export interface ToolDeps {
 
 // ---- 复用的 schema 片段，避免 20 个工具重复写 ----
 const S = {
-  sessionId: { type: "string", description: "会话 ID，来自 kanban_session_start" },
-  taskId: { type: "string", description: "任务号，如 T-0007" },
-  agentName: { type: "string", description: "agent 名字，如 pi-main" },
-  limit: { type: "number", description: "最多返回几条（默认 30）" },
+  sessionId: { type: "string", description: "session id returned by kanban_session_start" },
+  taskId: { type: "string", description: "task id, e.g. T-0007" },
+  agentName: { type: "string", description: "agent name, e.g. pi-main" },
+  limit: { type: "number", description: "max cards to return (default 30)" },
 } as const;
 
 const REQUIRED_SESSION = ["session_id"];
@@ -329,7 +329,7 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "kanban_board",
-    description: "The whole board by lane, same data the web UI shows.",
+    description: "Read the whole board by lane, the same data the web UI shows.",
     inputSchema: {
       type: "object",
       properties: {
@@ -399,10 +399,10 @@ function str(args: Record<string, unknown>, key: string, fallback?: string): str
   const v = args[key];
   if (v === undefined || v === null) {
     if (fallback !== undefined) return fallback;
-    throw KanbanError.usage(`缺少必填参数 ${key}`, `工具参数 ${key} 是字符串，必填`);
+    throw KanbanError.usage(`missing required parameter: ${key}`, `tool parameter ${key} is a required string`);
   }
   if (typeof v !== "string") {
-    throw KanbanError.usage(`参数 ${key} 必须是字符串`, `收到 ${typeof v}`);
+    throw KanbanError.usage(`parameter ${key} must be a string`, `received ${typeof v}`);
   }
   return v;
 }
@@ -418,7 +418,7 @@ function optStr(args: Record<string, unknown>, key: string): string | undefined 
   const v = args[key];
   if (v === undefined || v === null) return undefined;
   if (typeof v !== "string") {
-    throw KanbanError.usage(`参数 ${key} 必须是字符串`, `收到 ${typeof v}`);
+    throw KanbanError.usage(`parameter ${key} must be a string`, `received ${typeof v}`);
   }
   return v;
 }
@@ -426,7 +426,7 @@ function num(args: Record<string, unknown>, key: string, fallback?: number): num
   const v = args[key];
   if (v === undefined || v === null) return fallback;
   if (typeof v !== "number" || Number.isNaN(v)) {
-    throw KanbanError.usage(`参数 ${key} 必须是数字`, `收到 ${typeof v}`);
+    throw KanbanError.usage(`parameter ${key} must be a number`, `received ${typeof v}`);
   }
   return v;
 }
@@ -434,7 +434,7 @@ function bool(args: Record<string, unknown>, key: string, fallback?: boolean): b
   const v = args[key];
   if (v === undefined || v === null) return fallback;
   if (typeof v !== "boolean") {
-    throw KanbanError.usage(`参数 ${key} 必须是布尔值`, `收到 ${typeof v}`);
+    throw KanbanError.usage(`parameter ${key} must be a boolean`, `received ${typeof v}`);
   }
   return v;
 }
@@ -442,7 +442,7 @@ function strArray(args: Record<string, unknown>, key: string): string[] | undefi
   const v = args[key];
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
-    throw KanbanError.usage(`参数 ${key} 必须是字符串数组`);
+    throw KanbanError.usage(`parameter ${key} must be an array of strings`);
   }
   return v as string[];
 }
@@ -460,8 +460,8 @@ export const HANDLERS: Record<string, ToolHandler> = {
       params: { agent_name: str(a, "agent_name"), harness: str(a, "harness", "mcp") },
     });
     return ok(data, [
-      `把返回的 session_id 存下来，后续每个工具都要传`,
-      `下一步：kanban_bootstrap(session_id="...")`,
+      `Store the returned session_id and pass it to every later tool call`,
+      `Next: kanban_bootstrap(session_id="...")`,
     ].concat(nextActions));
   },
 
@@ -480,8 +480,8 @@ export const HANDLERS: Record<string, ToolHandler> = {
       ? (raw.map((s) => {
           if (!TASK_STATUS_SET.has(s)) {
             throw KanbanError.usage(
-              `未知任务状态：${s}`,
-              `合法取值：${[...TASK_STATUS_SET].join(", ")}`,
+              `unknown task status: ${s}`,
+              `valid values: ${[...TASK_STATUS_SET].join(", ")}`,
             );
           }
           return s as TaskStatus;
@@ -512,7 +512,7 @@ export const HANDLERS: Record<string, ToolHandler> = {
       },
     });
     const hints = includePlan
-      ? [`这个任务的计划全文：kanban_plan_show(task_id="${taskId}")`]
+      ? [`Full plan for this task: kanban_plan_show(task_id="${taskId}")`]
       : [];
     return ok(data, hints.concat(nextActions));
   },
@@ -642,7 +642,7 @@ export const HANDLERS: Record<string, ToolHandler> = {
     const planId = optStr(a, "plan_id");
     const taskId = optStr(a, "task_id");
     if (!planId && !taskId) {
-      throw KanbanError.usage("plan_show 需要 plan_id 或 task_id 之一");
+      throw KanbanError.usage("plan_show requires either plan_id or task_id");
     }
     // task_id 走 plan.list 找当前生效版本；plan_id 直取
     if (planId) {
@@ -661,7 +661,7 @@ export const HANDLERS: Record<string, ToolHandler> = {
     if (!first?.id) {
       return ok(
         { plans: [] },
-        [`这个任务还没有计划：kanban_plan_save(task_id="${taskId}", title="...", markdown="...")`],
+        [`This task has no plan yet: kanban_plan_save(task_id="${taskId}", title="...", markdown="...")`],
       );
     }
     const { data } = await d.execute({ kind: "plan.show", params: { plan_id: first.id } });
@@ -721,8 +721,8 @@ function truncatePlan(data: unknown, maxChars: number): unknown {
     truncated: true,
     total_chars: body.length,
     next_actions: [
-      `正文被截断（${body.length} → ${maxChars} 字符）。需要后半段时提高 max_chars 再调一次`,
-      `或按需检索：kanban_plan_diff(from_plan_id="${planId}", ...)`,
+      `Body truncated (${body.length} → ${maxChars} chars). Raise max_chars and call again for the rest`,
+      `Or search for what you need: kanban_plan_diff(from_plan_id="${planId}", ...)`,
     ],
   };
 }
@@ -736,8 +736,8 @@ export async function callTool(name: string, args: Record<string, unknown>, deps
       error: {
         code: ExitCode.USAGE,
         name: "USAGE",
-        message: `未知工具：${name}`,
-        hint: `可用工具：${TOOLS.map((t) => t.name).join(", ")}`,
+        message: `unknown tool: ${name}`,
+        hint: `available tools: ${TOOLS.map((t) => t.name).join(", ")}`,
       },
     };
   }

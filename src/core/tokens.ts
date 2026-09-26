@@ -139,14 +139,16 @@ export function issueToken(
   const projects = (input.projects ?? []).map((p) => validateProjectKey(p));
   if (input.role === "project" && projects.length === 0) {
     throw KanbanError.usage(
-      "项目级 token 必须至少授权一个 project",
-      '用法：agent-kanban admin token create --project demo-app --project web-app\n管理员 token 用 --role admin',
+      "a project-scoped token must authorize at least one project",
+      "Usage: agent-kanban admin token create --project demo-app --project web-app\nUse --role admin for an admin token",
+      { reason: "token_requires_project" },
     );
   }
   if (input.role === "admin" && projects.length > 0) {
     throw KanbanError.usage(
-      "管理员 token 天然拥有全部 project 权限，不能指定 project 列表",
-      "去掉 --project 参数，或改用 --role project",
+      "an admin token already has full access to every project, so it cannot be given a project list",
+      "Drop the --project argument, or use --role project instead",
+      { reason: "admin_token_with_projects" },
     );
   }
 
@@ -213,17 +215,26 @@ export function updateTokenProjects(
 ): AccessToken {
   const token = getToken(db, tokenId);
   if (!token) {
-    throw KanbanError.state(`token 不存在：${maskToken(tokenId)}`, {
+    throw KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+      reason: "token_not_found",
       token: maskToken(tokenId),
-      hint: "用 `agent-kanban admin token list` 查看现有 token",
+      hint: "Run `agent-kanban admin token list` to see the existing tokens",
     });
   }
   if (token.role === "admin") {
-    throw KanbanError.usage("管理员 token 的权限不可限制（它拥有全部 project）");
+    throw KanbanError.usage(
+      "the scope of an admin token cannot be restricted (it has access to every project)",
+      undefined,
+      { reason: "admin_token_scope_fixed" },
+    );
   }
   const validated = projects.map((p) => validateProjectKey(p));
   if (validated.length === 0) {
-    throw KanbanError.usage("项目级 token 至少要保留一个 project（或直接吊销该 token）");
+    throw KanbanError.usage(
+      "a project-scoped token must keep at least one project (or revoke the token instead)",
+      undefined,
+      { reason: "token_requires_project" },
+    );
   }
   db.query("UPDATE tokens SET projects = ? WHERE id = ?").run(JSON.stringify(validated), tokenId);
   void now;
@@ -234,12 +245,16 @@ export function updateTokenProjects(
 export function revokeToken(db: Database, tokenId: string, now: number = Date.now()): AccessToken {
   const token = getToken(db, tokenId);
   if (!token) {
-    throw KanbanError.state(`token 不存在：${maskToken(tokenId)}`);
+    throw KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+      reason: "token_not_found",
+      token: maskToken(tokenId),
+    });
   }
   if (token.revokedAt !== null) {
-    throw KanbanError.state(`token 已被吊销（${new Date(token.revokedAt).toISOString()}）`, {
+    throw KanbanError.state(`token already revoked (${new Date(token.revokedAt).toISOString()})`, {
+      reason: "token_already_revoked",
       token: maskToken(tokenId),
-      hint: "吊销不可恢复；如需恢复访问请签发新 token",
+      hint: "Revoking cannot be undone; issue a new token if you need access back",
     });
   }
   db.query("UPDATE tokens SET revoked_at = ? WHERE id = ?").run(now, tokenId);
@@ -254,7 +269,12 @@ export function updateTokenMeta(
   now: number = Date.now(),
 ): AccessToken {
   const token = getToken(db, tokenId);
-  if (!token) throw KanbanError.state(`token 不存在：${maskToken(tokenId)}`);
+  if (!token) {
+    throw KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+      reason: "token_not_found",
+      token: maskToken(tokenId),
+    });
+  }
 
   if (patch.name !== undefined) {
     db.query("UPDATE tokens SET name = ? WHERE id = ?").run(patch.name, tokenId);
@@ -374,44 +394,49 @@ export function authFailure(result: Extract<AuthResult, { ok: false }>, projectK
 
   switch (result.reason) {
     case "missing":
-      return new KanbanError(7, "AUTH", "缺少访问 token", {
+      return new KanbanError(7, "AUTH", "missing access token", {
+        reason: "auth_token_missing",
         hint:
-          "本项目在远程模式下，配置 token 的方式（三选一）：\n" +
-          "  1. 编辑 .kanban/config.toml 的 server.token\n" +
-          "  2. 设置环境变量 KANBAN_KEY\n" +
-          "  3. 命令行临时指定 --key k_xxx\n" +
-          "token 由管理员签发：agent-kanban admin token create --project <key>",
+          "This project runs in remote mode; three ways to configure the token:\n" +
+          "  1. Edit server.token in .kanban/config.toml\n" +
+          "  2. Set the KANBAN_KEY environment variable\n" +
+          "  3. Pass --key k_xxx on the command line\n" +
+          "Tokens are issued by an admin: agent-kanban admin token create --project <key>",
       });
 
     case "revoked":
-      return new KanbanError(7, "AUTH", `token 已被吊销（${tokenLabel}）`, {
+      return new KanbanError(7, "AUTH", `token has been revoked (${tokenLabel})`, {
+        reason: "auth_token_revoked",
         token: tokenLabel,
-        hint: "吊销不可恢复，请找管理员签发新 token",
+        hint: "Revoking cannot be undone, ask an admin to issue a new token",
       });
 
     case "expired":
-      return new KanbanError(7, "AUTH", `token 已过期（${tokenLabel}）`, {
+      return new KanbanError(7, "AUTH", `token has expired (${tokenLabel})`, {
+        reason: "auth_token_expired",
         token: tokenLabel,
-        hint: "请找管理员签发新 token，或调整有效期",
+        hint: "Ask an admin to issue a new token, or adjust the expiry",
       });
 
     case "invalid":
-      return new KanbanError(7, "AUTH", "token 无效", {
+      return new KanbanError(7, "AUTH", "invalid token", {
+        reason: "auth_token_invalid",
         token: tokenLabel,
         hint:
-          "确认 token 是否输错/被截断；用 `agent-kanban config show` 看当前生效的 token 来自哪里" +
-          "（CLI > 环境变量 > .kanban/config.toml）。未配置时用 `agent-kanban config set server.token <token>` 保存。",
+          "Check whether the token was mistyped or truncated; run `agent-kanban config show` to see where the effective token comes from " +
+          "(CLI > environment variable > .kanban/config.toml). When it is not set, store one with `agent-kanban config set server.token <token>`.",
       });
 
     case "forbidden":
     default:
       // 故意不区分"project 不存在"与"无权限"：区分开等于泄漏 project 是否存在
-      return new KanbanError(7, "AUTH", "token 无权访问该项目", {
+      return new KanbanError(7, "AUTH", "this token is not allowed to access the project", {
+        reason: "auth_project_forbidden",
         project: projectKey,
         token: tokenLabel,
-        hint: "当前 token 的授权范围不包含该项目。请管理员执行：\n" +
+        hint: "The current token is not scoped to that project. Ask an admin to run:\n" +
           "  agent-kanban admin token grant <token> --project <key>\n" +
-          "或用管理员 token 操作：\n" +
+          "or use an admin token instead:\n" +
           "  kanban --key <admin-token> task list",
       });
   }
@@ -467,10 +492,11 @@ export function projectHasTokens(db: Database, projectKey: string): boolean {
 export function assertProjectExistsForToken(db: Database, projectKeys: string[]): void {
   const missing = projectKeys.filter((k) => !getProject(db, k));
   if (missing.length > 0) {
-    throw KanbanError.state(`project 不存在：${missing.join(", ")}`, {
+    throw KanbanError.state(`project not found: ${missing.join(", ")}`, {
+      reason: "project_not_found",
       missing,
-      hint: `先创建：agent-kanban admin project add ${missing[0]}\n` +
-        "（也可以先签发 token 预授权，之后再建 project）",
+      hint: `Create it first: agent-kanban admin project add ${missing[0]}\n` +
+        "(you can also issue the token up front to pre-authorize, then create the project later)",
     });
   }
 }

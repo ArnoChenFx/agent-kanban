@@ -107,8 +107,9 @@ export function isTaskId(value: string): boolean {
 export function normalizeTaskId(value: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw KanbanError.usage(
-      `任务号必须是形如 T-0007 的字符串，收到 ${JSON.stringify(value)}`,
-      "用法：T-0007（大小写与前导零会自动归一化，t-7 与 t-0007 等价）",
+      `task id must be a string like T-0007, got ${JSON.stringify(value)}`,
+      "Usage: T-0007 (case and leading zeros are normalized, t-7 and t-0007 are equivalent)",
+      { reason: "invalid_task_id" },
     );
   }
   const trimmed = value.trim().toUpperCase();

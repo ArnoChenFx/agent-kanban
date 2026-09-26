@@ -54,7 +54,7 @@ try {
   );
   server.stderr?.on("data", (d) => {
     const s = String(d);
-    if (!s.includes("管理员 token")) process.stderr.write(`[server] ${s}`);
+    if (!s.includes("Admin token:")) process.stderr.write(`[server] ${s}`);
   });
   await sleep(2200);
 
@@ -74,7 +74,7 @@ try {
   const root = await fetch(BASE + "/");
   const html = await root.text();
   check("GET / 返回 200", root.status === 200, `status=${root.status}`);
-  check("返回真实前端（非占位页）", html.includes('<div id="root">') && !html.includes("前端尚未构建"));
+  check("返回真实前端（非占位页）", html.includes('<div id="root">') && !html.includes("has not been built yet"));
   check("引用了构建后的 JS", /<script[^>]+src="\/assets\/[^"]+\.js"/.test(html));
   check("HTML lang=zh-CN", html.includes('lang="zh-CN"'));
 

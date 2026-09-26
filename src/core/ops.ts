@@ -320,10 +320,10 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         nextActions:
           unfinished.length > 0
             ? [
-                `暂不可认领：等 ${unfinished.map((u) => u.id).join(", ")} 完成（依赖满足后会自动通知）`,
-                `可以先做上游：agent-kanban task list --ready`,
+                `Not claimable yet: waiting for ${unfinished.map((u) => u.id).join(", ")} to finish (you will be notified once the dependencies are satisfied)`,
+                `Work on an upstream task first: agent-kanban task list --ready`,
               ]
-            : [`认领：agent-kanban task claim ${task.id}`],
+            : [`Claim: agent-kanban task claim ${task.id}`],
       };
     }
 
@@ -397,9 +397,9 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       return {
         data: { ...taskToJson(task), took_over: before?.assigneeSessionId !== null && before?.assigneeSessionId !== ctx.sessionId },
         nextActions: [
-          `推进：agent-kanban task progress ${task.id} --pct 40 --note "..."`,
-          `受阻：agent-kanban task block ${task.id} --reason "..."`,
-          `收工：agent-kanban handoff --task ${task.id} --summary "..." --next "..."`,
+          `Progress: agent-kanban task progress ${task.id} --pct 40 --note "..."`,
+          `Blocked: agent-kanban task block ${task.id} --reason "..."`,
+          `Wrap up: agent-kanban handoff --task ${task.id} --summary "..." --next "..."`,
         ],
       };
     }
@@ -419,8 +419,8 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         data: taskToJson(task),
         nextActions:
           task.progress >= 100
-            ? [`完工：agent-kanban task review ${task.id}`, `或直接完成：agent-kanban task done ${task.id}`]
-            : [`继续：agent-kanban task progress ${task.id} --pct ${Math.min(99, task.progress + 20)} --note "..."`],
+            ? [`Submit for review: agent-kanban task review ${task.id}`, `Or just finish it: agent-kanban task done ${task.id}`]
+            : [`Continue: agent-kanban task progress ${task.id} --pct ${Math.min(99, task.progress + 20)} --note "..."`],
       };
     }
 
@@ -433,12 +433,12 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       const { task } = doTransition(ctx, actor, op.params.task_id, "blocked", {
         reason: op.params.reason,
       });
-      return { data: taskToJson(task), nextActions: [`解除阻塞：agent-kanban task unblock ${task.id}`] };
+      return { data: taskToJson(task), nextActions: [`Unblock: agent-kanban task unblock ${task.id}`] };
     }
 
     case "task.unblock": {
       const { task } = doTransition(ctx, actor, op.params.task_id, "todo", {});
-      return { data: taskToJson(task), nextActions: [`认领：agent-kanban task claim ${task.id}`] };
+      return { data: taskToJson(task), nextActions: [`Claim: agent-kanban task claim ${task.id}`] };
     }
 
     case "task.review": {
@@ -446,8 +446,8 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       return {
         data: taskToJson(task),
         nextActions: [
-          `确认通过：agent-kanban task done ${task.id}`,
-          `打回重做：agent-kanban task reopen ${task.id} --reason "..."`,
+          `Approve: agent-kanban task done ${task.id}`,
+          `Send back for rework: agent-kanban task reopen ${task.id} --reason "..."`,
         ],
       };
     }
@@ -461,7 +461,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         data: { ...taskToJson(task), unblocked },
         nextActions:
           unblocked.length > 0
-            ? [`依赖它的任务现在可以开工了：${unblocked.join(", ")}`, `认领：agent-kanban task claim ${unblocked[0]}`]
+            ? [`The task(s) that depend on it can be started now: ${unblocked.join(", ")}`, `Claim: agent-kanban task claim ${unblocked[0]}`]
             : [],
       };
     }
@@ -477,14 +477,14 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       const { task } = doTransition(ctx, actor, op.params.task_id, "todo", {
         reason: op.params.reason,
       });
-      return { data: taskToJson(task), nextActions: [`认领：agent-kanban task claim ${task.id}`] };
+      return { data: taskToJson(task), nextActions: [`Claim: agent-kanban task claim ${task.id}`] };
     }
 
     case "task.release": {
       const task = withOp(ctx, (tx) => releaseTask(tx, op.params.task_id, actor, op.params.reason));
       return {
         data: taskToJson(task),
-        nextActions: [`重新认领：agent-kanban task claim ${task.id}（进度 ${task.progress}% 已保留）`],
+        nextActions: [`Claim again: agent-kanban task claim ${task.id} (progress ${task.progress}% is kept)`],
       };
     }
 
@@ -501,7 +501,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         data: { ...taskToJson(task), unblocked },
         nextActions:
           unblocked.length > 0
-            ? [`依赖它的任务现在可以开工了：${unblocked.join(", ")}`, `认领：agent-kanban task claim ${unblocked[0]}`]
+            ? [`The task(s) that depend on it can be started now: ${unblocked.join(", ")}`, `Claim: agent-kanban task claim ${unblocked[0]}`]
             : [],
       };
     }
@@ -546,28 +546,36 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       return {
         data: sessionToJson(session, { written_session_file: false }),
         nextActions: [
-          "读取现场：agent-kanban context（未消费的交接、正在做的卡、可认领任务）",
-          "写入本地会话文件：`agent-kanban session start` 默认会写，无需手动操作",
+          "Read the situation: agent-kanban context (unconsumed handoffs, tasks in progress, tasks you can claim)",
+          "`agent-kanban session start` writes the local session file by default, no manual step needed",
         ],
       };
     }
 
     case "session.end": {
       if (!ctx.sessionId) {
-        throw KanbanError.usage("缺少会话标识", "先运行 `agent-kanban session start --agent <名字>`");
+        throw KanbanError.usage(
+          "missing session id",
+          "Run `agent-kanban session start --agent <name>` first",
+          { reason: "missing_session_id" },
+        );
       }
       const result = withOp(ctx, (tx) => closeSession(tx, ctx.sessionId!, op.params.summary));
       return {
         data: { session_id: ctx.sessionId, released: result.released },
         nextActions: result.released.length > 0
-          ? [`已释放任务（进度保留）：${result.released.join(", ")}`]
+          ? [`Released task(s) (progress kept): ${result.released.join(", ")}`]
           : [],
       };
     }
 
     case "session.heartbeat": {
       if (!ctx.sessionId) {
-        throw KanbanError.usage("缺少会话标识", "心跳需要先 `agent-kanban session start`");
+        throw KanbanError.usage(
+          "missing session id",
+          "The heartbeat needs `agent-kanban session start` first",
+          { reason: "missing_session_id" },
+        );
       }
       const now = ctx.now();
       const renewed = withTx(
@@ -692,7 +700,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         return {
           id: h.id,
           task_id: h.taskId,
-          task_title: t?.title ?? "(任务已删除)",
+          task_title: t?.title ?? "(task deleted)",
           from_session: h.sessionId,
           kind: h.kind,
           summary: h.summary,
@@ -712,8 +720,9 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
     case "handoff.create": {
       if (!ctx.sessionId) {
         throw KanbanError.usage(
-          "写交接需要会话标识",
-          "先运行 `agent-kanban session start --agent <名字>`，或用 --session 指定",
+          "writing a handoff requires a session id",
+          "Run `agent-kanban session start --agent <name>` first, or pass --session",
+          { reason: "missing_session_id" },
         );
       }
       const handoff = withOp(ctx, (tx) =>
@@ -736,8 +745,8 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
           created_at: handoff.createdAt,
         },
         nextActions: [
-          `交接已记录。收尾可执行：agent-kanban session end`,
-          "下一个会话跑 `agent-kanban context` 就会看到这条交接",
+          `Handoff recorded. To wrap up: agent-kanban session end`,
+          "The next session will see this handoff when it runs `agent-kanban context`",
         ],
       };
     }
@@ -762,17 +771,21 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         data: report,
         nextActions: report.issues.length > 0
           ? [
-              ...report.issues.filter((i) => !i.fixed).slice(0, 3).map((i) => `修复：${i.hint}`),
+              ...report.issues.filter((i) => !i.fixed).slice(0, 3).map((i) => `Fix: ${i.hint}`),
               ...(report.issues.length === 0 ? [] : []),
             ]
-          : ["一切正常，继续用 `agent-kanban task ready` 干活"],
+          : ["All good, keep working with `agent-kanban task ready`"],
       };
     }
 
     // ================= 计划（ADR-1）=================
     case "plan.save": {
       if (!op.params.title?.trim()) {
-        throw KanbanError.usage("计划需要 --title", '用法：agent-kanban plan save --title "标题" --body-file <路径>');
+        throw KanbanError.usage(
+          "a plan requires --title",
+          'Usage: agent-kanban plan save --title "Title" --body-file <path>',
+          { reason: "empty_plan_title" },
+        );
       }
       const plan = withOp(ctx, (tx) =>
         savePlan(tx, {
@@ -788,9 +801,9 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         data: planToJson(plan, { includeBody: false }),
         nextActions: [
           plan.taskId
-            ? `${plan.taskId} 的计划已更新到 v${plan.version}；agent resume 时会读到它`
-            : `项目计划已更新到 v${plan.version}`,
-          `读全文：agent-kanban plan show ${plan.id}`,
+            ? `The plan of ${plan.taskId} is now at v${plan.version}; agent resume will read it`
+            : `The project plan is now at v${plan.version}`,
+          `Read the full text: agent-kanban plan show ${plan.id}`,
         ],
       };
     }
@@ -800,7 +813,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       return {
         data: planToJson(plan, { includeBody: true }),
         nextActions: plan.supersedesId
-          ? [`上一版：agent-kanban plan show ${plan.supersedesId}`]
+          ? [`Previous version: agent-kanban plan show ${plan.supersedesId}`]
           : [],
       };
     }
@@ -814,7 +827,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       });
       return {
         data: plans.map((p) => planToJson(p, { includeBody: false })),
-        nextActions: plans.length > 0 ? [`读全文：agent-kanban plan show ${plans[0]!.id}`] : [],
+        nextActions: plans.length > 0 ? [`Read the full text: agent-kanban plan show ${plans[0]!.id}`] : [],
       };
     }
 
@@ -830,7 +843,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       const plan = planAtTime(scope, op.params.scope ?? "task", op.params.task_id ?? null, op.params.ts);
       return {
         data: plan ? planToJson(plan, { includeBody: true }) : null,
-        nextActions: plan ? [] : ["该时刻还没有计划保存"],
+        nextActions: plan ? [] : ["No plan was saved at that point in time"],
       };
     }
 
@@ -838,7 +851,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       const plan = withOp(ctx, (tx) => attachPlan(tx, op.params.task_id, op.params.plan_id));
       return {
         data: planToJson(plan, { includeBody: false }),
-        nextActions: [`${plan.taskId} 的当前计划 → ${plan.id}`],
+        nextActions: [`The current plan of ${plan.taskId} is now ${plan.id}`],
       };
     }
 
@@ -859,7 +872,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
           ...bodyDiff,
         },
         nextActions: bodyDiff.truncated
-          ? [`diff 超过 ${DIFF_MAX_LINES} 行已截断，要全量请直接对比两版正文`]
+          ? [`The diff is longer than ${DIFF_MAX_LINES} lines and was truncated; compare the two bodies directly for the full text`]
           : [],
       };
     }
@@ -876,14 +889,14 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         data: report,
         nextActions: report.ok
           ? [
-              `投影与事件流完全一致（${report.events_replayed} 个事件已核对）`,
-              "这条自检可以在 CI 里跑：证明写入路径没有隐藏 bug",
+              `The projection and the event stream agree completely (${report.events_replayed} events verified)`,
+              "This self-check can run in CI: it proves the write path has no hidden bugs",
             ]
           : [
-                `发现 ${report.drift.length} 处漂移。可执行 \`agent-kanban rebuild --write\` 用事件流覆盖投影`,
+                `Found ${report.drift.length} drift(s). Run \`agent-kanban rebuild --write\` to overwrite the projection from the event stream`,
                 ...report.drift
                   .slice(0, 3)
-                  .map((d) => `  ${d.table}.${d.id}.${d.field}：库里=${JSON.stringify(d.actual)}，重算=${JSON.stringify(d.expected)}`),
+                  .map((d) => `  ${d.table}.${d.id}.${d.field}: in db=${JSON.stringify(d.actual)}, recomputed=${JSON.stringify(d.expected)}`),
               ],
       };
     }
@@ -892,7 +905,10 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
     case "project.get": {
       const project = getProject(ctx.db, ctx.projectKey);
       if (!project) {
-        throw KanbanError.notInit(`project "${ctx.projectKey}" 不存在`, { project: ctx.projectKey });
+        throw KanbanError.notInit(`project "${ctx.projectKey}" not found`, {
+          reason: "project_not_found",
+          project: ctx.projectKey,
+        });
       }
       const counts = listTasks(scope, { includeTerminal: true, limit: 1000 });
       return {
@@ -961,14 +977,16 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         .run(hashApiKey(apiKey), project.key);
       return {
         data: { project: project.key, api_key: apiKey },
-        nextActions: [`**立即保存这个 key，只显示这一次**：${apiKey}`],
+        nextActions: [`**Save this key right now, it is only shown once**: ${apiKey}`],
       };
     }
 
     default: {
       // 穷尽性检查：新增 Op 但忘记实现时会在这里被 TS 报错
       const exhaustive: never = op;
-      throw KanbanError.state(`未实现的操作：${JSON.stringify(exhaustive)}`);
+      throw KanbanError.state(`unimplemented op: ${JSON.stringify(exhaustive)}`, {
+        reason: "unimplemented_op",
+      });
     }
   }
 }
@@ -1050,7 +1068,11 @@ function parseTtl(input: string): number | undefined {
   if (input === "short") return undefined;
   const match = /^(\d+)\s*([dhms])$/.exec(input.trim().toLowerCase());
   if (!match) {
-    throw KanbanError.usage(`无法解析租约时长 "${input}"`, "支持：15m / 2h / 1d，或 short（用默认）");
+    throw KanbanError.usage(
+      `cannot parse lease duration "${input}"`,
+      "Supported: 15m / 2h / 1d, or short (use the default)",
+      { reason: "invalid_duration" },
+    );
   }
   const value = Number(match[1]);
   switch (match[2]) {
@@ -1068,7 +1090,11 @@ function parseTtl(input: string): number | undefined {
 /** 必填字符串校验（server 端不可信输入，必须校验） */
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw KanbanError.usage(`参数 ${field} 必须是非空字符串`, `收到：${JSON.stringify(value)}`);
+    throw KanbanError.usage(
+      `parameter ${field} must be a non-empty string`,
+      `Got: ${JSON.stringify(value)}`,
+      { reason: "invalid_param" },
+    );
   }
   return value;
 }
@@ -1082,16 +1108,24 @@ function requireString(value: unknown, field: string): string {
  */
 function validateOp(op: Op): void {
   if (!op || typeof op !== "object" || typeof op.kind !== "string") {
-    throw KanbanError.usage("Op 必须是 { kind, params } 对象", `收到：${JSON.stringify(op)}`);
+    throw KanbanError.usage(
+      "an op must be a { kind, params } object",
+      `Got: ${JSON.stringify(op)}`,
+      { reason: "invalid_op" },
+    );
   }
   if (op.params !== undefined && (typeof op.params !== "object" || op.params === null)) {
-    throw KanbanError.usage(`Op ${op.kind} 的 params 必须是对象`);
+    throw KanbanError.usage(`the params of op ${op.kind} must be an object`, undefined, {
+      reason: "invalid_op_params",
+    });
   }
   // 进度范围预检
   if (op.kind === "task.progress") {
     const pct = (op.params as ProgressParams).pct;
     if (pct !== undefined && (typeof pct !== "number" || pct < 0 || pct > 100)) {
-      throw KanbanError.usage(`--pct 必须在 0-100 之间`, `收到：${JSON.stringify(pct)}`);
+      throw KanbanError.usage(`--pct must be between 0 and 100`, `Got: ${JSON.stringify(pct)}`, {
+        reason: "invalid_progress",
+      });
     }
   }
 }

@@ -17,15 +17,15 @@ import {
 } from "./context.ts";
 import { createOutput } from "./output.ts";
 
-const USAGE = `用法：
-  agent-kanban session start --agent <名字> [--harness pi|claude-code|cursor|human] [--id s-xxx]
+const USAGE = `Usage:
+  agent-kanban session start --agent <name> [--harness pi|claude-code|cursor|human] [--id s-xxx]
   agent-kanban session list [--all] [--json]
   agent-kanban session heartbeat [--session <id>]
-  agent-kanban session end [--summary "本次做了什么"] [--session <id>]
+  agent-kanban session end [--summary "what you did"] [--session <id>]
 
-说明：
-  start 会把 session_id 写入 .kanban/session，之后的命令无需再传 --session。
-  远程模式下 session 仍然在 server 侧创建（--session 只影响身份传递）。`;
+Notes:
+  start writes session_id into .kanban/session, so later commands need no --session.
+  In remote mode the session is still created on the server (--session only affects how the identity is passed).`;
 
 export async function cmdSession(argv: string[]): Promise<ExitCodeValue> {
   const sub = argv[0];
@@ -46,7 +46,7 @@ export async function cmdSession(argv: string[]): Promise<ExitCodeValue> {
       process.stdout.write(USAGE + "\n");
       return ExitCode.OK;
     default:
-      throw KanbanError.usage(`未知子命令：session ${sub}`, USAGE);  }
+      throw KanbanError.usage(`unknown subcommand: session ${sub}`, USAGE);  }
 }
 
 /** 通用选项集合（所有 session 子命令共享） */
@@ -65,8 +65,9 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
   const agentName = getString(args, "agent");
   if (!agentName) {
     throw KanbanError.usage(
-      "缺少 --agent <名字>",
-      "用法：agent-kanban session start --agent pi-main --harness pi\n名字会出现在看板与冲突提示里，用能区分用途的名字（如 pi-main / claude-fix）",
+      "missing --agent <name>",
+      "Usage: agent-kanban session start --agent pi-main --harness pi\n" +
+        "The name shows up on the board and in conflict messages; use a name that tells purposes apart (e.g. pi-main / claude-fix)",
     );
   }
 
@@ -87,12 +88,12 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
       writeSessionFile(ctx, String(session.id));
     }
 
-    out.line(`${styleGreen("✓")} 会话已注册`);
+    out.line(`${styleGreen("✓")} Session registered`);
     out.line(`  session_id : ${session.id}`);
     out.line(`  agent      : ${session.agent_name}${session.harness ? ` (${session.harness})` : ""}`);
     out.line(`  project    : ${ctx.project.key}`);
     out.line("");
-    out.line(`接着执行 \`agent-kanban context\` 读取当前现场：未消费的交接、正在做的卡、可认领任务。`);
+    out.line(`Next run \`agent-kanban context\` to read the situation: unconsumed handoffs, in-progress cards, claimable tasks.`);
 
     out.data(session);
     return ExitCode.OK;
@@ -125,18 +126,21 @@ async function sessionList(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
     if (views.length === 0) {
-      out.line("（暂无会话）用 `agent-kanban session start --agent <名字>` 注册");
+      out.line("(no sessions yet) register one with `agent-kanban session start --agent <name>`");
       return ExitCode.OK;
     }
 
-    out.line(`会话（${views.length}）`.padEnd(10) + "ID".padEnd(13) + "状态".padEnd(12) + "心跳".padEnd(10) + "持有任务");
+    // 表头列宽对齐下面的行：2 缩进 + id(12) / agent(13) / status(12) / heartbeat(10)
+    out.line(
+      "  " + `Sessions (${views.length})`.padEnd(14) + "ID".padEnd(13) + "Status".padEnd(12) + "Heartbeat".padEnd(10) + "Tasks held",
+    );
     for (const v of views) {
       const stale = v.stale === true && v.status !== "crashed";
-      const status = stale ? "⚠ 疑似失联" : sessionStatusLabel(String(v.status));
+      const status = stale ? "⚠ possibly stale" : sessionStatusLabel(String(v.status));
       const tasks = (v.tasks as string[] | undefined) ?? [];
       out.line(
         "  ".padEnd(4) +
-          String(v.id).padEnd(11) +
+          String(v.id).padEnd(12) +
           padEnd(String(v.agent_name), 13) +
           status.padEnd(12) +
           String(v.fresh ?? "?").padEnd(10) +
@@ -144,7 +148,7 @@ async function sessionList(argv: string[]): Promise<ExitCodeValue> {
       );
     }
     out.line("");
-    out.line("说明：⚠ 疑似失联 = 超过宽限时间未见心跳；其任务将被自动回收（进度保留）");
+    out.line("Note: ⚠ possibly stale = no heartbeat within the grace period; its tasks are reaped automatically (progress preserved)");
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -170,7 +174,7 @@ async function sessionHeartbeat(argv: string[]): Promise<ExitCodeValue> {
       params: {},
     });
     const result = data as { renewed_tasks: string[] };
-    out.line(`${styleGreen("✓")} 会话心跳已刷新（续期任务：${result.renewed_tasks.length} 张）`);
+    out.line(`${styleGreen("✓")} Session heartbeat refreshed (leases renewed: ${result.renewed_tasks.length})`);
     out.data(data);
     return ExitCode.OK;
   } finally {
@@ -195,9 +199,9 @@ async function sessionEnd(argv: string[]): Promise<ExitCodeValue> {
       params: { summary: getString(args, "summary") },
     });
     const result = data as { session_id: string; released: string[] };
-    out.line(`${styleGreen("✓")} 会话 ${result.session_id} 已关闭`);
+    out.line(`${styleGreen("✓")} Session ${result.session_id} closed`);
     if (result.released.length > 0) {
-      out.line(`  释放任务（进度已保留）：${result.released.join(", ")}`);
+      out.line(`  released tasks (progress preserved): ${result.released.join(", ")}`);
     }
     out.data(data);
     return ExitCode.OK;
@@ -227,13 +231,13 @@ function padEnd(text: string, width: number): string {
 function sessionStatusLabel(status: string): string {
   switch (status) {
     case "active":
-      return "活跃";
+      return "Active";
     case "idle":
-      return "空闲";
+      return "Idle";
     case "closed":
-      return "已关闭";
+      return "Closed";
     case "crashed":
-      return "已失联";
+      return "Crashed";
     default:
       return status;
   }

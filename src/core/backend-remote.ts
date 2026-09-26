@@ -135,12 +135,13 @@ export class RemoteBackend implements Backend {
     } catch {
       // server 返回了非 JSON：通常是反代/网关错误页
       throw KanbanError.state(
-        `server 返回了非 JSON 响应（HTTP ${response.status}）`,
+        `the server returned a non-JSON response (HTTP ${response.status})`,
         {
+          reason: "remote_non_json_response",
           server: this.server,
           status: response.status,
           body_preview: text.slice(0, 300),
-          hint: "确认 --server 指向的是 kanban server 而不是反向代理的 404 页面",
+          hint: "Check that --server points at a kanban server and not at a reverse proxy 404 page",
         },
       );
     }
@@ -158,15 +159,17 @@ export class RemoteBackend implements Backend {
       return await fetch(url, { ...init, signal: controller.signal });
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        throw KanbanError.busy(`请求 server 超时（${this.timeoutMs}ms）`, {
+        throw KanbanError.busy(`the request to the server timed out (${this.timeoutMs}ms)`, {
+          reason: "remote_timeout",
           server: this.server,
-          hint: "server 可能负载过高或网络不通；可重试",
+          hint: "The server may be overloaded or unreachable; you can retry",
         });
       }
       // 网络层错误（连不上、DNS 失败）→ 归为 BUSY 让 agent 重试
-      throw KanbanError.busy(`无法连接 server：${(err as Error).message}`, {
+      throw KanbanError.busy(`cannot reach the server: ${(err as Error).message}`, {
+        reason: "remote_unreachable",
         server: this.server,
-        hint: "确认 --server 地址与网络可达性（浏览器能打开吗）",
+        hint: "Check the --server address and that it is reachable (can a browser open it?)",
       });
     } finally {
       clearTimeout(timer);
@@ -176,7 +179,8 @@ export class RemoteBackend implements Backend {
   private async fetchStream(url: string, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
     const response = await fetch(url, { signal, headers: { "X-Kanban-Key": this.apiKey } });
     if (!response.ok || !response.body) {
-      throw KanbanError.state(`SSE 连接失败（HTTP ${response.status}）`, {
+      throw KanbanError.state(`the SSE connection failed (HTTP ${response.status})`, {
+        reason: "remote_sse_failed",
         server: this.server,
         status: response.status,
       });
@@ -213,10 +217,23 @@ function toKanbanErrorFromResponse(body: OpResponse, status: number, server: str
   }
   // 没有 error 字段但 HTTP 非 2xx：按状态码兜底
   if (status === 401 || status === 404) {
-    return KanbanError.auth("鉴权失败或 project 不存在", { server, status });
+    return KanbanError.auth("authentication failed or the project does not exist", {
+      reason: "remote_auth_failed",
+      server,
+      status,
+    });
   }
   if (status === 503) {
-    return KanbanError.busy("server 繁忙，请稍后重试", { server, status });
+    return KanbanError.busy("the server is busy, retry shortly", {
+      reason: "remote_busy",
+      server,
+      status,
+    });
   }
-  return KanbanError.state(`server 返回 HTTP ${status}`, { server, status, body: body as never });
+  return KanbanError.state(`the server returned HTTP ${status}`, {
+    reason: "remote_http_error",
+    server,
+    status,
+    body: body as never,
+  });
 }

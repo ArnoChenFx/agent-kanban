@@ -37,7 +37,16 @@ check("volumes 段", /^volumes:/m.test(compose));
 // 只统计 services 段里的服务名（volumes 段也是两空格缩进，会被误算）
 const servicesSection = /^services:\n([\s\S]*?)(?=^volumes:|^[a-z])/m.exec(compose)?.[1] ?? "";
 const serviceNames = [...servicesSection.matchAll(/^  ([a-z][\w-]*):$/gm)].map((m) => m[1]!);
-check("只保留 kanban 一个服务", serviceNames.length === 1 && serviceNames[0] === "kanban", serviceNames.join(", "));
+// 服务名是 `agent-kanban`（与 compose 项目名、镜像名、二进制名一致）。
+// ⚠ 这里曾经断言 `kanban`：3387e19 把 compose 服务改名成 agent-kanban 时漏改了这个门禁，
+//   于是 verify:deploy 一直报「只保留 kanban 一个服务」，而实际 compose 没问题。
+//   volume 仍叫 `kanban-data`（改名时**没**动它，用户的 -v kanban-data:/data 照旧能用）。
+check(
+  "只保留一个服务，且名为 agent-kanban",
+  serviceNames.length === 1 && serviceNames[0] === "agent-kanban",
+  serviceNames.join(", "),
+);
+check("volume 仍叫 kanban-data（改名未波及挂载名）", /kanban-data:/m.test(compose));
 check("已移除 caddy", !serviceNames.includes("caddy"));
 check("已移除 bootstrap", !serviceNames.includes("bootstrap"));
 check("无 tls profile", !/profiles:\s*\["tls"\]/.test(compose));

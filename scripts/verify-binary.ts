@@ -50,14 +50,14 @@ try {
   check("二进制能启动（schema.sql 已内嵌）", healthJson.ok, `HTTP ${health.status}`);
 
   // ---- 2. 启动日志应说明前端已内置 ----
-  check("启动日志报告前端已内置", bootLog.includes("已内置于二进制"), bootLog.split("\n").find((l) => l.includes("Web 看板"))?.trim() ?? "");
-  check("未打印管理员 token 明文（来自环境变量）", !bootLog.includes("k_aaaa"), bootLog.split("\n").find((l) => l.includes("管理员"))?.trim() ?? "");
+  check("启动日志报告前端已内置", bootLog.includes("embedded in the binary"), bootLog.split("\n").find((l) => l.includes("Web board"))?.trim() ?? "");
+  check("未打印管理员 token 明文（来自环境变量）", !bootLog.includes("k_aaaa"), bootLog.split("\n").find((l) => l.includes("Admin token"))?.trim() ?? "");
 
   // ---- 3. 首页是真实前端 ----
   const root = await fetch(`${BASE}/`);
   const html = await root.text();
   check("GET / 返回真实前端", html.includes('id="root"'), `${html.length} 字节`);
-  check("不是占位页", !html.includes("前端尚未构建"));
+  check("不是占位页", !html.includes("has not been built yet"));
 
   // ---- 4. 静态资源能取到（从二进制内读出）----
   const jsMatch = /src="(\/assets\/[^"]+\.js)"/.exec(html);
@@ -66,7 +66,8 @@ try {
     const js = await fetch(BASE + jsMatch[1]!);
     const jsText = await js.text();
     check("JS 从二进制内读出", js.status === 200 && jsText.length > 10000, `${(jsText.length / 1024).toFixed(0)} KB`);
-    check("JS 含看板内容", jsText.includes("进行中") || jsText.includes("待办"));
+    // 英文状态标签（web/src/lib/i18n.tsx 的 en 词典），用来证明产物是真看板而不是空壳
+    check("JS 含看板内容", jsText.includes("In Progress") || jsText.includes("To Do"));
   }
 
   const cssMatch = /href="(\/assets\/[^"]+\.css)"/.exec(html);
@@ -118,7 +119,7 @@ try {
   const addJson = (await add.json()) as { ok: boolean; error?: { message: string } };
   check(
     "管理员 token 可建 project",
-    addJson.ok || addJson.error?.message.includes("已存在"),
+    addJson.ok || addJson.error?.message.includes("already exists"),
     addJson.ok ? newKey : addJson.error?.message.slice(0, 60) ?? "",
   );
 

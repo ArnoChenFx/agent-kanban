@@ -4,8 +4,8 @@
 # Three steps:
 #     cp .env.example .env          # set KANBAN_ADMIN_TOKEN (openssl rand -hex 16)
 #     docker compose up -d
-#     docker compose exec kanban agent-kanban admin project add my-app
-#     docker compose exec kanban agent-kanban admin token create --project my-app --name ci
+#     docker compose exec agent-kanban agent-kanban admin project add my-app
+#     docker compose exec agent-kanban agent-kanban admin token create --project my-app --name ci
 #
 # Why a single service:
 #   The server does not terminate TLS and binds to loopback by default — HTTPS
@@ -21,7 +21,7 @@
 name: agent-kanban
 
 services:
-  kanban:
+  agent-kanban:
     image: ghcr.io/arnochenfx/agent-kanban:latest
 
     # ⚠ Loopback only by default. To reach it from other machines on the LAN,

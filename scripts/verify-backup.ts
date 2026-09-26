@@ -122,7 +122,7 @@ try {
   const before = JSON.parse(cli(["--json", "doctor", "--json"], B).out) as { stats?: { events: number } };
   const again = cli(["import", journalDir], B);
   check("二次 import 成功", again.code === 0);
-  check("提示已有事件被跳过", again.out.includes("已存在"), again.out.trim().split("\n").slice(1).join(" ").slice(0, 60));
+  check("提示已有事件被跳过", again.out.includes("already present"), again.out.trim().split("\n").slice(1).join(" ").slice(0, 60));
   const after = JSON.parse(cli(["--json", "doctor", "--json"], B).out) as { stats?: { events: number } };
   check("事件数未增加", before.stats?.events === after.stats?.events, `${before.stats?.events} → ${after.stats?.events}`);
 
@@ -140,7 +140,7 @@ try {
   const compact = cli(["compact", "--keep-days", "0"], B);
   check("compact 成功", compact.code === 0, compact.out.trim().split("\n")[0] ?? compact.err.slice(0, 100));
   check("先写了裁剪前快照", compact.out.includes("pre-compact") || existsSync(join(snapDir)));
-  check("保底规则生效（1000 条），事件不会被清空", compact.out.includes("保底") || true);
+  check("保底规则生效（1000 条），事件不会被清空", compact.out.includes("a floor of 1000") || true);
 
   const afterCompact = JSON.parse(cli(["--json", "doctor", "--json"], B).out) as { stats?: { events: number } };
   check("事件数未少于保底", (afterCompact.stats?.events ?? 0) > 0, `${afterCompact.stats?.events} 条`);

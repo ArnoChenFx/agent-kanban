@@ -107,15 +107,15 @@ export function startServer(opts: ServeOptions): {
       // 环境变量路径：token 是外部注入的，不打印（避免进容器日志 = 泄露），
       // 只告诉用户“它生效了”以及去哪儿改
       process.stdout.write(
-        `\n${style.gray("管理员 token：")}来自环境变量 ${style.cyan("KANBAN_ADMIN_TOKEN")}（不写入配置文件、不打印明文）\n\n`,
+        `\n${style.gray("Admin token: ")}comes from the ${style.cyan("KANBAN_ADMIN_TOKEN")} environment variable (not written to the config file, plaintext not printed)\n\n`,
       );
     } else if (ensured.isNew) {
       process.stdout.write(
-        `\n${style.yellow("已生成管理员 token")}（只显示这一次，已存入 ${ensured.path}）\n` +
+        `\n${style.yellow("An admin token was generated")} (shown only this once, stored in ${ensured.path})\n` +
           `  ${style.bold(ensured.token)}\n\n` +
-          `${style.gray("用途：")}管理 project、签发/吊销 token、跨 project 查看任务\n` +
-          `${style.gray("用法：")}kanban --key ${ensured.token} admin project list\n` +
-          `${style.gray("容器场景：")}可用环境变量 KANBAN_ADMIN_TOKEN 预先指定（必须是 k_ + 32 位 hex）\n\n`,
+          `${style.gray("What it does: ")}manage projects, issue/revoke tokens, view tasks across projects\n` +
+          `${style.gray("Usage: ")}kanban --key ${ensured.token} admin project list\n` +
+          `${style.gray("Containers: ")}you can preset it with the KANBAN_ADMIN_TOKEN environment variable (it must be k_ + 32 hex digits)\n\n`,
       );
     }
   }
@@ -243,11 +243,15 @@ async function handleRequest(
     try {
       body = (await req.json()) as { project?: string; op?: Op };
     } catch {
-      return jsonError(KanbanError.usage("请求体不是合法 JSON"), 400);
+      return jsonError(KanbanError.usage("the request body is not valid JSON"), 400);
     }
     if (!body || typeof body.op !== "object" || typeof body.op.kind !== "string") {
       return jsonError(
-        KanbanError.usage('请求体必须是 { "project": "...", "op": { "kind": "...", "params": {...} } }'),
+        KanbanError.usage(
+          'the request body must be { "project": "...", "op": { "kind": "...", "params": {...} } }',
+          undefined,
+          { reason: "invalid_request_body" },
+        ),
         400,
       );
     }
@@ -256,8 +260,9 @@ async function handleRequest(
   const targetProject = url.searchParams.get("project") ?? body?.project ?? "";
   if (targetProject.length === 0) {
     return jsonError(
-      KanbanError.auth("请求缺少 project 参数", {
-        hint: "所有业务接口都需要 ?project=<key>（或在 body 的 project 字段里）",
+      KanbanError.auth("the request is missing the project parameter", {
+        reason: "auth_project_missing",
+        hint: "Every business endpoint needs ?project=<key> (or a project field in the body)",
       }),
       401,
     );
@@ -274,7 +279,8 @@ async function handleRequest(
   // body 的 project 必须与鉴权目标一致（防“用 A 的 token 操作 B”）
   if (body?.project && body.project !== targetProject) {
     return jsonError(
-      KanbanError.auth("请求体 project 与鉴权 project 不一致", {
+      KanbanError.auth("the project in the request body does not match the authenticated project", {
+        reason: "auth_project_mismatch",
         url_project: targetProject,
         body_project: body.project,
       }),
@@ -286,9 +292,10 @@ async function handleRequest(
   if (!project) {
     // 有权访问但 project 不存在：这是 STATE 而非 AUTH（调用方该确认名字）
     return jsonError(
-      KanbanError.notInit(`project "${targetProject}" 不存在`, {
+      KanbanError.notInit(`project "${targetProject}" not found`, {
+        reason: "project_not_found",
         project: targetProject,
-        hint: "用管理员 token 查看现有 project：kanban --key <admin-token> project list",
+        hint: "List the existing projects with an admin token: kanban --key <admin-token> project list",
       }),
       400,
     );
@@ -336,7 +343,7 @@ async function handleRequest(
     return json({ ok: true, data: rows.map((r) => toEvent(r)) });
   }
 
-  return jsonError(KanbanError.state(`未知接口：${path}`), 404);
+  return jsonError(KanbanError.state(`unknown endpoint: ${path}`, { reason: "unknown_endpoint" }), 404);
 }
 
 /**
@@ -367,12 +374,13 @@ async function handleAdminApi(
     if (auth.reason === "forbidden") {
       // token 有效但范围不含 __admin__ —— 即“不是管理员”
       return jsonError(
-        KanbanError.auth("该操作需要管理员 token", {
+        KanbanError.auth("this operation requires an admin token", {
+          reason: "auth_admin_required",
           token: maskToken(providedToken ?? ""),
           hint:
-            "项目级 token 只能访问它被授权的 project。\n" +
-            "管理 project / token 请使用管理员 token（server 首次启动时生成，存于 .kanban/config.toml）。\n" +
-            "用法：kanban --key <admin-token> admin project list",
+            "A project-scoped token can only reach the projects it was granted.\n" +
+            "Use an admin token to manage projects and tokens (one is generated when the server first starts, and stored in .kanban/config.toml).\n" +
+            "Usage: kanban --key <admin-token> admin project list",
         }),
         403,
       );
@@ -381,8 +389,9 @@ async function handleAdminApi(
   }
   if (auth.role !== "admin") {
     return jsonError(
-      KanbanError.auth("该操作需要管理员 token", {
-        hint: "项目级 token 只能访问自己被授权的 project；管理 project/token 请使用管理员 token",
+      KanbanError.auth("this operation requires an admin token", {
+        reason: "auth_admin_required",
+        hint: "A project-scoped token can only reach the projects it was granted; use an admin token to manage projects and tokens",
       }),
       403,
     );
@@ -422,7 +431,9 @@ async function handleAdminApi(
       name?: string;
       root_path?: string;
     };
-    if (!body.key) return jsonError(KanbanError.usage("缺少 key"), 400);
+    if (!body.key) {
+      return jsonError(KanbanError.usage("missing key", undefined, { reason: "missing_project_key" }), 400);
+    }
     const project = createProject(db, {
       key: body.key,
       name: body.name,
@@ -438,7 +449,12 @@ async function handleAdminApi(
   if (sub.startsWith("/projects/") && method === "DELETE") {
     const key = decodeURIComponent(sub.slice("/projects/".length));
     const existing = getProject(db, key);
-    if (!existing) return jsonError(KanbanError.state(`project 不存在：${key}`), 404);
+    if (!existing) {
+      return jsonError(
+        KanbanError.state(`project not found: ${key}`, { reason: "project_not_found", project: key }),
+        404,
+      );
+    }
 
     // 删除 project 会连带删除其任务（不可恢复）——必须显式确认
     if (url.searchParams.get("force") !== "1") {
@@ -452,8 +468,13 @@ async function handleAdminApi(
           error: {
             code: 2,
             name: "STATE",
-            message: `project "${key}" 下还有 ${taskCount} 个任务，删除不可恢复`,
-            details: { task_count: taskCount, hint: "确认删除请加 ?force=1" },
+            message: `project "${key}" still has ${taskCount} task(s), deleting it is not recoverable`,
+            details: {
+              reason: "project_not_empty",
+              project: key,
+              task_count: taskCount,
+              hint: "Pass ?force=1 to confirm the deletion",
+            },
           },
         },
         409,
@@ -519,7 +540,7 @@ async function handleAdminApi(
       data: {
         ...tokenToJson(issued.token, now),
         token: issued.plaintext,
-        warning: "此明文只显示这一次，请立即保存到调用方的配置中",
+        warning: "this plaintext is shown only once, store it in the caller's configuration right now",
       },
     });
   }
@@ -535,7 +556,15 @@ async function handleAdminApi(
   if (sub.startsWith("/tokens/") && !sub.endsWith("/revoke") && method === "GET") {
     const tokenId = decodeURIComponent(sub.slice("/tokens/".length));
     const token = getToken(db, tokenId);
-    if (!token) return jsonError(KanbanError.state(`token 不存在：${maskToken(tokenId)}`), 404);
+    if (!token) {
+      return jsonError(
+        KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+          reason: "token_not_found",
+          token: maskToken(tokenId),
+        }),
+        404,
+      );
+    }
     return json({ ok: true, data: tokenToJson(token, now) });
   }
 
@@ -543,7 +572,15 @@ async function handleAdminApi(
   if (sub.startsWith("/tokens/") && method === "PATCH") {
     const tokenId = decodeURIComponent(sub.slice("/tokens/".length));
     const existing = getToken(db, tokenId);
-    if (!existing) return jsonError(KanbanError.state(`token 不存在：${maskToken(tokenId)}`), 404);
+    if (!existing) {
+      return jsonError(
+        KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+          reason: "token_not_found",
+          token: maskToken(tokenId),
+        }),
+        404,
+      );
+    }
     // 显式标注类型：getToken 可能返回 null，而 patch 链会重新赋值
     let token: AccessToken = existing;
     const body = (await req.json().catch(() => ({}))) as {
@@ -568,7 +605,7 @@ async function handleAdminApi(
     return json({ ok: true, data: tokenToJson(token, now) });
   }
 
-  return jsonError(KanbanError.state(`未知管理接口：${path}`), 404);
+  return jsonError(KanbanError.state(`unknown admin endpoint: ${path}`, { reason: "unknown_endpoint" }), 404);
 }
 
 /** project 概要信息 */
@@ -651,7 +688,7 @@ function handleSse(req: Request, db: Database, url: URL, nowFn: () => number): R
             );
           }
         } catch {
-          send(`event: error\ndata: ${JSON.stringify({ message: "事件轮询失败" })}\n\n`);
+          send(`event: error\ndata: ${JSON.stringify({ message: "event polling failed" })}\n\n`);
         }
         // 15s 一次 keepalive 注释帧，防中间设备断连
         send(`: keepalive ${Date.now()}\n\n`);
@@ -854,7 +891,7 @@ function readVersion(): string {
    * 页面里直接给出构建命令，不让用户对着一句 “Not Found” 猜。
    */
 const PLACEHOLDER_HTML = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>agent-kanban</title>
+<html lang="en"><head><meta charset="utf-8"><title>agent-kanban</title>
 <style>body{font-family:ui-serif,Georgia,"Songti SC",serif;background:#FBF8F2;color:#2B2825;padding:48px;line-height:1.7}
 code{background:#EFE9DC;padding:2px 7px;border-radius:4px;font-family:ui-monospace,monospace;font-size:.9em}
 .card{background:#fff;border:1px solid #E7E0D2;border-radius:10px;padding:20px 24px;max-width:640px;box-shadow:0 1px 3px rgba(43,40,37,.06)}
@@ -862,19 +899,19 @@ h1{margin:0 0 4px;font-size:20px} .sub{color:#7A746B;font-size:13px;margin-botto
 li{margin:5px 0}</style></head>
 <body><div class="card">
 <h1>agent-kanban server</h1>
-<p class="sub">后端已就绪，但前端尚未构建。</p>
-<p>构建看板页面：</p>
+<p class="sub">The backend is ready, but the frontend has not been built yet.</p>
+<p>Build the board page:</p>
 <ul>
 <li><code>cd web &amp;&amp; bun install &amp;&amp; bun run build</code></li>
-<li>然后刷新本页（<code>http://127.0.0.1:7788/</code>）</li>
+<li>then reload this page (<code>http://127.0.0.1:7788/</code>)</li>
 </ul>
-<p>开发模式（热更新）：<code>cd web &amp;&amp; bun run dev</code>，Vite 会把 <code>/api</code> 代理到本 server。</p>
-<p>不装前端也能用：</p>
+<p>Development mode (hot reload): <code>cd web &amp;&amp; bun run dev</code>; Vite proxies <code>/api</code> to this server.</p>
+<p>The API works without the frontend too:</p>
 <ul>
-<li><code>GET /api/health</code> 健康检查（免鉴权）</li>
-<li><code>POST /api/op</code> Op 执行（需 <code>X-Kanban-Key</code>）</li>
-<li><code>GET /api/stream</code> SSE 事件流</li>
-<li><code>/admin</code> 管理页面（project 与 token）</li>
+<li><code>GET /api/health</code> health check (no auth)</li>
+<li><code>POST /api/op</code> run an op (needs <code>X-Kanban-Key</code>)</li>
+<li><code>GET /api/stream</code> SSE event stream</li>
+<li><code>/admin</code> admin page (projects and tokens)</li>
 </ul>
 </div></body></html>`;
 
@@ -900,37 +937,37 @@ export function runServe(opts: ServeOptions & { quiet?: boolean }): ExitCodeValu
   const { url, stop } = startServer(effective);
 
   if (!opts.quiet) {
-    process.stdout.write(`${style.green("✓")} kanban server 已启动：${style.cyan(url)}\n`);
-    process.stdout.write(`  数据库：${opts.dbPath}\n`);
-    process.stdout.write(`  project 数：${projectCount}\n`);
+    process.stdout.write(`${style.green("✓")} kanban server started: ${style.cyan(url)}\n`);
+    process.stdout.write(`  database: ${opts.dbPath}\n`);
+    process.stdout.write(`  projects: ${projectCount}\n`);
     if ((effective.host ?? "127.0.0.1") === "0.0.0.0") {
       process.stdout.write(
-        `  ${style.yellow("警告")}：已绑定 0.0.0.0，请确保前面有 TLS 反向代理（推荐 https + 内网）\n`,
+        `  ${style.yellow("Warning")}: bound to 0.0.0.0, make sure a TLS reverse proxy sits in front of it (https on an internal network is recommended)\n`,
       );
     }
     if (process.env.KANBAN_WEB_DIR) {
-      process.stdout.write(`  Web 资源目录：${style.cyan(process.env.KANBAN_WEB_DIR)}\n`);
+      process.stdout.write(`  Web asset directory: ${style.cyan(process.env.KANBAN_WEB_DIR)}\n`);
     }
     // 前端来源：内嵌（单文件二进制）还是磁盘（开发 / 旁挂）
     if (EMBEDDED_COUNT > 0) {
       process.stdout.write(
-        `  Web 看板：${style.green("已内置于二进制")} ${style.gray(`(${EMBEDDED_COUNT} 个文件，${(EMBEDDED_BYTES / 1024).toFixed(0)} KB)`)}\n`,
+        `  Web board: ${style.green("embedded in the binary")} ${style.gray(`(${EMBEDDED_COUNT} files, ${(EMBEDDED_BYTES / 1024).toFixed(0)} KB)`)}\n`,
       );
     } else if (effective.webDir) {
-      process.stdout.write(`  Web 看板：${style.gray("从磁盘读取")} ${style.cyan(effective.webDir)}\n`);
+      process.stdout.write(`  Web board: ${style.gray("read from disk")} ${style.cyan(effective.webDir)}\n`);
     } else {
       process.stdout.write(
-        `  Web 看板：${style.yellow("未启用")} ${style.gray("（构建前端后重新编译二进制：bun run web:build && bun run gen:assets）")}\n`,
+        `  Web board: ${style.yellow("not available")} ${style.gray("(rebuild the binary after building the frontend: bun run web:build && bun run gen:assets)")}\n`,
       );
     }
-    process.stdout.write(`\n  在另一台机器/另一个 project 上使用：\n`);
+    process.stdout.write(`\n  To use it from another machine or another project:\n`);
     process.stdout.write(`    kanban --server ${url} --project <key> --key k_xxx task list\n`);
-    process.stdout.write(`\n  Web 看板：${url}/\n  ${style.gray("Ctrl+C 停止")}\n`);
+    process.stdout.write(`\n  Web board: ${url}/\n  ${style.gray("Ctrl+C to stop")}\n`);
   }
 
   // 阻塞主线程直到被中断
   process.on("SIGINT", () => {
-    process.stdout.write("\n正在停止 server…\n");
+    process.stdout.write("\nstopping the server…\n");
     stop();
     process.exit(0);
   });

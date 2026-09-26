@@ -69,7 +69,9 @@ Both the board (`web/`) and the admin page (`/admin`) speak Chinese and English,
 
 The admin page (`src/server/admin-page.ts`) is a template string with no type-level exhaustiveness check: static copy is marked with `data-i18n` / `data-i18n-ph` and applied in one pass, dynamic copy goes through an inline `t()`.
 
-Copy that arrives as **data** from the backend (task titles, handoff bodies, `next_actions`) is not translated — that is content, not chrome. The one exception is session heartbeat: `sessionToJson` also ships `last_seen_at` (a ms timestamp), and the UI formats that itself rather than displaying the backend's Chinese `fresh` string.
+Copy that arrives as **user data** from the backend (task titles, handoff bodies) is not translated — that is content, not chrome. Backend-*generated* advice (`next_actions`) used to be the awkward exception: it is a Chinese string written for an agent, yet the sidebar painted it straight onto the board, so the English UI quietly showed Chinese. The fix was not an English gloss per Chinese string (a second source of truth that drifts the moment the backend rewords); the backend now also ships a structured `next_action_items` (`{ code, args }`) and the UI picks its own dictionary entry per `code`. The Chinese string is rendered from those same items, so the two can never disagree. The mapping lives in `web/src/lib/next-actions.ts` (no React, unit-testable).
+
+Session heartbeat was the same problem earlier: `sessionToJson` also ships `last_seen_at` (a ms timestamp), and the UI formats that itself rather than displaying the backend's Chinese `fresh` string.
 
 Adding a language: on the board, extend `LOCALES`, fill in `HTML_LANG` / `LOCALE_NAME`, and write a dictionary with the same keys (the type will tell you which ones you are missing); on the admin page, add one `DICT.<lang>`.
 
@@ -177,6 +179,24 @@ bun run verify:all    # the lot, with a summary
 ```
 
 Documentation rot is silent. Renaming a command or reassigning an exit code breaks nothing at runtime, it just quietly makes the docs wrong, and nobody reads them twice. `verify-docs.ts` diffs the claims in the four documents against the actual source: every exit code, environment variable, global flag, top-level command, npm script, and referenced file path.
+
+### Demo board for screenshots
+
+`seed-demo.ts` seeds a **simulated** board — 18 cards, 5 sessions, a dependency graph, handoffs, plan versions, one crashed-and-reclaimed card — into any database you point it at. It exists so the README, the release notes and the project intro can be illustrated with a board that looks like a real one instead of a hand-drawn mock-up.
+
+```bash
+bun run seed:demo                     # into .kanban/kanban.db (this repo)
+bun run seed:demo --db /tmp/demo.db   # into a throwaway database
+bun run seed:demo --reset             # wipe the target database first
+```
+
+Three properties make the result usable rather than decorative:
+
+- It writes through the **same core API the CLI uses** (`createTask`, `claimTask`, `transition`, `writeHandoff`, `savePlan`, …), so the event journal, the leases and the projection all agree. `doctor` is clean; `rebuild` replays it.
+- Timestamps are injected through the logical clock, so the board is spread over the last two weeks instead of showing eighteen cards created at the same instant.
+- It refuses to touch a database that already has tasks unless you pass `--reset`, so it cannot quietly overwrite a real board.
+
+Screenshots need a database that is *the same shape* every time, so two things are deliberately non-default: every session that is still working gets a fresh heartbeat, and one is already finished and one has already crashed — otherwise the next command reaps the stale ones and the board rearranges itself between the screenshot and your eye. Re-run the seed right before shooting; details in `docs/plan/005-演示数据种子脚本.md`.
 
 ## Documentation layout
 

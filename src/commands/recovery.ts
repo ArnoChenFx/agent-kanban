@@ -24,36 +24,37 @@ import { assertKnownOptions, getBool, getInt, getString, parseArgs, requirePosit
 import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
-const CONTEXT_USAGE = `用法：agent-kanban context [选项]
+const CONTEXT_USAGE = `Usage: agent-kanban context [options]
 
-  agent-kanban context                      # 读全局现场（推荐每个会话开工第一步）
-  agent-kanban context --task T-0007        # 某张卡的完整档案
-  agent-kanban context --no-consume         # 只读预览，不标记交接已读
-  agent-kanban context --json               # 结构化输出
+  agent-kanban context                      # read the situation (recommended first step of a session)
+  agent-kanban context --task T-0007        # full file on one card
+  agent-kanban context --no-consume         # preview only, do not mark handoffs as read
+  agent-kanban context --json               # structured output
 
-输出包含：
-  看板概览 · 失联会话告警 · 待接手的交接 · 本会话正在做的 · 阻塞 · 可认领 · 建议动作`;
+Output includes:
+  board overview · stale session warnings · handoffs waiting for you · work in this session · blocked · claimable · suggested actions`;
 
-const RESUME_USAGE = `用法：agent-kanban resume <任务号> [--force] [--tail N]
+const RESUME_USAGE = `Usage: agent-kanban resume <task-id> [--force] [--tail N]
 
-  agent-kanban resume T-0007                # 接管并注入该卡的交接与时间线
-  agent-kanban resume T-0007 --force        # 抢他人仍在有效租约内的卡（需人工确认）
+  agent-kanban resume T-0007                # take over, injecting that card's handoff and timeline
+  agent-kanban resume T-0007 --force        # grab a card whose holder still has a valid lease (needs human confirmation)
 
-接管后输出：
-  · 原持有者与是否发生过崩溃回收
-  · 最近的交接（崩溃自动合成 或 主动交接）
-  · 剩余 checklist 项
-  · 简短时间线
-  · 接下来该做什么`;
+Output after taking over:
+  · the previous holder, and whether crash recovery happened
+  · the latest handoff (auto-composed after a crash, or written by hand)
+  · remaining checklist items
+  · a short timeline
+  · what to do next`;
 
-const DOCTOR_USAGE = `用法：agent-kanban doctor [--deep] [--fix] [--json]
+const DOCTOR_USAGE = `Usage: agent-kanban doctor [--deep] [--fix] [--json]
 
-  agent-kanban doctor            # 快速核对（租约/阻塞/progress 一致性）
-  agent-kanban doctor --deep     # 额外校验"投影与事件流是否一致"
-  agent-kanban doctor --fix      # 自动修复可修复项（回收失联任务、解除过期阻塞）
+  agent-kanban doctor            # quick check (lease / blocked / progress consistency)
+  agent-kanban doctor --deep     # additionally verify "the projection matches the event stream"
+  agent-kanban doctor --fix      # auto-fix what can be fixed (reap stale tasks, clear expired blocks)
 
-说明：
-  轻量回收（失联任务）其实每次命令调用都会自动执行，doctor 只是显式核对与修复其他问题。`;
+Notes:
+  Light reaping (stale tasks) already runs automatically on every command; doctor only
+  explicitly checks and repairs the remaining problems.`;
 
 /** context / resume / doctor 三个相关命令的统一入口 */
 export async function cmdContext(argv: string[]): Promise<ExitCodeValue> {
@@ -157,20 +158,20 @@ function renderContext(out: Output, context: RecoveryContextShape, projectKey: s
   out.line("");
   out.line(
     `${style.bold(context.project.name)} ${style.gray(`(${projectKey})`)}   ` +
-      style.cyan(`${c.doing ?? 0} 进行中`) + style.gray(" · ") +
-      style.yellow(`${c.blocked ?? 0} 阻塞`) + style.gray(" · ") +
-      `${c.todo ?? 0} 待办` + style.gray(" · ") +
-      style.green(`${c.done ?? 0} 已完成`),
+      style.cyan(`${c.doing ?? 0} Doing`) + style.gray(" · ") +
+      style.yellow(`${c.blocked ?? 0} Blocked`) + style.gray(" · ") +
+      `${c.todo ?? 0} Todo` + style.gray(" · ") +
+      style.green(`${c.done ?? 0} Done`),
   );
 
   // ---- 失联会话（最高优先级）----
   if (context.zombie_sessions.length > 0) {
     out.line("");
-    out.line(`${style.yellow("⚠ 失联会话")}`);
+    out.line(`${style.yellow("⚠ Stale sessions")}`);
     for (const z of context.zombie_sessions) {
       for (const t of z.tasks) {
         out.line(
-          `  ${z.session_id} ${style.gray(`(${z.agent_name}，${z.silent_minutes} 分钟无心跳)`)} 持有 ` +
+          `  ${z.session_id} ${style.gray(`(${z.agent_name}, no heartbeat for ${z.silent_minutes} min)`)} holds ` +
             `${style.cyan(t.id)} ${truncate(t.title, 24)} ${style.gray(`${t.progress}%`)}`,
         );
         out.line(`    ${style.bold(z.suggestion)}`);
@@ -183,27 +184,27 @@ function renderContext(out: Output, context: RecoveryContextShape, projectKey: s
     const consumed = context.consumed_count ?? 0;
     out.line("");
     out.line(
-      `${style.magenta("▶ 交给你的交接")} ${style.gray(`(${context.pending_handoffs.length} 条)`)}` +
-        (consumed > 0 ? style.gray(` · 已标记 ${consumed} 条为已读`) : ""),
+      `${style.magenta("▶ Handoffs for you")} ${style.gray(`(${context.pending_handoffs.length})`)}` +
+        (consumed > 0 ? style.gray(` · ${consumed} marked as read`) : ""),
     );
     for (const h of context.pending_handoffs) {
-      const kindLabel = h.kind === "crash" ? style.yellow("崩溃自动合成") : style.green("主动交接");
+      const kindLabel = h.kind === "crash" ? style.yellow("auto-composed") : style.green("manual");
       out.line("");
       out.line(
         `  ${style.cyan(h.task_id)} ${padEndWidth(truncate(h.task_title, 28), 30)} ` +
           style.gray(`${kindLabel} · ${h.from_session} · ${h.created_relative}`),
       );
       out.line(`    ${h.summary}`);
-      if (h.next_step) out.line(`    ${style.gray("下一步：")}${h.next_step}`);
-      if (h.blockers.length > 0) out.line(`    ${style.red("卡点：")}${h.blockers.join("、")}`);
-      for (const q of h.open_questions) out.line(`    ${style.yellow("待确认：")}${q}`);
+      if (h.next_step) out.line(`    ${style.gray("Next:")} ${h.next_step}`);
+      if (h.blockers.length > 0) out.line(`    ${style.red("Blockers:")} ${h.blockers.join(", ")}`);
+      for (const q of h.open_questions) out.line(`    ${style.yellow("Open:")} ${q}`);
     }
   }
 
   // ---- 本会话正在做的 ----
   if (context.my_tasks.length > 0) {
     out.line("");
-    out.line(`${style.blue("⏱ 你正在做的")}`);
+    out.line(`${style.blue("⏱ Your work in progress")}`);
     for (const t of context.my_tasks) {
       out.line(
         `  ${style.cyan(t.id)} ${padEndWidth(truncate(t.title, 30), 32)} ` +
@@ -211,9 +212,9 @@ function renderContext(out: Output, context: RecoveryContextShape, projectKey: s
           style.gray(t.updated_relative),
       );
       if (t.remaining_checklist.length > 0) {
-        out.line(`    ${style.gray("未完成：")}${t.remaining_checklist.join("、")}`);
+        out.line(`    ${style.gray("Remaining:")} ${t.remaining_checklist.join(", ")}`);
       }
-      if (t.last_event) out.line(`    ${style.gray("最后：")}${truncate(t.last_event, 60)}`);
+      if (t.last_event) out.line(`    ${style.gray("Last:")} ${truncate(t.last_event, 60)}`);
     }
   }
 
@@ -223,9 +224,9 @@ function renderContext(out: Output, context: RecoveryContextShape, projectKey: s
   );
   if (othersInProgress.length > 0) {
     out.line("");
-    out.line(style.gray("其他会话在做"));
+    out.line(style.gray("Other sessions in progress"));
     for (const t of othersInProgress) {
-      const staleMark = t.stale_holder ? style.yellow(" ⚠失联") : "";
+      const staleMark = t.stale_holder ? style.yellow(" ⚠stale") : "";
       out.line(
         `  ${style.cyan(t.id)} ${padEndWidth(truncate(t.title, 30), 32)} ` +
           style.cyan(progressBar(t.progress, 8)) + ` ${padEndWidth(`${t.progress}%`, 5)}` +
@@ -237,16 +238,16 @@ function renderContext(out: Output, context: RecoveryContextShape, projectKey: s
   // ---- 阻塞 ----
   if (context.blocked.length > 0) {
     out.line("");
-    out.line(`${style.red("⛔ 阻塞")} ${style.gray("（需要人介入）")}`);
+    out.line(`${style.red("⛔ Blocked")} ${style.gray("(needs a human)")}`);
     for (const b of context.blocked) {
-      out.line(`  ${style.cyan(b.id)} ${padEndWidth(truncate(b.title, 28), 30)} ${style.red(b.reason ?? "未填原因")}`);
+      out.line(`  ${style.cyan(b.id)} ${padEndWidth(truncate(b.title, 28), 30)} ${style.red(b.reason ?? "no reason given")}`);
     }
   }
 
   // ---- 可认领 ----
   if (context.ready.length > 0) {
     out.line("");
-    out.line(`${style.green("✅ 可以认领")}`);
+    out.line(`${style.green("✅ Claimable")}`);
     for (const r of context.ready.slice(0, 8)) {
       out.line(
         `  ${style.cyan(r.id)} p${r.priority} ${padEndWidth(truncate(r.title, 34), 36)} ` +
@@ -258,7 +259,7 @@ function renderContext(out: Output, context: RecoveryContextShape, projectKey: s
   // ---- 建议动作 ----
   if (context.next_actions.length > 0) {
     out.line("");
-    out.line(style.bold("建议接下来："));
+    out.line(style.bold("Suggested next steps:"));
     for (const action of context.next_actions) {
       out.line(`  ${action}`);
     }
@@ -280,7 +281,7 @@ async function resumeCommand(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const taskId = requirePositional(args, 0, "任务号", RESUME_USAGE);
+  const taskId = requirePositional(args, 0, "task id", RESUME_USAGE);
 
   try {
     if (getBool(args, "help")) {
@@ -309,30 +310,30 @@ async function resumeCommand(argv: string[]): Promise<ExitCodeValue> {
     // ---- 接管结果 ----
     out.line("");
     const reclaimNote = result.reclaimed
-      ? style.yellow("（原持有者崩溃，系统已自动回收，进度保留）")
+      ? style.yellow("(the previous holder crashed and was already reaped; progress preserved)")
       : result.previous_holder
-        ? style.gray(`（接替 ${result.previous_holder.session_id}${result.previous_holder.agent_name ? ` (${result.previous_holder.agent_name})` : ""}）`)
+        ? style.gray(`(took over from ${result.previous_holder.session_id}${result.previous_holder.agent_name ? ` (${result.previous_holder.agent_name})` : ""})`)
         : "";
     out.line(
-      `${style.green("✓")} 已接管 ${style.cyan(result.task.id)} ${style.bold(result.task.title)} ` +
+      `${style.green("✓")} Took over ${style.cyan(result.task.id)} ${style.bold(result.task.title)} ` +
         style.cyan(progressBar(result.task.progress, 12)) + ` ${result.task.progress}%${reclaimNote}`,
     );
 
     // ---- 交接 ----
     if (result.handoff) {
       out.line("");
-      const kindLabel = result.handoff.kind === "crash" ? style.yellow("崩溃自动合成") : style.green("主动交接");
-      out.line(`  ${style.bold("交接")} ${style.gray(`(#${result.handoff.id}, ${kindLabel})`)}`);
+      const kindLabel = result.handoff.kind === "crash" ? style.yellow("auto-composed") : style.green("manual");
+      out.line(`  ${style.bold("Handoff")} ${style.gray(`(#${result.handoff.id}, ${kindLabel})`)}`);
       out.line(`    ${result.handoff.summary}`);
-      if (result.handoff.next_step) out.line(`    ${style.gray("下一步：")}${result.handoff.next_step}`);
-      for (const b of result.handoff.blockers) out.line(`    ${style.red("卡点：")}${b}`);
-      for (const q of result.handoff.open_questions) out.line(`    ${style.yellow("待确认：")}${q}`);
+      if (result.handoff.next_step) out.line(`    ${style.gray("Next:")} ${result.handoff.next_step}`);
+      for (const b of result.handoff.blockers) out.line(`    ${style.red("Blockers:")} ${b}`);
+      for (const q of result.handoff.open_questions) out.line(`    ${style.yellow("Open:")} ${q}`);
     }
 
     // ---- 剩余工作 ----
     if (result.task.remaining_checklist.length > 0) {
       out.line("");
-      out.line(`  ${style.bold("剩余工作")}`);
+      out.line(`  ${style.bold("Remaining work")}`);
       for (const item of result.task.remaining_checklist) {
         out.line(`    ⬜ ${item}`);
       }
@@ -341,23 +342,25 @@ async function resumeCommand(argv: string[]): Promise<ExitCodeValue> {
     // ---- 计划 ----
     if (result.plan) {
       out.line("");
-      out.line(`  ${style.gray("计划：")}${style.magenta(result.plan.id)} ${result.plan.title}`);
-      out.line(`    ${style.gray(`读全文：agent-kanban plan show ${result.plan.id}`)}`);
+      out.line(`  ${style.gray("Plan:")} ${style.magenta(result.plan.id)} ${result.plan.title}`);
+      out.line(`    ${style.gray(`read the full plan: agent-kanban plan show ${result.plan.id}`)}`);
     }
 
     // ---- 时间线 ----
     if (result.timeline.length > 0) {
       out.line("");
-      out.line(style.gray("  最近动态"));
+      out.line(style.gray("  Recent activity"));
       for (const e of result.timeline.slice(-6)) {
-        out.line(`    ${style.gray(relativeTime(e.ts, ctx.now()).padEnd(8))}${truncate(e.text, 56)}`);
+        // padEnd(10) 与 task.ts 的时间线列保持一致；英文化后相对时间最长是 "just now"（8 字符），
+        // 用原来的 8 会让时间与文本粘在一起。
+        out.line(`    ${style.gray(relativeTime(e.ts, ctx.now()).padEnd(10))}${truncate(e.text, 56)}`);
       }
     }
 
     // ---- 建议 ----
     if (nextActions.length > 0) {
       out.line("");
-      out.line(style.bold("  接下来："));
+      out.line(style.bold("  Next:"));
       for (const action of nextActions) {
         out.line(`    ${action}`);
       }
@@ -433,15 +436,15 @@ async function doctorCommand(argv: string[]): Promise<ExitCodeValue> {
     };
     out.line("");
     out.line(
-      `${style.bold(ctx.project.name)}  任务 ${Object.values(s.tasks).reduce((a, b) => a + b, 0)} · ` +
-        `事件 ${s.events} · 会话 ${s.active_sessions}/${s.sessions} 活跃` +
-        (s.stale_sessions > 0 ? style.yellow(`（${s.stale_sessions} 失联）`) : "") +
-        (s.pending_handoffs > 0 ? style.magenta(` · 待接手交接 ${s.pending_handoffs}`) : ""),
+      `${style.bold(ctx.project.name)}  tasks ${Object.values(s.tasks).reduce((a, b) => a + b, 0)} · ` +
+        `events ${s.events} · sessions ${s.active_sessions}/${s.sessions} active` +
+        (s.stale_sessions > 0 ? style.yellow(` (${s.stale_sessions} stale)`) : "") +
+        (s.pending_handoffs > 0 ? style.magenta(` · ${s.pending_handoffs} handoffs waiting`) : ""),
     );
 
     if (report.issues.length === 0) {
       out.line("");
-      out.line(`${style.green("✓")} 未发现问题${report.deep ? "（含深度检查）" : ""}`);
+      out.line(`${style.green("✓")} No problems found${report.deep ? " (including deep checks)" : ""}`);
       out.line("");
       return ExitCode.OK;
     }

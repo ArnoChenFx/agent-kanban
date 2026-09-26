@@ -5,6 +5,8 @@
 A project-scoped task board that lets multiple AI agent sessions share one source of truth — and pick up each other's work when they crash.
 
 ---
+![Screenshot](docs\images\screenshot.png)
+![Task](docs\images\task.png)
 
 ## The problem
 
@@ -53,11 +55,23 @@ Every state change is an event: `task_created`, `task_progress`, `handoff_create
 
 ```console
 $ agent-kanban rebuild
-Replaying 412 events...
-4 field(s) differ from the stored projection.
+agent-kanban  replayed 412 events (23ms)
+  Recomputed: tasks 18 · deps 6 · plans 4 · handoffs 5
 
-$ agent-kanban rebuild --write
-Replaying 412 events... 4 drift(s) repaired in a single transaction.
+✗ found 4 drifts (the stored projections ≠ the result recomputed from the events)
+  tasks.T-0012 field status
+    stored:     todo
+    recomputed: doing
+  ... and 3 more
+  Fix: agent-kanban rebuild --write --force
+  (--write overwrites tasks/plans/handoffs/task_deps with the event stream)
+
+$ agent-kanban rebuild --write --force
+agent-kanban  replayed 412 events (19ms)
+  Recomputed: tasks 18 · deps 6 · plans 4 · handoffs 5
+
+✓ the projections match the event stream exactly
+  the projections have been overwritten with the recomputed result
 ```
 
 If the log and the projection ever disagree, you find out then, rather than six weeks later.
@@ -342,8 +356,8 @@ agent-kanban install-protocol      # writes a managed block into <project>/AGENT
 agent-kanban install-protocol --check   # CI guard: exits 2 if missing or outdated
 ```
 
-The block sits between `<!-- kanban:begin -->` and `<!-- kanban:end -->` and is the only
-thing the command touches, so you can keep your own conventions in the same file. `kanban
+The block sits between `<!-- agent-kanban:begin -->` and `<!-- agent-kanban:end -->` and is the only
+thing the command touches, so you can keep your own conventions in the same file. `agent-kanban
 doctor` reports when the installed block is behind the CLI version.
 
 Any agent that reads `AGENTS.md` (or `CLAUDE.md`, or whatever your harness looks for) then
@@ -353,8 +367,8 @@ knows to run `agent-kanban session start` and `agent-kanban context` before touc
 ### Option 2 — MCP tools
 
 ```bash
-pi mcp add kanban -- cmd agent-kanban mcp
-claude mcp add kanban -- cmd agent-kanban mcp
+pi mcp add agent-kanban -- cmd agent-kanban mcp
+claude mcp add agent-kanban -- cmd agent-kanban mcp
 ```
 
 Already in this repo: `.mcp.json` at the project root registers the local build, so any
@@ -511,6 +525,7 @@ terminator before exposing it: without TLS, tokens go over the wire in plaintext
 ## Documentation
 
 - [Develop.md](Develop.md) — architecture, build, release, verification
+- Need a board to illustrate the docs with? `bun run seed:demo` seeds a simulated one into `.kanban/kanban.db` — see "Demo board for screenshots" in Develop.md
 
 ## License
 

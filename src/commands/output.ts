@@ -49,22 +49,28 @@ export function reportError(err: unknown, json: boolean): ExitCodeValue {
     process.stderr.write(JSON.stringify(error.toJSON()) + "\n");
   } else {
     // 人类模式：错误标题 + 提示 + 可操作建议
-    process.stderr.write(`\n错误[${error.name}]：${error.message}\n`);
+    process.stderr.write(`\nError[${error.name}]: ${error.message}\n`);
     const details = error.details;
     if (details.hint) {
-      process.stderr.write(`提示：${String(details.hint)}\n`);
+      process.stderr.write(`Hint: ${String(details.hint)}\n`);
     }
     if (details.usage) {
-      process.stderr.write(`用法：\n${String(details.usage)}\n`);
+      // USAGE 常量自身已经以 `Usage: ` 开头（它们同时被 `--help` 直接打印，
+      // 必须自包含），这里再补一次表头就成了
+      //   Usage:
+      //   Usage: agent-kanban task claim <id>
+      // ——这个重复是旧版就有的（中文时是「用法：」两遍），所以判断一下再决定要不要补表头。
+      const usage = String(details.usage);
+      process.stderr.write(usage.trimStart().startsWith("Usage:") ? `${usage}\n` : `Usage:\n${usage}\n`);
     }
     // legal_transitions 不用重复输出：KanbanError.illegalTransition 的 message
     // 已经把合法后继写在文案里了（agent 读文案比读字段更自然）
     if (details.holder) {
       const holder = details.holder as Record<string, unknown>;
       process.stderr.write(
-        `当前持有者：${String(holder.session_id ?? "?")}` +
-          `${holder.agent_name ? `（${String(holder.agent_name)}）` : ""}` +
-          ` 进度 ${String(holder.progress ?? "?")}%\n`,
+        `Current holder: ${String(holder.session_id ?? "?")}` +
+          `${holder.agent_name ? ` (${String(holder.agent_name)})` : ""}` +
+          `  progress ${String(holder.progress ?? "?")}%\n`,
       );
     }
   }

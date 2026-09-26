@@ -390,10 +390,10 @@ jobs:
 
           \`\`\`bash
           # Start the server (web board + remote backend for the CLI)
-          docker run -d --name kanban -p 7788:7788 -v kanban-data:/data ${{ needs.docker.outputs.image }}
+          docker run -d --name agent-kanban -p 7788:7788 -v kanban-data:/data ${{ needs.docker.outputs.image }}
 
           # First boot prints the admin token once; use it to issue project tokens
-          docker logs kanban
+          docker logs agent-kanban
           \`\`\`
 
           The \`/data\` volume holds projects, tokens, tasks, and handoffs. Back up that one

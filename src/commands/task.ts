@@ -87,7 +87,7 @@ export async function cmdTask(argv: string[]): Promise<ExitCodeValue> {
     case "--help":
       return printTaskUsage();
     default:
-      throw KanbanError.usage(`未知子命令：task ${sub}`, TASK_USAGE);
+      throw KanbanError.usage(`unknown command: task ${sub}`, TASK_USAGE);
   }
 }
 
@@ -96,33 +96,33 @@ function printTaskUsage(): ExitCodeValue {
   return ExitCode.OK;
 }
 
-const TASK_USAGE = `用法：agent-kanban task <子命令> [参数] [选项]
+const TASK_USAGE = `Usage: agent-kanban task <subcommand> [args] [options]
 
-读：
-  list      列出任务          agent-kanban task list --status doing --ready
-  show      查看任务详情      agent-kanban task show T-0007 --timeline
-            描述 / 检查项逐项 / 依赖（id+标题+状态）默认全出，末尾附可用操作
-  ready     列出可认领任务     agent-kanban task ready
+Read:
+  list     List tasks                 agent-kanban task list --status doing --ready
+  show     Show task details          agent-kanban task show T-0007 --timeline
+           Body / checklist items / dependencies (id + title + status), then the available actions
+  ready    List claimable tasks       agent-kanban task ready
 
-写（需会话上下文）：
-  add       创建任务          agent-kanban task add "标题" -d "描述" -p 0 --check "步骤1,步骤2"
-  claim     抢占为进行中      agent-kanban task claim T-0007
-  start     claim 的别名
-  progress  更新进度          agent-kanban task progress T-0007 --pct 60 --note "改完存储层"
-  note      追加备注          agent-kanban task note T-0007 "发现依赖冲突"
-  block     标记阻塞          agent-kanban task block T-0007 --reason "等 API key"
-  unblock   解除阻塞          agent-kanban task unblock T-0007
-  review    提交评审          agent-kanban task review T-0007
-  done      完成任务          agent-kanban task done T-0007 --note "测试全绿"
-  cancel    取消任务          agent-kanban task cancel T-0007 --reason "需求变更"
-  reopen    重新打开          agent-kanban task reopen T-0007 --reason "回归失败"
-  release   释放回待办        agent-kanban task release T-0007
-  edit      改元信息          agent-kanban task edit T-0007 --title "新标题"
-  dep       依赖维护          agent-kanban task dep add T-0007 T-0003
-  rm        删除任务          agent-kanban task rm T-0007
+Write (requires a session):
+  add      Create a task              agent-kanban task add "title" -d "description" -p 0 --check "step1,step2"
+  claim    Claim (set to doing)       agent-kanban task claim T-0007
+  start    Alias of claim
+  progress Update progress            agent-kanban task progress T-0007 --pct 60 --note "rewrote the storage layer"
+  note     Append a note              agent-kanban task note T-0007 "found a dependency conflict"
+  block    Mark blocked               agent-kanban task block T-0007 --reason "waiting for the API key"
+  unblock  Unblock                    agent-kanban task unblock T-0007
+  review   Submit for review          agent-kanban task review T-0007
+  done     Complete the task          agent-kanban task done T-0007 --note "tests all green"
+  cancel   Cancel the task            agent-kanban task cancel T-0007 --reason "requirement changed"
+  reopen   Reopen the task            agent-kanban task reopen T-0007 --reason "regression"
+  release  Release back to todo       agent-kanban task release T-0007
+  edit     Edit metadata              agent-kanban task edit T-0007 --title "new title"
+  dep      Dependency maintenance     agent-kanban task dep add T-0007 T-0003
+  rm       Delete a task              agent-kanban task rm T-0007
 
-通用选项：--json --session <id> --server <url> --project <key> --key <k>
-常用：--ttl <时长> --force --pct <0-100> --reason <文本> --check "项1,项2"`;
+Common options: --json --session <id> --server <url> --project <key> --key <k>
+Frequent: --ttl <duration> --force --pct <0-100> --reason <text> --check "item1,item2"`;
 
 // =============================================================================
 // 读命令
@@ -148,7 +148,7 @@ async function taskList(argv: string[]): Promise<ExitCodeValue> {
     const statuses = statusArg
       ? (statusArg.split(",").map((s) => s.trim()) as TaskStatus[]).map((s) => {
           if (!TASK_STATUSES.includes(s)) {
-            throw KanbanError.usage(`未知状态：${s}`, `可选：${TASK_STATUSES.join(", ")}`);
+            throw KanbanError.usage(`unknown status: ${s}`, `Allowed: ${TASK_STATUSES.join(", ")}`);
           }
           return s;
         })
@@ -174,8 +174,8 @@ async function taskList(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
     if (tasks.length === 0) {
-      out.line("（无匹配任务）");
-      if (params.ready) out.line("  没有依赖已满足且无人持有的任务");
+      out.line("(no matching tasks)");
+      if (params.ready) out.line("  no task has all dependencies satisfied and no holder");
       return ExitCode.OK;
     }
     renderTaskTable(out, tasks, ctx.now());
@@ -191,8 +191,8 @@ function renderTaskTable(out: Output, tasks: Array<Record<string, unknown>>, now
   const titleWidth = 40;
   out.line(
     style.gray(
-      "  " + "ID".padEnd(idWidth) + "标题".padEnd(titleWidth + 2) + "状态".padEnd(12) +
-        "进度".padEnd(7) + "优先".padEnd(5) + "持有者",
+      "  " + "ID".padEnd(idWidth) + "Title".padEnd(titleWidth) + "Status".padEnd(12) +
+        "Progress".padEnd(13) + "Pri".padEnd(5) + "Holder",
     ),
   );
   for (const raw of tasks) {
@@ -230,7 +230,7 @@ async function taskShow(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", "用法：agent-kanban task show T-0007 [--timeline]");
+  const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task show T-0007 [--timeline]");
 
   try {
     // nextActions 要单独取：executeWithHints 把它放在 data 之外，
@@ -251,34 +251,34 @@ async function taskShow(argv: string[]): Promise<ExitCodeValue> {
     out.line("");
     out.line(`${style.cyan(String(task.id))}  ${status}  ${style.bold(String(task.title))}`);
     if (task.started_at) {
-      out.line(`  ${style.gray(`开始于 ${relativeTime(Number(task.started_at), now)}`)}`);
+      out.line(`  ${style.gray(`started ${relativeTime(Number(task.started_at), now)}`)}`);
     }
     const pct = Number(task.progress ?? 0);
     if (pct > 0) {
-      out.line(`  进度 ${padStartWidth(`${pct}%`, 4)}  ${style.cyan(progressBar(pct, 20))}`);
+      out.line(`  progress ${padStartWidth(`${pct}%`, 4)}  ${style.cyan(progressBar(pct, 20))}`);
     }
     if (task.assignee_session_id) {
       const leaseLeft = task.lease_expires_at
         ? Math.max(0, Math.ceil((Number(task.lease_expires_at) - now) / 60000))
         : 0;
-      out.line(`  持有 ${task.assignee_session_id} ${style.gray(`(租约剩 ${leaseLeft}m)`)}`);
+      out.line(`  assignee ${task.assignee_session_id} ${style.gray(`(lease left ${leaseLeft}m)`)}`);
     }
     if (task.status === "blocked" && task.block_reason) {
-      out.line(`  ${style.red("⛔ 阻塞原因：")}${task.block_reason}`);
+      out.line(`  ${style.red("⛔ Blocked: ")}${task.block_reason}`);
     }
     // 描述默认全文显示（与 Web 详情抽屉一致）：它回答的是“这活儿到底是干什么的”，
     // 而 `task show` 就是看这个的。`--body` 保留为**兼容参数**（传了不报错、不改变行为），
     // 免得老的脚本/别名里写了它就直接 usage error。
     if (task.body) {
       out.line("");
-      out.line("  描述：");
+      out.line("  Description:");
       for (const l of String(task.body).split("\n")) out.line(`    ${l}`);
     }
-    if (task.plan_id) out.line(`  计划 ${style.magenta(String(task.plan_id))}`);
+    if (task.plan_id) out.line(`  plan ${style.magenta(String(task.plan_id))}`);
 
     const checklist = task.checklist as Array<{ text: string; done: boolean; by?: string | null }>;
     if (checklist && checklist.length > 0) {
-      out.line("  检查项");
+      out.line("  Checklist");
       for (const item of checklist) {
         out.line(`    ${item.done ? style.green("✅") : style.gray("⬜")} ${item.text}${item.done && item.by ? style.gray(` ${item.by}`) : ""}`);
       }
@@ -296,23 +296,26 @@ async function taskShow(argv: string[]): Promise<ExitCodeValue> {
           done: false,
         }));
     if (deps.length > 0) {
-      out.line("  依赖");
+      out.line("  Dependencies");
       for (const d of deps) {
         if (!d.id) continue;
-        const state = d.done ? "已完成" : "未完成";
-        out.line(`    ${style.gray("·")} ${style.cyan(d.id)}${d.title ? ` ${d.title}` : ""}（${d.done ? style.green(state) : style.yellow(state)}）`);
+        const state = d.done ? "Done" : "Not done";
+        out.line(`    ${style.gray("·")} ${style.cyan(d.id)}${d.title ? ` ${d.title}` : ""} (${d.done ? style.green(state) : style.yellow(state)})`);
       }
     }
     const timeline = task.timeline as KanbanEvent[] | undefined;
     if (timeline && timeline.length > 0) {
-      out.line("  最近");
+      out.line("  Recent");
       for (const e of timeline) {
-        out.line(`    ${style.gray(relativeTime(Number(e.ts), now).padEnd(8))} ${describeEvent(e)}`);
+        // 时间列宽 10：相对时间英文化后最长是 "just now"（8 字符），原来的 padEnd(8)
+        // 恰好占满整列，拼出来是 “just now created task (p2)” —— 读起来像“刚刚创建”的动词短语。
+        // 留两格空隙让事件文本始终与时间列分开。
+        out.line(`    ${style.gray(relativeTime(Number(e.ts), now).padEnd(10))} ${describeEvent(e)}`);
       }
     }
 
     out.line("");
-    out.line("  " + style.gray("可用操作：") + nextActions.map((h) => style.gray(h)).join("  |  "));
+    out.line("  " + style.gray("Available actions: ") + nextActions.map((h) => style.gray(h)).join("  |  "));
     out.line("");
     return ExitCode.OK;
   } finally {
@@ -343,13 +346,13 @@ async function taskAdd(argv: string[]): Promise<ExitCodeValue> {
     const title = getString(args, "title") ?? args.positionals[0];
     if (!title) {
       throw KanbanError.usage(
-        "缺少任务标题",
-        '用法：agent-kanban task add "实现存储层" [-d "描述"] [-p 0-4] [--check "步骤1,步骤2"]',
+        "missing task title",
+        'Usage: agent-kanban task add "title" [-d "description"] [-p 0-4] [--check "step1,step2"]',
       );
     }
     const estimate = getString(args, "estimate");
     if (estimate && parseDuration(estimate) === null) {
-      throw KanbanError.usage(`无法解析预估时长 "${estimate}"`, "支持：30m / 2h / 1d / 1h30m");
+      throw KanbanError.usage(`cannot parse estimate "${estimate}"`, "Supported: 30m / 2h / 1d / 1h30m");
     }
 
     const params: CreateTaskParams = {
@@ -372,13 +375,13 @@ async function taskAdd(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
 
-    out.line(`${style.green("✓")} 创建任务 ${style.cyan(String(task.id))} ${task.title}`);
+    out.line(`${style.green("✓")} Created task ${style.cyan(String(task.id))} ${task.title}`);
     const checklist = task.checklist as Array<{ text: string; done: boolean; done_at: number | null; by: string | null }>;
     if (checklist && checklist.length > 0) {
-      out.line(`  检查项：${checklist.map((c) => c.text).join(" / ")}`);
+      out.line(`  Checklist: ${checklist.map((c) => c.text).join(" / ")}`);
     }
     out.line("");
-    out.line(style.gray("下一步："));
+    out.line(style.gray("Next:"));
     for (const action of nextActions) out.line(`  ${action}`);
     return ExitCode.OK;
   } finally {
@@ -397,7 +400,7 @@ async function taskClaim(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", "用法：agent-kanban task claim T-0007 [--ttl 2h]");
+  const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task claim T-0007 [--ttl 2h]");
 
   try {
     requireSession(ctx, getString(args, "session"));
@@ -412,12 +415,12 @@ async function taskClaim(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
     const leaseMin = task.lease_expires_at ? Math.round((Number(task.lease_expires_at) - ctx.now()) / 60000) : 0;
-    out.line(`${style.green("✓")} 已认领 ${style.cyan(String(task.id))} ${task.title} ${style.gray(`(租约 ${leaseMin} 分钟)`)}`);
+    out.line(`${style.green("✓")} Claimed ${style.cyan(String(task.id))} ${task.title} ${style.gray(`(lease ${leaseMin}m)`)}`);
     if (task.took_over) {
-      out.line(`  ${style.yellow("注意：")}这张卡此前由他人持有${Number(task.progress) > 0 ? `，进度 ${task.progress}% 已保留` : ""}`);
+      out.line(`  ${style.yellow("Note: ")}this card was held by another session${Number(task.progress) > 0 ? `, progress ${task.progress}% preserved` : ""}`);
     }
     out.line("");
-    out.line(style.gray("提示：每完成一步就跑一次 progress（会自动续租），收工前写 handoff"));
+    out.line(style.gray("Hint: run progress after every step (it renews the lease automatically), write a handoff before wrapping up"));
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -435,7 +438,7 @@ async function taskProgress(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", '用法：agent-kanban task progress T-0007 --pct 60 --note "..."');
+  const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task progress T-0007 --pct 60 --note "..."');
 
   try {
     requireSession(ctx, getString(args, "session"));
@@ -455,12 +458,12 @@ async function taskProgress(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
     const pct = Number(task.progress);
-    out.line(`${style.green("✓")} ${style.cyan(String(task.id))} 进度 ${padStartWidth(`${pct}%`, 4)} ${style.cyan(progressBar(pct, 20))}`);
-    if (params.note) out.line(`  备注：${params.note}`);
+    out.line(`${style.green("✓")} ${style.cyan(String(task.id))} progress ${padStartWidth(`${pct}%`, 4)} ${style.cyan(progressBar(pct, 20))}`);
+    if (params.note) out.line(`  Note: ${params.note}`);
     const checklist = task.checklist as Array<{ text: string; done: boolean }>;
     if (checklist && checklist.length > 0) {
       const done = checklist.filter((c) => c.done).length;
-      out.line(`  检查项：${done}/${checklist.length} 完成`);
+      out.line(`  Checklist: ${done}/${checklist.length} done`);
       for (const item of checklist.filter((c) => !c.done)) out.line(`    ${style.gray("⬜")} ${item.text}`);
     }
     if (nextActions.length > 0) {
@@ -484,9 +487,9 @@ async function taskNote(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", '用法：agent-kanban task note T-0007 "备注内容"');
+  const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task note T-0007 "note text"');
   const text = args.positionals[1];
-  if (!text) throw KanbanError.usage("缺少备注内容", '用法：agent-kanban task note T-0007 "备注内容"');
+  if (!text) throw KanbanError.usage("missing note text", 'Usage: agent-kanban task note T-0007 "note text"');
 
   try {
     requireSession(ctx, getString(args, "session"));
@@ -495,7 +498,7 @@ async function taskNote(argv: string[]): Promise<ExitCodeValue> {
       out.data(data);
       return ExitCode.OK;
     }
-    out.line(`${style.green("✓")} ${style.cyan(id)} 已记录备注`);
+    out.line(`${style.green("✓")} ${style.cyan(id)} note recorded`);
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -516,13 +519,13 @@ async function taskTransition(
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", opts.usage);
+  const id = requirePositional(args, 0, "task id", opts.usage);
 
   try {
     requireSession(ctx, getString(args, "session"));
     const reason = getString(args, "reason") ?? args.positionals[1];
     if (opts.reasonRequired && !reason) {
-      throw KanbanError.usage("该命令需要 --reason <原因>", opts.usage);
+      throw KanbanError.usage("this command requires --reason <text>", opts.usage);
     }
     const { data, nextActions } = await ctx.backend.executeWithHints({
       kind: opts.kind,
@@ -535,12 +538,12 @@ async function taskTransition(
       return ExitCode.OK;
     }
     out.line(`${style.green("✓")} ${style.cyan(String(task.id))} → ${style[statusColor(String(task.status)) as "cyan"](statusLabel(String(task.status)))} ${task.title}`);
-    if (reason) out.line(`  原因：${reason}`);
+    if (reason) out.line(`  Reason: ${reason}`);
     const unblocked = (task.unblocked as string[] | undefined) ?? [];
     if (unblocked.length > 0) {
       out.line("");
-      out.line(`${style.green("⤵")} 依赖它的任务现在可以开工了：${style.cyan(unblocked.join(", "))}`);
-      out.line(style.gray(`  认领：agent-kanban task claim ${unblocked[0]}`));
+      out.line(`${style.green("⤵")} these tasks can start now: ${style.cyan(unblocked.join(", "))}`);
+      out.line(style.gray(`  Claim: agent-kanban task claim ${unblocked[0]}`));
     }
     if (nextActions.length > 0) {
       out.line("");
@@ -553,22 +556,22 @@ async function taskTransition(
 }
 
 async function taskBlock(argv: string[]): Promise<ExitCodeValue> {
-  return taskTransition(argv, { kind: "task.block", usage: '用法：agent-kanban task block T-0007 --reason "等待什么"', reasonRequired: true });
+  return taskTransition(argv, { kind: "task.block", usage: 'Usage: agent-kanban task block T-0007 --reason "waiting for what"', reasonRequired: true });
 }
 async function taskUnblock(argv: string[]): Promise<ExitCodeValue> {
-  return taskTransition(argv, { kind: "task.unblock", usage: "用法：agent-kanban task unblock T-0007" });
+  return taskTransition(argv, { kind: "task.unblock", usage: "Usage: agent-kanban task unblock T-0007" });
 }
 async function taskReview(argv: string[]): Promise<ExitCodeValue> {
-  return taskTransition(argv, { kind: "task.review", usage: '用法：agent-kanban task review T-0007 [--note "..."]' });
+  return taskTransition(argv, { kind: "task.review", usage: 'Usage: agent-kanban task review T-0007 [--note "..."]' });
 }
 async function taskDone(argv: string[]): Promise<ExitCodeValue> {
-  return taskTransition(argv, { kind: "task.done", usage: '用法：agent-kanban task done T-0007 [--note "..."] [--force]' });
+  return taskTransition(argv, { kind: "task.done", usage: 'Usage: agent-kanban task done T-0007 [--note "..."] [--force]' });
 }
 async function taskCancel(argv: string[]): Promise<ExitCodeValue> {
-  return taskTransition(argv, { kind: "task.cancel", usage: '用法：agent-kanban task cancel T-0007 --reason "需求变更"', reasonRequired: true });
+  return taskTransition(argv, { kind: "task.cancel", usage: 'Usage: agent-kanban task cancel T-0007 --reason "requirement changed"', reasonRequired: true });
 }
 async function taskReopen(argv: string[]): Promise<ExitCodeValue> {
-  return taskTransition(argv, { kind: "task.reopen", usage: '用法：agent-kanban task reopen T-0007 --reason "回归失败"', reasonRequired: true });
+  return taskTransition(argv, { kind: "task.reopen", usage: 'Usage: agent-kanban task reopen T-0007 --reason "regression"', reasonRequired: true });
 }
 
 /** task release */
@@ -582,7 +585,7 @@ async function taskRelease(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", '用法：agent-kanban task release T-0007 [--reason "..."]');
+  const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task release T-0007 [--reason "..."]');
 
   try {
     requireSession(ctx, getString(args, "session"));
@@ -592,7 +595,7 @@ async function taskRelease(argv: string[]): Promise<ExitCodeValue> {
       out.data(data);
       return ExitCode.OK;
     }
-    out.line(`${style.green("✓")} ${style.cyan(id)} 已释放（进度 ${task.progress}% 保留）`);
+    out.line(`${style.green("✓")} ${style.cyan(id)} released (progress ${task.progress}% preserved)`);
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -610,7 +613,7 @@ async function taskEdit(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", '用法：agent-kanban task edit T-0007 --title "新标题"');
+  const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task edit T-0007 --title "new title"');
 
   try {
     const estimate = getString(args, "estimate");
@@ -630,7 +633,7 @@ async function taskEdit(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
     const task = data as Record<string, unknown>;
-    out.line(`${style.green("✓")} ${style.cyan(id)} 已更新：${task.title}`);
+    out.line(`${style.green("✓")} ${style.cyan(id)} updated: ${task.title}`);
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -642,8 +645,8 @@ async function taskDep(argv: string[]): Promise<ExitCodeValue> {
   const action = argv[0];
   if (action !== "add" && action !== "remove" && action !== "list") {
     throw KanbanError.usage(
-      `未知依赖操作：dep ${action ?? ""}`,
-      "用法：agent-kanban task dep add|remove|list T-0007 [T-0003]",
+      `unknown dependency action: dep ${action ?? ""}`,
+      "Usage: agent-kanban task dep add|remove|list T-0007 [T-0003]",
     );
   }
   const args = parseArgs(argv.slice(1), {
@@ -655,7 +658,7 @@ async function taskDep(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", "用法：agent-kanban task dep add T-0007 T-0003");
+  const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task dep add T-0007 T-0003");
 
   try {
     let op: Op;
@@ -663,7 +666,7 @@ async function taskDep(argv: string[]): Promise<ExitCodeValue> {
       op = { kind: "task.dep.list", params: { task_id: id } };
     } else {
       const target = args.positionals[1];
-      if (!target) throw KanbanError.usage("缺少依赖的任务号", "用法：agent-kanban task dep add T-0007 T-0003");
+      if (!target) throw KanbanError.usage("missing dependency task id", "Usage: agent-kanban task dep add T-0007 T-0003");
       op = {
         kind: action === "add" ? "task.dep.add" : "task.dep.remove",
         params: { task_id: id, depends_on: target },
@@ -677,14 +680,14 @@ async function taskDep(argv: string[]): Promise<ExitCodeValue> {
     }
     if (action === "list") {
       if (result.dependencies.length === 0) {
-        out.line(`${id} 无依赖`);
+        out.line(`${id} has no dependencies`);
         return ExitCode.OK;
       }
       // TaskDep 的字段是 dependsOnId（不是 depends_on_id）——读错会打印 undefined
-      for (const d of result.dependencies) out.line(`  ${d.dependsOnId ?? d.depends_on_id ?? "(未知)"}`);
+      for (const d of result.dependencies) out.line(`  ${d.dependsOnId ?? d.depends_on_id ?? "(unknown)"}`);
       return ExitCode.OK;
     }
-    out.line(`${style.green("✓")} ${style.cyan(id)} ${action === "add" ? "新增依赖" : "移除依赖"}（当前 ${result.dependencies.length} 项）`);
+    out.line(`${style.green("✓")} ${style.cyan(id)} ${action === "add" ? "dependency added" : "dependency removed"} (${result.dependencies.length} total)`);
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -702,7 +705,7 @@ async function taskRemove(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const id = requirePositional(args, 0, "任务号", "用法：agent-kanban task rm T-0007 [--force]");
+  const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task rm T-0007 [--force]");
 
   try {
     const { data } = await ctx.backend.executeWithHints({ kind: "task.remove", params: { task_id: id, force: getBool(args, "force") } });
@@ -710,7 +713,7 @@ async function taskRemove(argv: string[]): Promise<ExitCodeValue> {
       out.data(data);
       return ExitCode.OK;
     }
-    out.line(`${style.green("✓")} 已删除 ${style.cyan(id)}（事件与交接记录保留）`);
+    out.line(`${style.green("✓")} Deleted ${style.cyan(id)} (events and handoffs are kept)`);
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);

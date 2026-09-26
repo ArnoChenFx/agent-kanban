@@ -75,7 +75,7 @@ describe("task show 的文本输出", () => {
   });
 
   test("描述默认显示（不必再加 --body）", () => {
-    expect(show).toContain("描述");
+    expect(show).toContain("Description:");
     expect(show).toContain("背景第一行");
   });
 
@@ -86,19 +86,19 @@ describe("task show 的文本输出", () => {
   });
 
   test("检查项逐项列出", () => {
-    expect(show).toContain("检查项");
+    expect(show).toContain("Checklist");
     expect(show).toContain("步骤1");
     expect(show).toContain("步骤2");
   });
 
   test("依赖显示 id + 标题 + 状态", () => {
-    expect(show).toContain("依赖");
+    expect(show).toContain("Dependencies");
     expect(show).toMatch(/T-0001\s+上游/);
-    expect(show).toContain("未完成");
+    expect(show).toContain("Not done");
   });
 
   test("末尾的「可用操作」不是空的", () => {
-    const line = show.split("\n").find((l) => l.includes("可用操作")) ?? "";
+    const line = show.split("\n").find((l) => l.includes("Available actions:")) ?? "";
     expect(line).toContain("task claim T-0002");
   });
 
@@ -110,13 +110,40 @@ describe("task show 的文本输出", () => {
   test("加 --body 仍然被接受（兼容参数，不报 usage）", async () => {
     const r = await cli(["task", "show", "T-0002", "--body", "--db", dbPath]);
     expect(r.code).toBe(0);
-    expect(strip(r.out)).toContain("描述");
+    expect(strip(r.out)).toContain("Description:");
   });
 
   test("时间线里的 dep_added 不是原始事件名", async () => {
     const r = await cli(["task", "show", "T-0002", "--timeline", "--db", dbPath]);
     // 曾经 CLI 侧有一份 describeEvent 的副本，漏了 dep_added，直接打出 "dep_added"
-    expect(strip(r.out)).toContain("新增依赖 T-0001");
+    expect(strip(r.out)).toContain("added dependency T-0001");
+  });
+});
+
+describe("context 的输出", () => {
+  // 事故记录：context 里出现过 `Last: handoff written (undefined)`。
+  // 根因不是文案，而是 `describeEventBrief` 读 `d.kind`，而 handoff_created 事件的
+  // payload 是嵌套的 `{ handoff: { kind } }` —— 字段取错层级就渲染出 undefined。
+  // 仓库原本只给 `task show` 钉了「输出里不许出现 undefined」这条守卫，context 不在
+  // 覆盖范围内，所以它能一直藏着。现在补上。
+  let out = "";
+
+  beforeAll(async () => {
+    await cli(["session", "start", "--agent", "cli-out", "--db", dbPath]);
+    // 顺序很关键：先认领（任务才会出现在「Your work in progress」里），
+    // 再写交接（它才是该任务的最后一条事件，`Last:` 才会打 handoff_created）
+    await cli(["task", "claim", "T-0002", "--db", dbPath]);
+    await cli(["handoff", "--task", "T-0002", "--summary", "s", "--next", "n", "--db", dbPath]);
+    out = strip((await cli(["context", "--db", dbPath])).out);
+  });
+
+  test("输出里没有 undefined（事件 payload 字段取错层级的常见症状）", () => {
+    expect(out).not.toContain("undefined");
+    expect(out).not.toContain("[object Object]");
+  });
+
+  test("交接行带上了 kind（voluntary/crash），不是空括号", () => {
+    expect(out).toMatch(/handoff written \((voluntary|crash)\)/);
   });
 });
 

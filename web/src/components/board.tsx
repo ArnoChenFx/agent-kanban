@@ -60,6 +60,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 import { Lane, TaskCard, type CardAction } from "@/components/task-card"
 import { TaskDetailSheet, SessionsPanel } from "@/components/task-detail"
+import { localizedNextActions } from "@/lib/next-actions"
+import { errorHint, errorText, holderText } from "@/lib/error-text"
 import {
   ConflictDialog,
   HandoffDialog,
@@ -135,9 +137,15 @@ export function Board() {
   const reload = useCallback(async () => {
     if (!token || !project) return
     try {
-      const [b] = await Promise.all([fetchBoard(token, project), fetchContext(token, project, null).catch(() => null)])
+      const [b, c] = await Promise.all([
+        fetchBoard(token, project),
+        // 拉取失败不该让整块看板跟着失败，所以这里 .catch 后再判空
+        fetchContext(token, project, null).catch(() => null),
+      ])
       setBoard(b)
-      if (b) setContext((c) => c)
+      // 交接与会话列表是活的状态：SSE 推了事件就重拉一次，否则侧栏会一直停在
+      // 首次进页面时的快照（有人接手了交接、session 变红了都看不见）。
+      if (c) setContext(c)
     } catch (e) {
       if (e instanceof ApiError && e.isAuth) {
         setTokenState(null)
@@ -195,6 +203,13 @@ export function Board() {
     return map
   }, [board])
 
+  // 建议区：后端给「代号 + 参数」，这里按当前语言选词。
+  // 依赖 t（locale 变了要重算）而不是把结果存进 state。
+  const nextActions = useMemo(
+    () => (context ? localizedNextActions(context, t) : []),
+    [context, t],
+  )
+
   const isStale = (task: TaskItem) =>
     task.assignee_session_id ? (sessionById.get(task.assignee_session_id)?.stale ?? false) : false
 
@@ -213,10 +228,11 @@ export function Board() {
       } catch (e) {
         if (e instanceof ApiError) {
           if (e.isAuth) toast.error(t("toast.error.auth"), { description: t("toast.error.authDesc") })
-          else if (e.isConflict) toast.error(t("toast.error.conflict"), { description: String(e.details.holder ?? e.message) })
-          else if (e.isBusy) toast.error(t("toast.error.busy"))
-          else toast.error(e.message, {
-            description: typeof e.details.hint === "string" ? e.details.hint : undefined,
+          else if (e.isConflict) toast.error(t("toast.error.conflict"), { description: holderText(e.details.holder, errorText(e, t)) })
+          else if (e.isBusy) toast.error(t("toast.error.busy"), { description: errorText(e, t) })
+          // 其余错误：正文走词典（details.reason → error.* 键），查不到才回退后端的英文 message
+          else toast.error(errorText(e, t), {
+            description: errorHint(e) || undefined,
           })
         } else {
           toast.error(t("toast.error.unknown"), { description: String(e) })
@@ -540,13 +556,13 @@ export function Board() {
             <SessionsPanel sessions={board?.sessions ?? []} tasksById={tasksById} />
           </section>
 
-          {context && context.next_actions.length > 0 && (
+          {context && nextActions.length > 0 && (
             <>
               <Separator />
               <section>
                 <h2 className="mb-2 text-sm font-semibold">{t("sidebar.next")}</h2>
                 <ul className="text-muted-foreground flex flex-col gap-1 text-xs">
-                  {context.next_actions.slice(0, 6).map((a, i) => (
+                  {nextActions.slice(0, 6).map((a, i) => (
                     <li key={i} className="flex items-start gap-1.5">
                       <CheckIcon className="text-status-done mt-0.5 size-3 shrink-0" />
                       {a}

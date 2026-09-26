@@ -175,7 +175,7 @@ check("install-protocol", proto.code === 0, proto.out.trim().split("\n")[0]?.sli
 
 console.log("\n=== 9. 收工 ===");
 const doctor = kanban([...S, "doctor"]);
-const okLine = doctor.out.includes("没有发现问题") || doctor.code === 0;
+const okLine = doctor.out.includes("No problems found") || doctor.code === 0;
 check("doctor", okLine, doctor.out.trim().split("\n").slice(0, 2).join(" ").slice(0, 80));
 kanban([...S, "session", "end"]);
 

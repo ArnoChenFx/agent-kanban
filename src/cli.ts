@@ -33,93 +33,94 @@ import { style } from "./core/format.ts";
 import { readPackageVersion } from "./core/version.ts";
 
 /** 主帮助 */
-const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看板
+const HELP = `agent-kanban —— a task board shared by multiple agent sessions / projects
 
-用法：agent-kanban <命令> [子命令] [参数] [选项]
+Usage: agent-kanban <command> [subcommand] [args] [options]
 
-命令：
-  init        初始化本地看板（.kanban/，自动创建唯一 project）
-  install-protocol  把 agent 协作协议写入项目 AGENTS.md
-  session     会话生命周期：start / list / heartbeat / end
-  task        任务操作：add / list / show / claim / progress / done ...
-  board       终端泳道视图
-  context     恢复现场（开工第一步）：看板 + 交接 + 建议动作
-  resume      接管任务并注入交接与时间线
-  handoff     写交接（收工前）：summary / next / blockers / open
-  doctor      一致性自检与修复
-  export/import/snapshot/compact  备份与维护（事件 journal 导出/重放/裁剪）
-  plan        计划版本化：save（每次存新版本）/ show / list / history / at / attach
-  rebuild     从事件流重建投影（自证一致；默认只校验）
-  config      项目配置：show / init / set / use（.kanban/config.toml）
-  project     项目查询（本机直连）
-  admin       管理员：project 创建/删除、token 签发/吊销/授权
-  serve       启动 HTTP + SSE server（供多机共享）
-  mcp         启动 MCP server（stdio，agent 通过 tool call 读写看板）
+Commands:
+  init        Initialize the local board (.kanban/, creates the single project)
+  install-protocol  Write the agent collaboration protocol into the project AGENTS.md
+  session     Session lifecycle: start / list / heartbeat / end
+  task        Task operations: add / list / show / claim / progress / done ...
+  board       Terminal swimlane view
+  context     Read the situation (first step of a session): board + handoffs + suggested actions
+  resume      Take over a task, injecting its handoff and timeline
+  handoff     Write a handoff (before wrapping up): summary / next / blockers / open
+  doctor      Consistency self-check and repair
+  export/import/snapshot/compact  Backup and maintenance (event journal export / replay / trim)
+  plan        Versioned plans: save (each call stores a new version) / show / list / history / at / attach
+  rebuild     Rebuild projections from the event stream (self-verifying; verify-only by default)
+  config      Project config: show / init / set / use (.kanban/config.toml)
+  project     Project queries (direct local access)
+  admin       Admin: project create/delete, token issue/revoke/authorize
+  serve       Start the HTTP + SSE server (for sharing across machines)
+  mcp         Start the MCP server (stdio; agents read and write the board via tool calls)
 
-两种模式
-  本地：agent-kanban task list
-        数据在 <项目>/.kanban/kanban.db，自动对应唯一 project，无需任何配置
-  远程：kanban --server https://kanban.corp --project app --key k_xxx task list
-        数据在 server；一个 server 管多个 project
+Two modes
+  Local: agent-kanban task list
+        Data lives in <project>/.kanban/kanban.db and maps to the single project
+        automatically; no configuration needed
+  Remote: agent-kanban --server https://kanban.corp --project app --key k_xxx task list
+        Data lives on the server; one server hosts many projects
 
-配置（推荐：配置一次，固定生效）
+Config (recommended: configure once, always in effect)
   agent-kanban config init --server https://kanban.corp --project app --key k_xxx
-  agent-kanban task list                 # 之后无需再传参数
-  agent-kanban config show               # 查看生效配置与来源
+  agent-kanban task list                 # no arguments needed afterwards
+  agent-kanban config show               # show the effective config and its source
 
-管理员（server 端或任意机器）
-  agent-kanban serve                     # 启动（首次自动生成管理员 token）
-  agent-kanban admin project add app     # 建项目
-  agent-kanban admin token create --project app --name "CI 专用"
-  浏览器打开 http://127.0.0.1:7788/admin  # 管理界面
+Admin (on the server host or any machine)
+  agent-kanban serve                     # start (an admin token is generated on first run)
+  agent-kanban admin project add app     # create a project
+  agent-kanban admin token create --project app --name "CI runner"
+  Open http://127.0.0.1:7788/admin in a browser  # admin UI
 
-全局选项（优先级高于配置文件）：
-  --server <url>     远程 server 地址
-  --project <key>    project 标识（远程必填；本地自动派生）
-  --key <k_xxx>      访问 token
-  --db <path>        本地数据库路径
-  --session <id>     会话标识（也可用 KANBAN_SESSION）
-  --json             结构化输出
-  --no-color         关闭颜色
-  --version, -V      打印版本号
+Global options (take precedence over the config file):
+  --server <url>     Remote server address
+  --project <key>    Project key (required for remote; derived locally)
+  --key <k_xxx>      Access token
+  --db <path>        Local database path
+  --session <id>     Session id (or KANBAN_SESSION)
+  --json             Structured output
+  --no-color         Disable color
+  --version, -V      Print the version
 
-典型工作流（agent 视角）：
-  agent-kanban session start --agent pi-main --harness pi   # 1. 注册会话
-  agent-kanban context                                      # 2. 读现场（交接/在做/可认领）
-  agent-kanban task claim T-0007                            # 3. 认领
-  agent-kanban task progress T-0007 --pct 60 --note "..."   # 4. 推进（自动续租）
-  agent-kanban handoff --task T-0007 --summary "..." --next "..."  # 5. 交接
-  agent-kanban plan save --task T-0007 --title "..." --body-file <路径>  # 5'. 方案变了就存新版
-  agent-kanban session end                                  # 6. 收工
+Typical workflow (from an agent's perspective):
+  agent-kanban session start --agent pi-main --harness pi   # 1. register the session
+  agent-kanban context                                      # 2. read the situation (handoffs / in progress / claimable)
+  agent-kanban task claim T-0007                            # 3. claim
+  agent-kanban task progress T-0007 --pct 60 --note "..."   # 4. progress (renews the lease automatically)
+  agent-kanban handoff --task T-0007 --summary "..." --next "..."  # 5. handoff
+  agent-kanban plan save --task T-0007 --title "..." --body-file <path>  # 5'. save a new version when the approach changes
+  agent-kanban session end                                  # 6. wrap up
 
-崩溃恢复：
-  agent-kanban context                # 新会话开工：先看现场
-  agent-kanban resume T-0007          # 接管那张卡，交接与时间线一并注入
+Crash recovery:
+  agent-kanban context                # a new session starts here: read the situation first
+  agent-kanban resume T-0007          # take over that card, handoff and timeline included
 
-更多：agent-kanban task --help · agent-kanban config --help · agent-kanban admin --help
-文档：docs/plan/001-总体设计.md · docs/plan/002-接口契约.md`;
+More: agent-kanban task --help · agent-kanban config --help · agent-kanban admin --help
+Docs: docs/plan/001-总体设计.md · docs/plan/002-接口契约.md`;
 
 /** `agent-kanban mcp` 的用法（它是给 harness 看的，不是给人天天敲的，所以与主帮助分开） */
-const MCP_USAGE = `用法：agent-kanban mcp [--server <url>] [--project <key>] [--key <k_xxx>]
+const MCP_USAGE = `Usage: agent-kanban mcp [--server <url>] [--project <key>] [--key <k_xxx>]
 
-以 stdio 方式启动 MCP server，把看板暴露成 agent 可调用的工具。
-harness 会把它当子进程拉起，不需要手动运行。
+Starts the MCP server over stdio and exposes the board as tools agents can call.
+The harness spawns it as a subprocess; you never run it by hand.
 
-注册示例：
+Registration example:
   pi mcp add kanban -- cmd agent-kanban mcp
   claude mcp add kanban -- cmd agent-kanban mcp
 
-工具分组：
-  会话   kanban_session_start / kanban_bootstrap / kanban_session_end
-  任务   kanban_task_list / get / create / claim / progress / note /
-         block / unblock / complete / review
-  恢复   kanban_resume / kanban_handoff
-  计划   kanban_plan_save / show / diff
-  看板   kanban_board / kanban_doctor
+Tool groups:
+  Session  kanban_session_start / kanban_bootstrap / kanban_session_end
+  Task     kanban_task_list / get / create / claim / progress / note /
+           block / unblock / complete / review
+  Recovery kanban_resume / kanban_handoff
+  Plan     kanban_plan_save / show / diff
+  Board    kanban_board / kanban_doctor
 
-每个会话第一步 kanban_session_start，第二步 kanban_bootstrap。
+First call of a session: kanban_session_start, second: kanban_bootstrap.
 
-注意：stdout 是 JSON-RPC 通道，诊断信息一律走 stderr。`;
+Note: stdout is the JSON-RPC channel; all diagnostics go to stderr.`;
 
 /** 提升到模块级：main 的 catch 兜底需要用 */
 const globals = {
@@ -270,7 +271,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      process.stderr.write(`未知命令：${command}\n\n`);
+      process.stderr.write(`unknown command: ${command}\n\n`);
       process.stderr.write(HELP + "\n");
       code = ExitCode.USAGE;
       break;
@@ -295,20 +296,20 @@ function cmdServe(argv: string[]): ExitCodeValue {
 
   if (getBool(args, "help")) {
     process.stdout.write(
-      `用法：agent-kanban serve [--host 127.0.0.1] [--port 7788] [--reap-interval 30]
+      `Usage: agent-kanban serve [--host 127.0.0.1] [--port 7788] [--reap-interval 30]
 
-在 server 所在机器上运行。一个 server 管多个 project（ADR-9），
-每个 project 用自己的 API key 隔离（ADR-11）。
+Run this on the machine that hosts the server. One server hosts many projects (ADR-9),
+and each project is isolated by its own API key (ADR-11).
 
-配套命令：
-  agent-kanban project add <key>    创建 project 并生成 API key（key 只显示一次）
-  agent-kanban project list         列出所有 project
+Companion commands:
+  agent-kanban project add <key>    Create a project and generate its API key (shown once)
+  agent-kanban project list         List all projects
 
-客户端接入：
+Client setup:
   agent-kanban remote set <url> --project <key> --key k_xxx
-  agent-kanban task list           # 之后无需重复传参
+  agent-kanban task list           # no repeated arguments afterwards
 
-注意：默认只绑定 127.0.0.1。跨机访问请置于 TLS 反向代理之后。\n`,
+Note: binds to 127.0.0.1 only by default. Put it behind a TLS reverse proxy for remote access.\n`,
     );
     return ExitCode.OK;
   }
@@ -322,7 +323,7 @@ function cmdServe(argv: string[]): ExitCodeValue {
   const dbPath = ctx.handle?.dbPath;
   closeCtx(ctx);
   if (!dbPath) {
-    process.stderr.write("错误：无法定位数据库文件，请先运行 `agent-kanban init` 或用 --db 指定\n");
+    process.stderr.write("error: cannot locate the database file, run `agent-kanban init` first or pass --db\n");
     return ExitCode.NOT_INIT;
   }
 

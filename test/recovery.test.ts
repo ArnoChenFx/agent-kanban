@@ -15,7 +15,7 @@ import { createTestDb, type TestDb } from "./helpers/db.ts";
 import { createSession, reapZombies, touchSession } from "../src/core/sessions.ts";
 import { claimTask, createTask, getTask, updateProgress, type Actor } from "../src/core/tasks.ts";
 import { writeHandoff, pendingHandoffs, taskHandoffs, consumeHandoff } from "../src/core/handoff.ts";
-import { buildContext, runResume } from "../src/core/context.ts";
+import { buildContext, renderNextAction, runResume } from "../src/core/context.ts";
 import { runDoctor } from "../src/core/doctor.ts";
 import { withTx } from "../src/core/tx.ts";
 import { DEFAULT_GRACE_MS, DEFAULT_TTL_MS } from "../src/core/db.ts";
@@ -185,16 +185,19 @@ describe("崩溃自动合成 handoff", () => {
       expect(crash).toBeDefined();
       expect(crash!.sessionId).toBe(sid);
       expect(crash!.summary).toContain("40%");
-      expect(crash!.summary).toContain("失联");
-      // “最后动作”里不能出现心跳与回收本身（对接手方是废话）
-      expect(crash!.summary).not.toContain("被回收");
-      expect(crash!.summary).not.toContain("heartbeat");
+      expect(crash!.summary).toContain("went silent");
+      // 「最后动作」里不能出现心跳与回收本身（对接手方是废话）。
+      // 断言必须**只针对最后动作那一段**：正文里的 "without a heartbeat" 是
+      // 对「失联」的正常描述，笼统地断言整段不含 "heartbeat" 会在文案英文化后误伤。
+      const lastActions = crash!.summary.split("Last actions:")[1] ?? "";
+      expect(lastActions).not.toContain("heartbeat");
+      expect(lastActions).not.toContain("reclaimed");
       // 下一步要指出从哪继续 + 剩余项
       expect(crash!.nextStep).toContain("40%");
       expect(crash!.nextStep).toContain("第二步");
       expect(crash!.nextStep).toContain("第三步");
       // 阻塞原因也带过来
-      expect(crash!.blockers.join(" ")).toContain("失联");
+      expect(crash!.blockers.join(" ")).toContain("went silent");
     } finally {
       t.cleanup();
     }
@@ -272,6 +275,11 @@ describe("context —— 恢复现场", () => {
       // 建议里必须有可执行动作
       expect(ctx.next_actions.length).toBeGreaterThan(0);
       expect(ctx.next_actions.some((a) => a.includes(t1))).toBe(true);
+
+      // 每条建议都有结构化形态，且与中文串一一对应（前端靠它本地化，见 web/src/lib/next-actions.ts）
+      expect(ctx.next_action_items).toHaveLength(ctx.next_actions.length);
+      expect(ctx.next_action_items.map(renderNextAction)).toEqual(ctx.next_actions);
+      expect(new Set(ctx.next_action_items.map((i) => i.code))).toContain("read_handoff");
     } finally {
       t.cleanup();
     }

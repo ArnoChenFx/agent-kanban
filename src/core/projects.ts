@@ -48,13 +48,14 @@ export function slugifyProjectKey(name: string): string {
 export function validateProjectKey(key: string): string {
   const trimmed = key.trim();
   if (trimmed.length === 0) {
-    throw KanbanError.usage("project key 不能为空", "例：--project agent-kanban");
+    throw KanbanError.usage("project key must not be empty", "Example: --project agent-kanban");
   }
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(trimmed)) {
     throw KanbanError.usage(
-      `project key "${key}" 格式非法`,
-      "只允许小写字母、数字、连字符，且必须以字母或数字开头，最长 64 字符。\n" +
-        "可用 `agent-kanban project add <key>` 创建，或用 `agent-kanban project list` 查看已有 key",
+      `invalid project key "${key}"`,
+      "Only lowercase letters, digits and hyphens are allowed, and it must start with a letter or a digit, at most 64 characters.\n" +
+        "Create it with `agent-kanban project add <key>`, or list the existing keys with `agent-kanban project list`",
+      { reason: "invalid_project_key" },
     );
   }
   return trimmed;
@@ -72,10 +73,11 @@ export function requireProject(db: Database, key: string): Project {
   const project = getProject(db, key);
   if (!project) {
     throw KanbanError.notInit(
-      `project "${key}" 不存在`,
+      `project "${key}" not found`,
       {
+        reason: "project_not_found",
         project: key,
-        hint: "用 `agent-kanban project list` 查看已有 project；新建请在 server 端执行 `agent-kanban project add <key>`",
+        hint: "List the existing projects with `agent-kanban project list`; to create one run `agent-kanban project add <key>` on the server",
       },
     );
   }
@@ -97,9 +99,10 @@ export function createProject(
 ): Project {
   const key = validateProjectKey(input.key);
   if (getProject(db, key)) {
-    throw KanbanError.state(`project "${key}" 已存在`, {
+    throw KanbanError.state(`project "${key}" already exists`, {
+      reason: "project_exists",
       project: key,
-      hint: `如需更换 API key：agent-kanban project key ${key} --rotate`,
+      hint: `To rotate its API key: agent-kanban project key ${key} --rotate`,
     });
   }
   const now = input.now ?? Date.now();
@@ -160,15 +163,19 @@ export function renameProject(db: Database, key: string, name: string): Project 
 export function deleteProject(db: Database, key: string, force = false): { key: string; taskCount: number } {
   const project = getProject(db, key);
   if (!project) {
-    throw KanbanError.state(`project 不存在：${key}`, { project: key });
+    throw KanbanError.state(`project not found: ${key}`, {
+      reason: "project_not_found",
+      project: key,
+    });
   }
   const taskCount =
     db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM tasks WHERE project_key = ?").get(key)?.c ?? 0;
   if (taskCount > 0 && !force) {
-    throw KanbanError.state(`project "${key}" 下还有 ${taskCount} 个任务，删除不可恢复`, {
+    throw KanbanError.state(`project "${key}" still has ${taskCount} task(s), deleting it is not recoverable`, {
+      reason: "project_not_empty",
       project: key,
       task_count: taskCount,
-      hint: "确认删除请加 --force",
+      hint: "Pass --force to confirm the deletion",
     });
   }
 
@@ -272,15 +279,16 @@ export function authError(projectKey: string | undefined): KanbanError {
     7,
     "AUTH",
     projectKey
-      ? `project "${projectKey}" 的 API key 缺失或不正确`
-      : "远程模式需要指定 project 与 API key",
+      ? `the API key for project "${projectKey}" is missing or incorrect`
+      : "remote mode requires both a project and an API key",
     {
+      reason: "auth_failed",
       project: projectKey,
       hint:
-        "设置方式（三选一，优先级从高到低）：\n" +
-        "  1. 命令行：--project <key> --key k_xxx\n" +
-        "  2. 环境变量：KANBAN_PROJECT / KANBAN_KEY\n" +
-        "  3. 持久化：agent-kanban remote set <server> --project <key> --key k_xxx",
+        "How to set it (pick one, highest priority first):\n" +
+        "  1. Command line: --project <key> --key k_xxx\n" +
+        "  2. Environment variables: KANBAN_PROJECT / KANBAN_KEY\n" +
+        "  3. Persisted: agent-kanban remote set <server> --project <key> --key k_xxx",
     },
   );
 }

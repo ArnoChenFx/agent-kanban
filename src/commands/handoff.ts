@@ -16,23 +16,23 @@ import { assertKnownOptions, getBool, getList, getString, parseArgs } from "./ar
 import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput } from "./output.ts";
 
-const USAGE = `用法：
-  agent-kanban handoff --task T-0007 --summary "完成了什么" [--next "接着做什么"]
-                   [--blockers "卡点1,卡点2"] [--open "待确认问题"]
-  agent-kanban handoff list --task T-0007        # 查看某任务的交接史
-  agent-kanban handoff pending                    # 查看所有待接手的交接
+const USAGE = `Usage:
+  agent-kanban handoff --task T-0007 --summary "what you did" [--next "what to do next"]
+                   [--blockers "blocker1,blocker2"] [--open "open question"]
+  agent-kanban handoff list --task T-0007        # show the handoff history of a task
+  agent-kanban handoff pending                    # show every handoff waiting to be picked up
 
-说明：
-  · --summary 必填：没有它交接就没有意义
-  · --next 强烈建议：下一个 agent 最需要知道的就是"接下来干什么"
-  · 不需要交接的卡（刚创建、已完成）不用写
+Notes:
+  · --summary is required: without it the handoff means nothing
+  · --next is strongly recommended: what to do next is what the next agent most needs to know
+  · cards that need no handoff (just created, already done) need none
 
-示例：
+Example:
   agent-kanban handoff --task T-0007 \\
-    --summary "完成 WAL 事务层，store.ts 20 个测试全绿" \\
-    --next "实现 handoff 崩溃自动合成，见实施计划 M2" \\
-    --blockers "无" \\
-    --open "WAL 文件要不要纳入 git 跟踪？倾向不纳入"`;
+    --summary "finished the WAL transaction layer, all 20 store.ts tests green" \\
+    --next "implement crash auto-composed handoffs, see implementation plan M2" \\
+    --blockers "none" \\
+    --open "should WAL files be tracked in git? leaning no"`;
 
 export async function cmdHandoff(argv: string[]): Promise<ExitCodeValue> {
   const sub = argv[0];
@@ -62,15 +62,15 @@ export async function cmdHandoff(argv: string[]): Promise<ExitCodeValue> {
     const taskId = getString(args, "task") ?? args.positionals[0];
     if (!taskId) {
       throw KanbanError.usage(
-        "缺少任务号",
-        '用法：agent-kanban handoff --task T-0007 --summary "完成了什么"',
+        "missing task id",
+        'Usage: agent-kanban handoff --task T-0007 --summary "what you did"',
       );
     }
     const summary = getString(args, "summary") ?? args.positionals[1];
     if (!summary) {
       throw KanbanError.usage(
-        "缺少 --summary",
-        '用法：agent-kanban handoff --task T-0007 --summary "完成了什么" --next "接着做什么"',
+        "missing --summary",
+        'Usage: agent-kanban handoff --task T-0007 --summary "what you did" --next "what to do next"',
       );
     }
 
@@ -93,11 +93,11 @@ export async function cmdHandoff(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
 
-    out.line(`${style.green("✓")} 交接已记录 ${style.cyan(`#${handoff.id}`)} → ${handoff.task_id}`);
-    if (handoff.next_step) out.line(`  下一步：${handoff.next_step}`);
+    out.line(`${style.green("✓")} Handoff recorded ${style.cyan(`#${handoff.id}`)} → ${handoff.task_id}`);
+    if (handoff.next_step) out.line(`  Next: ${handoff.next_step}`);
     out.line("");
-    out.line(style.gray("  下一个会话执行 `agent-kanban context` 就会看到这条交接"));
-    out.line(style.gray("  或用 `agent-kanban session end` 收尾"));
+    out.line(style.gray("  the next session sees this handoff when it runs `agent-kanban context`"));
+    out.line(style.gray("  or wrap up with `agent-kanban session end`"));
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -138,22 +138,22 @@ async function handoffQuery(sub: string, argv: string[]): Promise<ExitCodeValue>
     }
 
     if (items.length === 0) {
-      out.line(taskFilter ? `${taskFilter} 无待接手的交接` : "（没有待接手的交接）");
+      out.line(taskFilter ? `${taskFilter} has no handoff waiting` : "(no handoff waiting)");
       return ExitCode.OK;
     }
 
     out.line("");
-    out.line(`待接手的交接（${items.length}）`);
+    out.line(`Handoffs waiting (${items.length})`);
     for (const h of items) {
       out.line(
         `${style.cyan(`#${h.id}`)}  ${style.bold(h.task_id)}  ${h.task_title}  ` +
-          style.gray(`${h.kind === "crash" ? "崩溃自动合成" : "主动"} · ${h.from_session} · ${h.created_relative}`),
+          style.gray(`${h.kind === "crash" ? "auto-composed" : "manual"} · ${h.from_session} · ${h.created_relative}`),
       );
       out.line(`    ${h.summary}`);
-      if (h.next_step) out.line(`    ${style.gray("下一步：")}${h.next_step}`);
+      if (h.next_step) out.line(`    ${style.gray("Next:")} ${h.next_step}`);
     }
     out.line("");
-    out.line(style.gray("  用 `agent-kanban resume <任务号>` 接管并注入这些交接"));
+    out.line(style.gray("  use `agent-kanban resume <task-id>` to take over and inject these handoffs"));
     out.line("");
     return ExitCode.OK;
   } finally {

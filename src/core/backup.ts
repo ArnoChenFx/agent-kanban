@@ -187,7 +187,7 @@ export function importEvents(db: Database, files: string[], opts: ImportOptions)
   for (const file of files) {
     const plan: ImportPlan = { file, lines: 0, duplicates: 0, projects: [] };
     if (!existsSync(file)) {
-      plan.error = "文件不存在";
+      plan.error = "the file does not exist";
       plans.push(plan);
       continue;
     }
@@ -196,7 +196,7 @@ export function importEvents(db: Database, files: string[], opts: ImportOptions)
     try {
       events = readJournalFile(file);
     } catch (e) {
-      plan.error = `解析失败：${(e as Error).message}`;
+      plan.error = `failed to parse: ${(e as Error).message}`;
       plans.push(plan);
       continue;
     }
@@ -275,7 +275,7 @@ function readJournalFile(file: string): JournalLine[] {
     try {
       out.push(JSON.parse(line) as JournalLine);
     } catch (e) {
-      throw new Error(`第 ${i + 1} 行不是合法 JSON：${(e as Error).message}`);
+      throw new Error(`line ${i + 1} is not valid JSON: ${(e as Error).message}`);
     }
   }
   return out;
@@ -437,8 +437,9 @@ export function countJournalLines(dir: string): number {
 export function requireJournalDir(dir: string): void {
   const files = listJournalFiles(dir);
   if (files.length === 0) {
-    throw KanbanError.state(`${dir} 里没有 journal 文件（events-YYYYMMDD.jsonl）`, {
-      hint: "先运行 `agent-kanban export` 导出，再 import",
+    throw KanbanError.state(`no journal files (events-YYYYMMDD.jsonl) in ${dir}`, {
+      reason: "journal_not_found",
+      hint: "Run `agent-kanban export` first, then import",
       dir,
     });
   }

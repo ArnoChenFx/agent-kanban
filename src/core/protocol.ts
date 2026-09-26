@@ -10,7 +10,7 @@
  *
  * 1. **只管受管区块，区块外逐字不动。**
  *    AGENTS.md 是项目自己的文件，可能已经写了别的规范。命令只能替换
- *    `<!-- kanban:begin -->` 到 `<!-- kanban:end -->` 之间的内容，
+ *    `<!-- agent-kanban:begin -->` 到 `<!-- agent-kanban:end -->` 之间的内容，
  *    其余部分（含换行风格）必须原样保留。
  *
  * 2. **幂等。** 重复执行 N 次与执行 1 次结果相同。这是 agent 会反复跑的命令。
@@ -35,11 +35,11 @@ import { join } from "node:path";
 import { readPackageVersion } from "./version.ts";
 
 /** 受管区块的开始标记 */
-export const PROTOCOL_BEGIN = "<!-- kanban:begin -->";
+export const PROTOCOL_BEGIN = "<!-- agent-kanban:begin -->";
 /** 受管区块的结束标记 */
-export const PROTOCOL_END = "<!-- kanban:end -->";
+export const PROTOCOL_END = "<!-- agent-kanban:end -->";
 /** 区块内的版本标记行，由本模块生成与解析 */
-const VERSION_LINE_RE = /^<!--\s*kanban:version\s+(\S+)\s*-->$/m;
+const VERSION_LINE_RE = /^<!--\s*agent-kanban:version\s+(\S+)\s*-->$/m;
 
 /** 默认写入的文件名（相对项目根） */
 export const DEFAULT_PROTOCOL_FILE = "AGENTS.md";
@@ -147,7 +147,7 @@ No scrolling through chat logs, no asking a human.
 | \`6\` | Internal error | Treat as a bug and report it |
 | \`7\` | Auth failed | Check the token and the project key |
 
-<!-- kanban:version ${version} -->`;
+<!-- agent-kanban:version ${version} -->`;
 }
 
 /** 解析文件内容中的受管区块 */
@@ -262,13 +262,13 @@ export function applyProtocol(file: string): ProtocolApplyResult {
 export function describeProtocol(insp: ProtocolInspection): string {
   switch (insp.status) {
     case "missing":
-      return "文件不存在";
+      return "the file does not exist";
     case "no_block":
-      return "文件里没有 kanban 协议区块";
+      return "the file has no kanban protocol block";
     case "outdated":
-      return `版本 ${insp.installedVersion}，当前 CLI 是 ${insp.currentVersion}`;
+      return `version ${insp.installedVersion}, the current CLI is ${insp.currentVersion}`;
     case "up_to_date":
-      return "已是最新";
+      return "up to date";
   }
 }
 

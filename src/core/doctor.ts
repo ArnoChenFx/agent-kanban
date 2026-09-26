@@ -106,11 +106,11 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
       code: "stale_lease",
       message:
         fixedCount > 0
-          ? `${orphanTasks.length} 张卡的持有者已失联，已自动回收（进度保留）`
-          : `${orphanTasks.length} 张卡处于进行中但持有者已失联`,
+          ? `${orphanTasks.length} task(s) had holders who lost contact, reclaimed automatically (progress kept)`
+          : `${orphanTasks.length} task(s) are in progress but their holder lost contact`,
       subjects: orphanTasks.map((t) => t.id),
       fixed: fixedCount > 0,
-      hint: fix ? "" : "运行 `agent-kanban doctor --fix` 回收（进度会保留）或 `agent-kanban resume <任务号>` 接管",
+      hint: fix ? "" : "Run `agent-kanban doctor --fix` to reclaim them (progress is kept), or `agent-kanban resume <task-id>` to take over",
       severity: fixedCount > 0 ? "info" : "warning",
     });
   }
@@ -133,11 +133,11 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
       code: "stale_block",
       message:
         fixedCount > 0
-          ? `${fixedCount} 张卡的依赖已全部完成，已自动解除阻塞`
-          : `${unblockedCandidates.length} 张卡处于阻塞，但依赖已全部完成`,
+          ? `${fixedCount} task(s) had all dependencies completed, unblocked automatically`
+          : `${unblockedCandidates.length} task(s) are blocked even though all dependencies are completed`,
       subjects: unblockedCandidates.map((t) => t.id),
       fixed: fixedCount > 0,
-      hint: fix ? "" : "运行 `agent-kanban doctor --fix` 自动解除，或 `agent-kanban task unblock <任务号>`",
+      hint: fix ? "" : "Run `agent-kanban doctor --fix` to unblock them automatically, or `agent-kanban task unblock <task-id>`",
       severity: fixedCount > 0 ? "info" : "warning",
     });
   }
@@ -150,10 +150,10 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
   if (stalled.length > 0) {
     issues.push({
       code: "no_progress",
-      message: `${stalled.length} 张卡超过 4 小时没有更新进度`,
+      message: `${stalled.length} task(s) have not updated their progress for over 4 hours`,
       subjects: stalled.map((t) => t.id),
       fixed: false,
-      hint: "确认是否卡住；可 `agent-kanban task note <任务号> \"当前卡在…\"` 说明，或 `agent-kanban task block --reason` 标记阻塞",
+      hint: "Check whether they are stuck; explain with `agent-kanban task note <task-id> \"currently stuck on ...\"`, or mark them blocked with `agent-kanban task block --reason`",
       severity: "warning",
     });
   }
@@ -169,10 +169,10 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
   if (inconsistent.length > 0) {
     issues.push({
       code: "progress_mismatch",
-      message: `${inconsistent.length} 张卡的 progress 与 checklist 完成比例差距较大`,
+      message: `${inconsistent.length} task(s) have a progress value far from their checklist completion ratio`,
       subjects: inconsistent.slice(0, 10).map((t) => t.id),
       fixed: false,
-      hint: "用 `agent-kanban task progress <任务号> --pct <正确值>` 修正，或 `agent-kanban task show <任务号> --timeline` 核对",
+      hint: "Fix it with `agent-kanban task progress <task-id> --pct <correct value>`, or verify with `agent-kanban task show <task-id> --timeline`",
       severity: "info",
     });
   }
@@ -184,10 +184,10 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
   if (doneWithRemaining.length > 0) {
     issues.push({
       code: "done_with_remaining",
-      message: `${doneWithRemaining.length} 张卡已标记完成，但 checklist 还有未勾选项`,
+      message: `${doneWithRemaining.length} task(s) are marked done but still have unchecked checklist items`,
       subjects: doneWithRemaining.map((t) => t.id),
       fixed: false,
-      hint: "如果确实完成，用 `agent-kanban task progress --check \"<项名>\"` 补勾；如果是误标，`agent-kanban task reopen --reason` 重新打开",
+      hint: "If they really are done, tick the rest with `agent-kanban task progress --check \"<item>\"`; if they were marked done by mistake, `agent-kanban task reopen --reason`",
       severity: "info",
     });
   }
@@ -238,11 +238,11 @@ function checkProtocol(projectRoot: string | undefined): DoctorIssue | null {
     code: insp.status === "outdated" ? PROTOCOL_ISSUE_OUTDATED : PROTOCOL_ISSUE_MISSING,
     message:
       insp.status === "outdated"
-        ? `AGENTS.md 的协作协议落后于当前 CLI（协议 ${insp.installedVersion}，当前 ${insp.currentVersion}）`
-        : `AGENTS.md 里没有协作协议区块，agent 不知道开工要先跑 agent-kanban context`,
+        ? `the collaboration protocol in AGENTS.md is outdated (protocol ${insp.installedVersion}, current ${insp.currentVersion})`
+        : `AGENTS.md has no collaboration protocol block, so agents do not know to run agent-kanban context before starting`,
     subjects: [insp.file],
     fixed: false,
-    hint: "运行 `agent-kanban install-protocol` 更新（只改受管区块，文件其余内容不动）",
+    hint: "Run `agent-kanban install-protocol` to update it (only the managed block is touched, the rest of the file is left alone)",
     severity: "warning",
   };
 }
@@ -305,7 +305,7 @@ function checkProjectionConsistency(db: Database, scope: Scope): DoctorIssue | n
 
     const expected = expectedStatusAfter(last.type, task.status);
     if (expected !== null && expected !== task.status) {
-      mismatches.push(`${task.id}(事件→${expected}，实际${task.status})`);
+      mismatches.push(`${task.id}(event→${expected}, actual ${task.status})`);
     }
   }
 
@@ -313,10 +313,10 @@ function checkProjectionConsistency(db: Database, scope: Scope): DoctorIssue | n
 
   return {
     code: "projection_drift",
-    message: `${mismatches.length} 张卡的状态与事件流推导结果不一致（可能有绕过 core 的直接写库）`,
+    message: `${mismatches.length} task(s) have a status that disagrees with what the event stream implies (maybe someone wrote to the database directly, bypassing core)`,
     subjects: mismatches.slice(0, 10),
     fixed: false,
-    hint: "运行 `agent-kanban rebuild` 从事件流重建投影（会覆盖 tasks 表，请先备份）",
+    hint: "Run `agent-kanban rebuild` to rebuild the projection from the event stream (it overwrites the tasks table, so back up first)",
     severity: "error",
   };
 }
@@ -353,14 +353,14 @@ export function formatDoctorReport(report: DoctorReport): string[] {
   const s = report.stats;
   lines.push(
     `project ${report.project_key}  ` +
-      `任务 ${Object.values(s.tasks).reduce((a, b) => a + b, 0)} · ` +
-      `事件 ${s.events} · 会话 ${s.active_sessions}/${s.sessions} 活跃` +
-      (s.stale_sessions > 0 ? `（${s.stale_sessions} 失联）` : "") +
-      (s.pending_handoffs > 0 ? ` · 待接手交接 ${s.pending_handoffs}` : ""),
+      `tasks ${Object.values(s.tasks).reduce((a, b) => a + b, 0)} · ` +
+      `events ${s.events} · sessions ${s.active_sessions}/${s.sessions} active` +
+      (s.stale_sessions > 0 ? ` (${s.stale_sessions} lost contact)` : "") +
+      (s.pending_handoffs > 0 ? ` · pending handoffs ${s.pending_handoffs}` : ""),
   );
 
   if (report.issues.length === 0) {
-    lines.push("✓ 未发现问题");
+    lines.push("✓ no issues found");
     return lines;
   }
 

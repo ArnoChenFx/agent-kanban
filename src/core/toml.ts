@@ -35,13 +35,14 @@ export function parseToml(text: string, sourceName = "config.toml"): TomlObject 
   try {
     return Bun.TOML.parse(text) as TomlObject;
   } catch (err) {
-    throw KanbanError.state(`${sourceName} 解析失败：${(err as Error).message}`, {
+    throw KanbanError.state(`failed to parse ${sourceName}: ${(err as Error).message}`, {
+      reason: "toml_parse_failed",
       file: sourceName,
       hint:
-        "检查 TOML 语法。常见问题：\n" +
-        "  · 字符串值必须有引号（如 key = 'value'）\n" +
-        "  · 等号两侧需要空格不是必须，但不能写 key=value 以外的裸值\n" +
-        "  · 表头写成 [server] 而不是 [server]]",
+        "Check the TOML syntax. Common mistakes:\n" +
+        "  - string values must be quoted (e.g. key = 'value')\n" +
+        "  - spaces around = are optional, but a bare value other than key=value is not allowed\n" +
+        "  - a table header is written [server], not [server]]",
     });
   }
 }

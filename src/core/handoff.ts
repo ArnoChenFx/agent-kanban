@@ -45,8 +45,9 @@ export function writeHandoff(ctx: TxContext, input: WriteHandoffInput): Handoff 
   const summary = input.summary.trim();
   if (summary.length === 0) {
     throw KanbanError.usage(
-      "交接内容不能为空",
-      '用法：agent-kanban handoff --task T-0007 --summary "完成了 X，卡在 Y" --next "接着做 Z"',
+      "handoff summary must not be empty",
+      'Usage: agent-kanban handoff --task T-0007 --summary "finished X, blocked on Y" --next "then do Z"',
+      { reason: "empty_handoff_summary" },
     );
   }
 
@@ -129,7 +130,10 @@ export function getHandoff(db: Database, id: number): Handoff | null {
 function requireHandoff(db: Database, id: number): Handoff {
   const handoff = getHandoff(db, id);
   if (!handoff) {
-    throw KanbanError.state(`交接记录不存在：#${id}`);
+    throw KanbanError.state(`handoff not found: #${id}`, {
+      reason: "handoff_not_found",
+      handoff_id: id,
+    });
   }
   return handoff;
 }
@@ -233,10 +237,10 @@ export function synthesizeCrashHandoff(
   const remaining = task.checklist.filter((c) => !c.done).map((c) => c.text);
   const nextStep =
     remaining.length > 0
-      ? `从 ${task.progress}% 继续。未完成项：${remaining.join("、")}`
+      ? `Continue from ${task.progress}%. Remaining: ${remaining.join(", ")}`
       : task.progress < 100
-        ? `从 ${task.progress}% 继续（checklist 已全部勾选，可能需要手动确认是否真的完成）`
-        : `进度已达 ${task.progress}%，建议先确认是否真的完成，再决定 done 还是继续`;
+        ? `Continue from ${task.progress}% (the checklist is fully ticked; confirm it is really done)`
+        : `Progress is at ${task.progress}%; confirm it is really done before deciding between done and continuing`;
 
   // ---- open_questions：从最近 note 里抽问号句 ----
   const openQuestions = extractQuestions(events);
@@ -245,8 +249,10 @@ export function synthesizeCrashHandoff(
   // 任务本身不一定处于 blocked（回收后已回到 todo），但“原持有者失联”本身就是阻塞信息，
   // 不写进去会让接手方误以为这是正常排队到自己手上的卡。
   const silentMins = Math.round(input.silentMs / 60000);
-  const silentText = silentMins >= 60 ? `${Math.round(silentMins / 60)} 小时` : `${silentMins} 分钟`;
-  const blockers: string[] = [`原持有者 ${input.sessionId} 失联（${silentText}无心跳，进程可能已崩溃）`];
+  const silentText = formatSilent(silentMins);
+  const blockers: string[] = [
+    `the previous holder ${input.sessionId} went silent (${silentText} without a heartbeat, the process may have crashed)`,
+  ];
   if (task.blockReason) blockers.push(task.blockReason);
 
   const row = db
@@ -297,7 +303,7 @@ export function synthesizeCrashHandoff(
 /** 合成 summary：进度 + 最后几个动作 + 失联时长 */
 function buildCrashSummary(task: { progress: number; title: string }, events: KanbanEvent[], silentMs: number): string {
   const mins = Math.round(silentMs / 60000);
-  const silentText = mins >= 60 ? `${Math.round(mins / 60)} 小时` : `${mins} 分钟`;
+  const silentText = formatSilent(mins);
 
   // 取最后 3 个有信息量的动作
   // 排除两类噪声事件：
@@ -309,8 +315,14 @@ function buildCrashSummary(task: { progress: number; title: string }, events: Ka
     .map(describeAction)
     .filter((s) => s.length > 0);
 
-  const actionText = actions.length > 0 ? `最后动作：${actions.join("；")}` : "最后动作：未知（无事件记录）";
-  return `${task.title}：进度 ${task.progress}%，持有者失联（${silentText}无心跳）。${actionText}`;
+  const actionText =
+    actions.length > 0 ? `Last actions: ${actions.join("; ")}` : "Last actions: unknown (no events recorded)";
+  return `${task.title}: progress ${task.progress}%, the holder went silent (${silentText} without a heartbeat). ${actionText}`;
+}
+
+/** 失联时长的人话（小时 / 分钟） */
+function formatSilent(mins: number): string {
+  return mins >= 60 ? `${Math.round(mins / 60)} hour(s)` : `${mins} min`;
 }
 
 /** 单个事件的一句话描述（与 events.describeEvent 同源但更短） */
@@ -318,17 +330,17 @@ function describeAction(event: KanbanEvent): string {
   const d = event.data;
   switch (event.type) {
     case "task_claimed":
-      return "认领任务";
+      return "claimed the task";
     case "task_progress":
-      return `进度更新到 ${d.pct}%${d.note ? `（${d.note}）` : ""}`;
+      return `progress updated to ${d.pct}%${d.note ? ` (${d.note})` : ""}`;
     case "task_note":
-      return `备注：${truncateText(String(d.text ?? ""), 40)}`;
+      return `note: ${truncateText(String(d.text ?? ""), 40)}`;
     case "task_blocked":
-      return `标记阻塞：${d.reason ?? ""}`;
+      return `marked blocked: ${d.reason ?? ""}`;
     case "task_reclaimed":
-      return "被回收";
+      return "reclaimed";
     case "handoff_created":
-      return "写了交接";
+      return "wrote a handoff";
     default:
       return event.type;
   }

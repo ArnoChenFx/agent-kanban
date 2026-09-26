@@ -34,10 +34,12 @@
 
 ```bash
 agent-kanban config show
-#   模式    远程  (config)
+#   Effective config  — the parentheses after each value show its source
+#
+#   mode    remote  (config)
 #   server  https://kanban.example.com  (config)
 #   project my-app  (config)
-#   token   k_3da17f…72c6（34 字符）  (config)
+#   token   k_3da1…72c6  (config)
 ```
 
 优先级链（两种模式共用）：`命令行选项 > 环境变量 > config.toml > 派生默认`。
@@ -104,10 +106,13 @@ agent-kanban config set project.key my-app
 
 ```console
 $ agent-kanban session start --agent remote-agent --harness pi
-✓ 会话已注册
+✓ Session registered
   session_id : s-16bbht
+  agent      : remote-agent (pi)
+  project    : my-app
 $ agent-kanban task claim T-0001
-错误[USAGE]：缺少会话标识，无法确定是谁在操作
+
+Error[USAGE]: missing session id, cannot tell who is operating
 ```
 
 **远程模式下 `session start` 故意不写 `.kanban/session`**（源码注释：「远程模式不写本地状态」），所以每条命令都得自己带身份。三种解法：
@@ -141,7 +146,7 @@ SID=$(agent-kanban session start --agent my-agent --json | jq -r .id)
 
 `export` · `import` · `snapshot` · `compact` · `project list` · `serve`（客户端跑 serve 没意义，serve 自己就是那一端）
 
-⚠️ 错误信息 `未找到看板数据目录（… 没有 .kanban/kanban.db）` 在远程模式下是**误导**——它只说明"本地没库"，
+⚠️ 错误信息 `board data directory not found (no .kanban/kanban.db within 5 levels above …)` 在远程模式下是**误导**——它只说明"本地没库"，
 不代表你的看板有问题。看 `agent-kanban config show` 确认模式就能区分。
 
 ## 失联回收的时机不一样
@@ -163,7 +168,7 @@ agent-kanban context
 ## 别在远程目录里跑 agent-kanban init
 
 远程配置好的目录里跑 `agent-kanban init` **不会破坏配置**（它检测到 `mode = "remote"` 就不覆盖 `config.toml`，
-还会提示「现有配置是 mode = remote，命令实际会走远程」），但它**会建出一个没人用的本地 `kanban.db`**。
+还会提示当前配置是 remote、命令实际会走远程），但它**会建出一个没人用的本地 `kanban.db`**。
 
 这个"诱饵库"会让后面 `export` 之类的命令不再报 NOT_INIT，而是**静默导出这个空本地库**——比报错更糟。
 

@@ -81,8 +81,26 @@ try {
   // ---- 造一张“描述/检查项/依赖 + 时间线/交接/计划”全都有的卡 ----
   // 注意：plan save 默认就挂到任务上（要“不挂”才加 --no-attach）
   // 上游任务放在最后建：这样 CARD_TITLE 仍然是 T-0001，脚本后面的断言不用改
+  //
+  // ⚠ **不能靠 `session start` 写默认会话文件**：它只在**本地模式**写
+  //   （`src/commands/session.ts`：`ctx.backend.mode === "local"`），
+  //   而本脚本全程带 KANBAN_SERVER，走的是远程模式。脚本以前依赖那个文件，
+  //   结果 task claim / plan save / handoff 全报 “missing session id”，
+  //   后面十几个断言（检查项计数、交接角标、计划页签…）连锁失败——
+  //   这个门禁在我改文案之前就已经是红的，不是文案改动引起的。
+  //   所以这里显式取回 session_id，用 KANBAN_SESSION 传给后面的命令。
+  const startRes = await run(["session", "start", "--agent", "pi-fix", "--harness", "pi", "--json"], env);
+  let sessionId = "";
+  try {
+    const parsed = JSON.parse(startRes.out.trim()) as { id?: string; session_id?: string };
+    sessionId = parsed.id ?? parsed.session_id ?? "";
+  } catch {
+    // 解析失败就留空，下面 check 会把原始输出报出来
+  }
+  check("造数据：session start", startRes.code === 0 && sessionId !== "", sessionId || startRes.err.trim().split("\n").slice(-2).join(" "));
+  const envWithSession = { ...env, KANBAN_SESSION: sessionId };
+
   const seeds: string[][] = [
-    ["session", "start", "--agent", "pi-fix", "--harness", "pi"],
     ["task", "add", CARD_TITLE, "-p", "0", "--check", "第一步,第二步", "-d", "详情页要能打开"],
     ["task", "claim", "T-0001"],
     ["task", "progress", "T-0001", "--pct", "50", "--check", "第一步", "--note", "做了一半"],
@@ -92,7 +110,7 @@ try {
     ["task", "dep", "add", "T-0001", "T-0002"],
   ];
   for (const args of seeds) {
-    const r = await run(args, env);
+    const r = await run(args, envWithSession);
     check(`造数据：${args.slice(0, 2).join(" ")}`, r.code === 0, r.code === 0 ? "" : (r.out + r.err).split("\n").slice(-3).join(" "));
   }
 
@@ -148,6 +166,19 @@ try {
     }
     return r?.result?.value as T;
   };
+
+  /**
+   * 读侧栏「建议接下来」那一节的纯文本。
+   *
+   * 按标题文字定位而不是写死选择器：词典一改（文案或键）这个读取就该跟着走，
+   * 不会安静地读到空串然后让断言假绿。返回空串时调用方的正则会失败。
+   */
+  const readSuggestedNext = (heading: string): Promise<string> =>
+    evaluate<string>(`(() => {
+      const h = [...document.querySelectorAll('aside h2')].find((e) => e.textContent.trim() === ${JSON.stringify(heading)});
+      const ul = h?.parentElement?.querySelector('ul');
+      return ul ? ul.innerText.trim() : '';
+    })()`);
 
   ws = new WebSocket(wsUrl);
   await new Promise<void>((res, rej) => {
@@ -354,6 +385,10 @@ try {
     zhLanes.join(" / "),
   );
   check("html lang 跟随 locale", (await evaluate<string>(`document.documentElement.lang`)) === "zh-CN");
+  // 建议区的 chrome（“认领新任务：…”这类）必须是中文。
+  // 交接摘要、任务标题是**数据**，里面出现中文是正常的，不在这里断言。
+  const zhNext = await readSuggestedNext("建议接下来");
+  check("中文界面下建议区是中文", /认领新任务|张卡阻塞|条崩溃自动交接|没有待办任务|继续你正在做的|接管失联会话/.test(zhNext), zhNext.replace(/\n+/g, " / "));
 
   console.log("\n=== 界面语言：看板切换到英文 ===");
   const toggled = await evaluate<boolean>(`(() => {
@@ -382,6 +417,22 @@ try {
   // 词典漏键会在控制台打 warn（开发构建）；运行时不至于，但至少不能有运行时异常
   check("切语言后无未捕获异常", exceptions.length === 0, exceptions[0]?.split("\n")[0] ?? "");
   check("切语言后无控制台 error", consoleErrors.length === 0, [...new Set(consoleErrors)][0]?.slice(0, 120) ?? "");
+
+  // 曾经的 bug：建议区直接渲染后端 `next_actions`（给 agent 看的中文串），
+  // 英文界面下那个面板漏出“有 1 张卡阻塞中…”/“认领新任务…”。永久回归。
+  console.log("\n=== 界面语言：建议区不漏后端中文串 ===");
+  const enNext = await readSuggestedNext("Suggested next");
+  // 只查 chrome：交接摘要/任务标题是用户数据，里面有中文是应该的
+  check(
+    "英文界面下建议区没有后端中文模板",
+    !/认领新任务|张卡阻塞|条崩溃自动交接|没有待办任务|继续你正在做的|接管失联会话|读交接/.test(enNext),
+    enNext.replace(/\n+/g, " / "),
+  );
+  check(
+    "英文界面下建议区显示英文文案",
+    /Claim new work|blocked|handoff|Nothing to do/i.test(enNext),
+    enNext.replace(/\n+/g, " / "),
+  );
 
   // 详情抽屉的概览区（描述 / 检查项 / 关联任务）也必须跟着切语言。
   // 这三条是新加的键，最容易在补 en 词典时漏掉，而漏掉的表现是"英文界面里露出中文标题"。

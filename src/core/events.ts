@@ -170,51 +170,55 @@ export function describeEvent(event: KanbanEvent): string {
   const d = event.data;
   switch (event.type) {
     case "task_created":
-      return `创建任务（p${d.priority ?? 2}）`;
+      return `created task (p${d.priority ?? 2})`;
     case "task_ready":
-      return "移入待办";
+      return "moved to todo";
     case "task_claimed":
-      return d.prev_assignee ? `抢占（接手自 ${d.prev_assignee}）` : "抢占认领";
+      return d.prev_assignee ? `claimed (taken over from ${d.prev_assignee})` : "claimed";
     case "task_released":
-      return `释放${d.reason ? `：${d.reason}` : ""}`;
+      return `released${d.reason ? `: ${d.reason}` : ""}`;
     case "task_reclaimed":
-      return d.holder_crashed ? "持有者失联，已自动回收" : "强制回收";
+      return d.holder_crashed ? "holder lost contact, reclaimed automatically" : "force reclaimed";
     case "task_progress":
-      return `进度 ${d.prev_pct ?? "?"}% → ${d.pct}%${d.note ? ` ${d.note}` : ""}`;
+      return `progress ${d.prev_pct ?? "?"}% → ${d.pct}%${d.note ? ` ${d.note}` : ""}`;
     case "task_note":
-      return `备注：${d.text ?? ""}`;
+      return `note: ${d.text ?? ""}`;
     case "task_blocked":
-      return `阻塞：${d.reason ?? ""}`;
+      return `blocked: ${d.reason ?? ""}`;
     case "task_unblocked":
-      return `自动解除阻塞（因 ${d.unblocked_by ?? "依赖完成"}）`;
+      return `auto-unblocked (because ${d.unblocked_by ?? "dependencies completed"})`;
     case "task_review":
-      return `提交评审${d.note ? `：${d.note}` : ""}`;
+      return `submitted for review${d.note ? `: ${d.note}` : ""}`;
     case "task_done":
-      return `完成${d.note ? `：${d.note}` : ""}`;
+      return `done${d.note ? `: ${d.note}` : ""}`;
     case "task_cancelled":
-      return `取消：${d.reason ?? ""}`;
+      return `cancelled: ${d.reason ?? ""}`;
     case "task_reopened":
-      return `重新打开：${d.reason ?? ""}`;
+      return `reopened: ${d.reason ?? ""}`;
     case "task_updated":
-      return `更新元信息：${Object.keys(d.fields ?? {}).join(", ")}`;
+      return `updated fields: ${Object.keys(d.fields ?? {}).join(", ")}`;
     case "dep_added":
-      return `新增依赖 ${d.depends_on_id}`;
+      return `added dependency ${d.depends_on_id}`;
     case "dep_removed":
-      return `移除依赖 ${d.depends_on_id}`;
+      return `removed dependency ${d.depends_on_id}`;
     case "plan_created":
-      return `保存计划 v${d.version}（${d.scope}）`;
+      return `saved plan v${d.version} (${d.scope})`;
     case "plan_superseded":
-      return `计划 ${d.old_plan_id} 被新版本取代`;
+      return `plan ${d.old_plan_id} superseded by a new version`;
     case "handoff_created":
-      return `交接（${d.kind}）`;
+      // ⚠ kind 藏在 data.handoff 里，不是 data.kind：handoff_created 携带**完整交接行**
+      //   （rebuild 靠它重建 handoffs 表），字段都在 handoff 对象下。
+      //   读顶层 d.kind 会渲染成 "handoff (undefined)" —— 正好撞上仓库那条
+      //   「输出里不许出现 undefined」的规矩。
+      return `handoff (${(d.handoff as { kind?: string } | undefined)?.kind ?? "voluntary"})`;
     case "handoff_consumed":
-      return `交接被 ${d.by_session} 接手`;
+      return `handoff taken over by ${d.by_session}`;
     case "session_started":
-      return `会话启动（${d.agent_name ?? ""}）`;
+      return `session started (${d.agent_name ?? ""})`;
     case "session_closed":
-      return `会话关闭${d.summary ? `：${d.summary}` : ""}`;
+      return `session closed${d.summary ? `: ${d.summary}` : ""}`;
     case "session_crashed":
-      return `会话失联（超 ${Math.round(Number(d.grace_ms ?? 0) / 1000)}s 无心跳）`;
+      return `session lost contact (no heartbeat for ${Math.round(Number(d.grace_ms ?? 0) / 1000)}s)`;
     default:
       return event.type;
   }

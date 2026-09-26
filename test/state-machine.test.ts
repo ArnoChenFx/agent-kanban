@@ -131,7 +131,7 @@ describe("任务状态机：合法转移", () => {
     t.tx((tx) => claimTask(tx, id, actorAt(t.now, sessionA)));
     expect(() => {
       t.tx((tx) => transition(tx, id, "done", actorAt(t.now, sessionA)));
-    }).toThrow(/需要 --force/);
+    }).toThrow(/requires --force/);
   });
 
   test("终态可 reopen 回 todo", () => {
@@ -288,14 +288,14 @@ describe("依赖与自动解除阻塞", () => {
     // B 再依赖 A → 成环
     expect(() => {
       t.tx((tx) => addDependency(tx, b, a));
-    }).toThrow(/环/);
+    }).toThrow(/would create a cycle/);
   });
 
   test("自依赖被拒绝", () => {
     const a = makeTask("A");
     expect(() => {
       t.tx((tx) => addDependency(tx, a, a));
-    }).toThrow(/不能依赖自己/);
+    }).toThrow(/cannot depend on itself/);
   });
 
   test("依赖不存在的任务报错", () => {

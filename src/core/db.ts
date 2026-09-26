@@ -76,8 +76,9 @@ export function openDb(
     }
   } else {
     if (!createIfMissing) {
-      throw KanbanError.notInit(`数据库文件不存在：${dbPath}`, {
-        hint: "先运行 `agent-kanban init`",
+      throw KanbanError.notInit(`database file not found: ${dbPath}`, {
+        reason: "db_file_not_found",
+        hint: "Run `agent-kanban init` first",
       });
     }
     mkdirSync(dir, { recursive: true });
@@ -112,15 +113,17 @@ export function applySchema(db: Db): void {
   try {
     sql = readFileSync(SCHEMA_FILE, "utf8");
   } catch (err) {
-    throw KanbanError.notInit(`schema 读取失败：${(err as Error).message}`, {
-      hint: "如果这是编译后的二进制，说明该产物构建不完整（缺少 embedded schema.sql）",
+    throw KanbanError.notInit(`failed to read the schema: ${(err as Error).message}`, {
+      reason: "schema_read_failed",
+      hint: "If this is a compiled binary, the build is incomplete (the embedded schema.sql is missing)",
     });
   }
   try {
     db.raw.exec(sql);
   } catch (err) {
-    throw KanbanError.notInit(`schema 应用失败：${(err as Error).message}`, {
-      hint: "数据库可能已损坏，可备份后用 `agent-kanban import <journal>` 从事件重建",
+    throw KanbanError.notInit(`failed to apply the schema: ${(err as Error).message}`, {
+      reason: "schema_apply_failed",
+      hint: "The database may be corrupted; back it up and rebuild it from the event stream with `agent-kanban import <journal>`",
     });
   }
 }
@@ -157,8 +160,8 @@ export function migrate(db: Db): { from: number; to: number } {
   if (from > SCHEMA_VERSION) {
     // 库来自更新的 CLI 版本：拒绝降级写入，避免破坏数据
     throw KanbanError.notInit(
-      `数据库 schema 版本为 ${from}，高于当前 CLI 支持的 ${SCHEMA_VERSION}，请升级 kanban`,
-      { db_version: from, cli_version: SCHEMA_VERSION },
+      `the database schema version is ${from}, which is higher than the ${SCHEMA_VERSION} supported by this CLI, please upgrade kanban`,
+      { reason: "schema_version_too_new", db_version: from, cli_version: SCHEMA_VERSION },
     );
   }
 
@@ -166,7 +169,8 @@ export function migrate(db: Db): { from: number; to: number } {
   for (let v = from; v < SCHEMA_VERSION; v++) {
     const step = MIGRATIONS[v];
     if (!step) {
-      throw KanbanError.notInit(`缺少从 schema v${v} 到 v${v + 1} 的迁移脚本`, {
+      throw KanbanError.notInit(`missing migration script from schema v${v} to v${v + 1}`, {
+        reason: "migration_script_missing",
         from: v,
         to: v + 1,
       });
@@ -397,14 +401,14 @@ const MIGRATIONS: Record<number, { up: (db: Db) => void }> = {
             Date.now(),
             JSON.stringify({
               action: "tokens_migration",
-              note: "v2→v3 迁移：旧 project key 只存了哈希，明文不可恢复，需要管理员重新签发",
+              note: "v2→v3 migration: old project keys only stored a hash, the plaintext is unrecoverable, an admin has to issue new ones",
               projects: legacyProjects.map((p) => p.key),
             }),
           );
         console.warn(
-          `[kanban] 检测到 ${legacyProjects.length} 个使用旧版 project key 的 project：${keys}\n` +
-            `        旧 key 已失效（v2 只存哈希，明文不可恢复）。\n` +
-            `        请用管理员 token 运行：\n` +
+          `[kanban] found ${legacyProjects.length} project(s) still using an old-style project key: ${keys}\n` +
+            `        The old keys no longer work (v2 only stored the hash, the plaintext is unrecoverable).\n` +
+            `        Run this with an admin token:\n` +
             `          agent-kanban admin token create --project ${legacyProjects[0]!.key}`,
         );
       }
@@ -540,7 +544,7 @@ export function getMeta(db: Database, key: string): string | undefined {
 export function getConfig(db: Database): KanbanConfig {
   return {
     schemaVersion: Number(getMeta(db, "schema_version") ?? "0"),
-    projectName: getMeta(db, "project_name") ?? "未命名项目",
+    projectName: getMeta(db, "project_name") ?? "Unnamed project",
     createdAt: Number(getMeta(db, "created_at") ?? "0"),
     defaultTtlMs: Number(getMeta(db, "default_ttl_ms") ?? String(DEFAULT_TTL_MS)),
     graceMs: Number(getMeta(db, "grace_ms") ?? String(DEFAULT_GRACE_MS)),

@@ -62,15 +62,15 @@ export function statusColor(status: string): keyof typeof C | null {
   }
 }
 
-/** 状态 → 中文标签（终端展示用） */
+/** 状态 → 英文标签（终端展示用） */
 const STATUS_LABELS: Record<string, string> = {
-  backlog: "待规划",
-  todo: "待办",
-  doing: "进行中",
-  blocked: "阻塞",
-  review: "待评审",
-  done: "已完成",
-  cancelled: "已取消",
+  backlog: "Backlog",
+  todo: "Todo",
+  doing: "Doing",
+  blocked: "Blocked",
+  review: "Review",
+  done: "Done",
+  cancelled: "Cancelled",
 };
 
 export function statusLabel(status: string): string {
@@ -166,20 +166,23 @@ export function progressBar(pct: number, width = 10): string {
 }
 
 /**
- * 相对时间：`<60s` → "刚刚"，`<60m` → "12m 前"，`<24h` → "5h 前"，否则 "2d 前"。
- * 未来时间返回 "0s 前"（时钟回拨兜底，不显示负数，避免 agent 解析出错）。
+ * 相对时间：`<60s` → "just now"，`<60m` → "12m ago"，`<24h` → "5h ago"，否则 "2d ago"。
+ * 未来时间返回 "0s ago"（时钟回拨兜底，不显示负数，避免 agent 解析出错）。
+ *
+ * ⚠ 这是**展示值**不是标识符，所以随 CLI 文案一起英文化；
+ *   但 displayWidth 的全角计算必须保留——任务标题可以是中文，回显时仍要算 2 列宽。
  */
 export function relativeTime(ts: number, now: number = Date.now()): string {
   const diff = Math.max(0, now - ts);
   const sec = Math.floor(diff / 1000);
-  if (sec < 60) return "刚刚";
+  if (sec < 60) return "just now";
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m 前`;
+  if (min < 60) return `${min}m ago`;
   const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour}h 前`;
+  if (hour < 24) return `${hour}h ago`;
   const day = Math.floor(hour / 24);
-  if (day < 30) return `${day}d 前`;
-  return `${Math.floor(day / 30)}mo 前`;
+  if (day < 30) return `${day}d ago`;
+  return `${Math.floor(day / 30)}mo ago`;
 }
 
 /** 时长格式化：毫秒 → "2h14m" / "45s" / "3d" */

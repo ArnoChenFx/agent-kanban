@@ -472,9 +472,9 @@ function compareTasks(
       drift.push({
         table: "tasks",
         id: row.id,
-        field: "(整行)",
+        field: "(whole row)",
         actual: `status=${row.status}`,
-        expected: "(事件流里没有这张卡的创建记录)",
+        expected: "(the event stream has no creation record for this task)",
       });
       continue;
     }
@@ -493,7 +493,7 @@ function compareTasks(
       drift.push({
         table: "tasks",
         id,
-        field: "(整行)",
+        field: "(whole row)",
         actual: null,
         expected: `status=${proj.tasks.get(id)!.status}`,
       });
@@ -522,12 +522,12 @@ function compareDeps(db: Database, projectKey: string, proj: Projection, drift: 
 
   for (const key of actual) {
     if (!proj.deps.has(key)) {
-      drift.push({ table: "task_deps", id: key, field: "edge", actual: "存在", expected: null });
+      drift.push({ table: "task_deps", id: key, field: "edge", actual: "present", expected: null });
     }
   }
   for (const key of proj.deps.keys()) {
     if (!actual.has(key)) {
-      drift.push({ table: "task_deps", id: key, field: "edge", actual: null, expected: "存在" });
+      drift.push({ table: "task_deps", id: key, field: "edge", actual: null, expected: "present" });
     }
   }
 }
@@ -553,8 +553,8 @@ function comparePlans(
     if (!rebuilt) {
       incomplete.push({
         id,
-        field: "(整行)",
-        reason: "库里存在但事件流里没有 plan_created —— 多为升级到计划版本化之前的历史数据",
+        field: "(whole row)",
+        reason: "it exists in the database but there is no plan_created in the event stream - usually history from before plans were versioned",
       });
       continue;
     }
@@ -566,7 +566,7 @@ function comparePlans(
   }
   for (const id of proj.plans.keys()) {
     if (!seen.has(id)) {
-      drift.push({ table: "plans", id, field: "(整行)", actual: null, expected: "存在" });
+      drift.push({ table: "plans", id, field: "(whole row)", actual: null, expected: "present" });
     }
   }
 }
@@ -591,8 +591,8 @@ function compareHandoffs(
     if (!rebuilt) {
       incomplete.push({
         id: String(id),
-        field: "(整行)",
-        reason: "交接事件是旧格式（未携带完整内容），无法从事件流重建该行",
+        field: "(whole row)",
+        reason: "the handoff event is in the old format (it carries no full content), so the row cannot be rebuilt from the event stream",
       });
       continue;
     }
@@ -605,7 +605,7 @@ function compareHandoffs(
   for (const id of proj.handoffs.keys()) {
     const exists = actual.some((r) => num(r.id) === id);
     if (!exists) {
-      drift.push({ table: "handoffs", id: String(id), field: "(整行)", actual: null, expected: "存在" });
+      drift.push({ table: "handoffs", id: String(id), field: "(whole row)", actual: null, expected: "present" });
     }
   }
 }

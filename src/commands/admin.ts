@@ -37,28 +37,28 @@ import { closeCtx, openCtx, type Ctx } from "./context.ts";
 import { createOutput } from "./output.ts";
 import { RemoteBackend } from "../core/backend-remote.ts";
 
-const USAGE = `用法：agent-kanban admin <子命令>
+const USAGE = `Usage: agent-kanban admin <subcommand>
 
-  project list                     列出所有 project
-  project add <key> [--name N]     新建 project
-  project delete <key> [--force]   删除 project（会连带删任务，不可恢复）
-  project rename <key> --name N    重命名
+  project list                     List all projects
+  project add <key> [--name N]     Create a project
+  project delete <key> [--force]   Delete a project (its tasks go too, irreversible)
+  project rename <key> --name N    Rename
 
-  token list [--all]               列出 token（默认只列未吊销）
+  token list [--all]               List tokens (only unrevoked ones by default)
   token create --project A [--project B] [--role project|admin]
                 [--name N] [--note N] [--expires-in 30d]
-  token grant <token> --project A  给已有 token 增加 project 授权
-  token revoke <token>             吊销 token（不可恢复）
-  token rename <token> --name N    修改 token 名称/备注
+  token grant <token> --project A  Add project grants to an existing token
+  token revoke <token>             Revoke a token (irreversible)
+  token rename <token> --name N    Change the token name / note
 
-说明：
-  · 管理操作需要**管理员 token**；未配置时用 server 的 .kanban/config.toml 里的 admin_token
-  · token 明文只在 create 时显示一次
-  · 在 server 所在机器上可加 --db <server库路径> 直连操作（不走 HTTP）
+Notes:
+  · Admin operations need an **admin token**; without one, use admin_token from the server's .kanban/config.toml
+  · The plaintext token is shown only once, at create time
+  · On the machine hosting the server you can add --db <server db path> to operate directly (no HTTP)
 
-示例：
-  agent-kanban admin project add demo-app --name "演示项目"
-  agent-kanban admin token create --project demo-app --name "CI 专用"
+Example:
+  agent-kanban admin project add demo-app --name "demo project"
+  agent-kanban admin token create --project demo-app --name "CI only"
   agent-kanban admin token grant k_xxx --project web-app
   agent-kanban admin token revoke k_xxx`;
 
@@ -76,7 +76,7 @@ export async function cmdAdmin(argv: string[]): Promise<ExitCodeValue> {
       process.stdout.write(USAGE + "\n");
       return ExitCode.OK;
     default:
-      throw KanbanError.usage(`未知子命令：admin ${group}`, USAGE);
+      throw KanbanError.usage(`unknown command: admin ${group}`, USAGE);
   }
 }
 
@@ -154,7 +154,7 @@ async function adminProject(argv: string[]): Promise<ExitCodeValue> {
       return projectRename(rest);
     default:
       throw KanbanError.usage(
-        `未知子命令：admin project ${sub ?? ""}`,
+        `unknown command: admin project ${sub ?? ""}`,
         USAGE,
       );
   }
@@ -179,10 +179,10 @@ async function projectList(argv: string[]): Promise<ExitCodeValue> {
         return ExitCode.OK;
       }
       if (rows.length === 0) {
-        out.line("（还没有 project）用 `agent-kanban admin project add <key>` 创建");
+        out.line('(no projects yet. Create one with `agent-kanban admin project add <key>`)');
         return ExitCode.OK;
       }
-      out.line(`project（${rows.length}）`.padEnd(8) + "名称".padEnd(22) + "任务".padEnd(8) + "token".padEnd(8) + "创建于");
+      out.line(`project (${rows.length})`.padEnd(13) + "Name".padEnd(22) + "Tasks".padEnd(8) + "token".padEnd(8) + "Created");
       for (const r of rows) {
         out.line(
           padEndWidth(String(r.key), 8) +
@@ -205,7 +205,7 @@ async function projectList(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`project（${data.length}）`.padEnd(8) + "名称".padEnd(22) + "任务".padEnd(8) + "token");
+  out.line(`project (${data.length})`.padEnd(13) + "Name".padEnd(22) + "Tasks".padEnd(8) + "token");
   for (const r of data) {
     out.line(
       padEndWidth(String(r.key), 8) +
@@ -226,7 +226,7 @@ async function projectAdd(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "name", "root", "db", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const key = requirePositional(args, 0, "project key", "用法：agent-kanban admin project add <key> [--name <名称>]");
+  const key = requirePositional(args, 0, "project key", "Usage: agent-kanban admin project add <key> [--name <name>]");
 
   const handle = openAdminDb(getString(args, "db"));
   if (handle) {
@@ -242,10 +242,10 @@ async function projectAdd(argv: string[]): Promise<ExitCodeValue> {
         out.data(project);
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} project 已创建：${style.cyan(project.key)}  ${project.name}`);
+      out.line(`${style.green("✓")} project created: ${style.cyan(project.key)}  ${project.name}`);
       out.line("");
-      out.line(style.gray("下一步：签发访问 token"));
-      out.line(`  agent-kanban admin token create --project ${project.key} --name "团队 token"`);
+      out.line(style.gray("Next: issue an access token"));
+      out.line(`  agent-kanban admin token create --project ${project.key} --name "team token"`);
       return ExitCode.OK;
     } finally {
       handle.raw.close();
@@ -261,10 +261,10 @@ async function projectAdd(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`${style.green("✓")} project 已创建：${style.cyan(String(data.key))}  ${data.name}`);
+  out.line(`${style.green("✓")} project created: ${style.cyan(String(data.key))}  ${data.name}`);
   out.line("");
-  out.line(style.gray("下一步：签发访问 token"));
-  out.line(`  agent-kanban admin token create --project ${key} --name "团队 token"`);
+  out.line(style.gray("Next: issue an access token"));
+  out.line(`  agent-kanban admin token create --project ${key} --name "team token"`);
   return ExitCode.OK;
 }
 
@@ -277,21 +277,21 @@ async function projectDelete(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "force", "db", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const key = requirePositional(args, 0, "project key", "用法：agent-kanban admin project delete <key> --force");
+  const key = requirePositional(args, 0, "project key", "Usage: agent-kanban admin project delete <key> --force");
 
   const handle = openAdminDb(getString(args, "db"));
   if (handle) {
     try {
       const existing = getProject(handle.raw, key);
-      if (!existing) throw KanbanError.state(`project 不存在：${key}`);
+      if (!existing) throw KanbanError.state(`project not found: ${key}`);
       const taskCount =
         handle.raw
           .query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM tasks WHERE project_key = ?")
           .get(key)?.c ?? 0;
       if (taskCount > 0 && !getBool(args, "force")) {
         throw KanbanError.state(
-          `project "${key}" 下还有 ${taskCount} 个任务，删除不可恢复`,
-          { task_count: taskCount, hint: "确认删除请加 --force" },
+          `project "${key}" still has ${taskCount} task(s), deletion is irreversible`,
+          { task_count: taskCount, hint: "add --force to confirm the deletion" },
         );
       }
       deleteProject(handle.raw, key, getBool(args, "force"));
@@ -299,7 +299,7 @@ async function projectDelete(argv: string[]): Promise<ExitCodeValue> {
         out.data({ ok: true, deleted: key, task_count: taskCount });
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} 已删除 project ${style.cyan(key)}（含 ${taskCount} 个任务）`);
+      out.line(`${style.green("✓")} Deleted project ${style.cyan(key)} (including ${taskCount} tasks)`);
       return ExitCode.OK;
     } finally {
       handle.raw.close();
@@ -315,7 +315,7 @@ async function projectDelete(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`${style.green("✓")} 已删除 project ${style.cyan(data.deleted)}`);
+  out.line(`${style.green("✓")} Deleted project ${style.cyan(data.deleted)}`);
   return ExitCode.OK;
 }
 
@@ -328,9 +328,9 @@ async function projectRename(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "name", "db", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const key = requirePositional(args, 0, "project key", "用法：agent-kanban admin project rename <key> --name <新名>");
+  const key = requirePositional(args, 0, "project key", "Usage: agent-kanban admin project rename <key> --name <new name>");
   const name = getString(args, "name");
-  if (!name) throw KanbanError.usage("缺少 --name", "用法：agent-kanban admin project rename <key> --name <新名>");
+  if (!name) throw KanbanError.usage("missing --name", "Usage: agent-kanban admin project rename <key> --name <new name>");
 
   const handle = openAdminDb(getString(args, "db"));
   if (handle) {
@@ -340,7 +340,7 @@ async function projectRename(argv: string[]): Promise<ExitCodeValue> {
         out.data(project);
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} ${style.cyan(project.key)} 重命名为 ${project.name}`);
+      out.line(`${style.green("✓")} ${style.cyan(project.key)} renamed to ${project.name}`);
       return ExitCode.OK;
     } finally {
       handle.raw.close();
@@ -358,7 +358,7 @@ async function projectRename(argv: string[]): Promise<ExitCodeValue> {
       out.data(data);
       return ExitCode.OK;
     }
-    out.line(`${style.green("✓")} ${style.cyan(key)} 重命名为 ${name}`);
+    out.line(`${style.green("✓")} ${style.cyan(key)} renamed to ${name}`);
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -387,7 +387,7 @@ async function adminToken(argv: string[]): Promise<ExitCodeValue> {
     case "rename":
       return tokenRename(rest);
     default:
-      throw KanbanError.usage(`未知子命令：admin token ${sub ?? ""}`, USAGE);
+      throw KanbanError.usage(`unknown command: admin token ${sub ?? ""}`, USAGE);
   }
 }
 
@@ -415,22 +415,22 @@ async function tokenList(argv: string[]): Promise<ExitCodeValue> {
         return ExitCode.OK;
       }
       if (tokens.length === 0) {
-        out.line("（还没有 token）用 `agent-kanban admin token create --project <key>` 签发");
+        out.line('(no tokens yet. Issue one with `agent-kanban admin token create --project <key>`)');
         return ExitCode.OK;
       }
       out.line(
-        `token（${tokens.length}）`.padEnd(20) + "名称".padEnd(18) + "角色".padEnd(10) +
-          "授权 project".padEnd(24) + "状态".padEnd(10) + "最后使用",
+        `token (${tokens.length})`.padEnd(20) + "Name".padEnd(18) + "Role".padEnd(10) +
+          "Projects".padEnd(24) + "Status".padEnd(10) + "Last used",
       );
       for (const t of tokens) {
         const json2 = tokenToJson(t, now);
         out.line(
           padEndWidth(String(json2.id), 20) +
             padEndWidth(String(json2.name ?? "-"), 18) +
-            padEndWidth(t.role === "admin" ? "管理员" : "项目级", 10) +
-            padEndWidth(t.role === "admin" ? "全部" : t.projects.join(","), 24) +
+            padEndWidth(t.role === "admin" ? "admin" : "project", 10) +
+            padEndWidth(t.role === "admin" ? "all" : t.projects.join(","), 24) +
             padEndWidth(String(json2.status), 10) +
-            style.gray(t.lastUsedAt ? relativeTime(t.lastUsedAt, now) : "从未"),
+            style.gray(t.lastUsedAt ? relativeTime(t.lastUsedAt, now) : "never"),
         );
       }
       return ExitCode.OK;
@@ -446,13 +446,13 @@ async function tokenList(argv: string[]): Promise<ExitCodeValue> {
     out.data(tokens);
     return ExitCode.OK;
   }
-  out.line(`token（${tokens.length}）`.padEnd(20) + "名称".padEnd(18) + "角色".padEnd(10) + "授权 project".padEnd(24) + "状态");
+  out.line(`token (${tokens.length})`.padEnd(20) + "Name".padEnd(18) + "Role".padEnd(10) + "Projects".padEnd(24) + "Status");
   for (const t of tokens) {
-    const projects = t.role === "admin" ? "全部" : (t.projects as string[] | null)?.join(",") ?? "-";
+    const projects = t.role === "admin" ? "all" : (t.projects as string[] | null)?.join(",") ?? "-";
     out.line(
       padEndWidth(String(t.id), 20) +
         padEndWidth(String(t.name ?? "-"), 18) +
-        padEndWidth(t.role === "admin" ? "管理员" : "项目级", 10) +
+        padEndWidth(t.role === "admin" ? "admin" : "project", 10) +
         padEndWidth(projects, 24) +
         String(t.status),
     );
@@ -465,7 +465,7 @@ function parseExpiresIn(value: string | undefined): number | null {
   if (!value) return null;
   const m = /^(\d+)\s*([dhmsw])$/.exec(value.trim().toLowerCase());
   if (!m) {
-    throw KanbanError.usage(`无法解析有效期 "${value}"`, "支持：30d（天）/ 12h / 7d / 4w（周）");
+    throw KanbanError.usage(`cannot parse expiry "${value}"`, "Supported: 30d (days) / 12h / 7d / 4w (weeks)");
   }
   const n = Number(m[1]);
   switch (m[2]) {
@@ -489,7 +489,7 @@ async function tokenCreate(argv: string[]): Promise<ExitCodeValue> {
 
   const role = (getString(args, "role") ?? "project") as TokenRole;
   if (role !== "project" && role !== "admin") {
-    throw KanbanError.usage(`--role 只能是 project 或 admin，收到 "${role}"`);
+    throw KanbanError.usage(`--role must be project or admin, got "${role}"`);
   }
   const projects = getList(args, "project") ?? [];
   const expiresInMs = parseExpiresIn(getString(args, "expires-in"));
@@ -512,7 +512,7 @@ async function tokenCreate(argv: string[]): Promise<ExitCodeValue> {
 
   let data: Record<string, unknown>;
   if (issued) {
-    data = { ...tokenToJson(issued.token), token: issued.plaintext, warning: "此明文只显示这一次" };
+    data = { ...tokenToJson(issued.token), token: issued.plaintext, warning: "this plaintext is shown only once" };
   } else {
     const remote = openRemoteAdmin(args, json);
     data = (await remote.call("/tokens", {
@@ -527,20 +527,20 @@ async function tokenCreate(argv: string[]): Promise<ExitCodeValue> {
   }
 
   // 明文展示：这是唯一一次能看到它的地方
-  out.line(`${style.green("✓")} token 已签发`);
-  if (name) out.line(`  名称    ${name}`);
-  out.line(`  角色    ${role === "admin" ? "管理员（可访问全部 project）" : `项目级（${projects.join(", ")}）`}`);
+  out.line(`${style.green("✓")} Token issued`);
+  if (name) out.line(`  Name     ${name}`);
+  out.line(`  Role     ${role === "admin" ? "admin (can reach every project)" : `project (${projects.join(", ")})`}`);
   if (expiresInMs) {
-    out.line(`  有效期  ${getString(args, "expires-in")}（${new Date(Date.now() + expiresInMs).toLocaleString("zh-CN")} 过期）`);
+    out.line(`  Expires  ${getString(args, "expires-in")} (expires ${new Date(Date.now() + expiresInMs).toLocaleString("en-US")})`);
   }
   out.line("");
-  out.line(`${style.yellow("token（只显示这一次，请立即保存）")}`);
+  out.line(`${style.yellow("token (shown only once, save it now)")}`);
   out.line(`  ${style.bold(String(data.token))}`);
   out.line("");
   if (role === "project") {
-    out.line(style.gray("  写入客户端配置："));
+    out.line(style.gray("  Write it into the client config:"));
     out.line(style.gray(`    agent-kanban config set server.token ${data.token}`));
-    out.line(style.gray(`    （或编辑 .kanban/config.toml 的 server.token）`));
+    out.line(style.gray(`    (or edit server.token in .kanban/config.toml)`));
   }
   return ExitCode.OK;
 }
@@ -554,13 +554,13 @@ async function tokenGrant(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "replace", "project", "db", "server", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const tokenId = requirePositional(args, 0, "token", "用法：agent-kanban admin token grant <token> --project <key>");
+  const tokenId = requirePositional(args, 0, "token", "Usage: agent-kanban admin token grant <token> --project <key>");
   const addProjects = getList(args, "project") ?? [];
   if (addProjects.length === 0) {
     throw KanbanError.usage(
-      "缺少 --project",
-      "用法：agent-kanban admin token grant <token> --project app1 --project app2\n" +
-        "（--replace 表示替换整个白名单，而不是追加）",
+      "missing --project",
+      "Usage: agent-kanban admin token grant <token> --project app1 --project app2\n" +
+        "(--replace replaces the whole allowlist instead of appending)",
     );
   }
 
@@ -568,7 +568,7 @@ async function tokenGrant(argv: string[]): Promise<ExitCodeValue> {
   if (handle) {
     try {
       const token = getToken(handle.raw, tokenId);
-      if (!token) throw KanbanError.state(`token 不存在：${maskToken(tokenId)}`);
+      if (!token) throw KanbanError.state(`token not found: ${maskToken(tokenId)}`);
       const next = getBool(args, "replace")
         ? addProjects
         : Array.from(new Set([...token.projects, ...addProjects]));
@@ -577,8 +577,8 @@ async function tokenGrant(argv: string[]): Promise<ExitCodeValue> {
         out.data(tokenToJson(updated));
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} token ${maskToken(tokenId)} 的授权已更新`);
-      out.line(`  当前授权：${updated.projects.join(", ")}`);
+      out.line(`${style.green("✓")} grants of token ${maskToken(tokenId)} updated`);
+      out.line(`  Current grants: ${updated.projects.join(", ")}`);
       return ExitCode.OK;
     } finally {
       handle.raw.close();
@@ -598,8 +598,8 @@ async function tokenGrant(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`${style.green("✓")} token ${maskToken(tokenId)} 的授权已更新`);
-  out.line(`  当前授权：${(data.projects as string[]).join(", ")}`);
+  out.line(`${style.green("✓")} grants of token ${maskToken(tokenId)} updated`);
+  out.line(`  Current grants: ${(data.projects as string[]).join(", ")}`);
   return ExitCode.OK;
 }
 
@@ -612,7 +612,7 @@ async function tokenRevoke(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "yes", "db", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const tokenId = requirePositional(args, 0, "token", "用法：agent-kanban admin token revoke <token>");
+  const tokenId = requirePositional(args, 0, "token", "Usage: agent-kanban admin token revoke <token>");
 
   const handle = openAdminDb(getString(args, "db"));
   if (handle) {
@@ -622,7 +622,7 @@ async function tokenRevoke(argv: string[]): Promise<ExitCodeValue> {
         out.data(tokenToJson(revoked));
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} token ${maskToken(tokenId)} 已吊销（不可恢复）`);
+      out.line(`${style.green("✓")} token ${maskToken(tokenId)} revoked (irreversible)`);
       return ExitCode.OK;
     } finally {
       handle.raw.close();
@@ -635,7 +635,7 @@ async function tokenRevoke(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`${style.green("✓")} token ${maskToken(tokenId)} 已吊销（不可恢复）`);
+  out.line(`${style.green("✓")} token ${maskToken(tokenId)} revoked (irreversible)`);
   return ExitCode.OK;
 }
 
@@ -648,11 +648,11 @@ async function tokenRename(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "name", "note", "db", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const tokenId = requirePositional(args, 0, "token", "用法：agent-kanban admin token rename <token> --name <新名>");
+  const tokenId = requirePositional(args, 0, "token", "Usage: agent-kanban admin token rename <token> --name <new name>");
   const name = getString(args, "name");
   const note = getString(args, "note");
   if (!name && !note) {
-    throw KanbanError.usage("缺少 --name 或 --note", "用法：agent-kanban admin token rename <token> --name <新名>");
+    throw KanbanError.usage("missing --name or --note", "Usage: agent-kanban admin token rename <token> --name <new name>");
   }
 
   const handle = openAdminDb(getString(args, "db"));
@@ -663,7 +663,7 @@ async function tokenRename(argv: string[]): Promise<ExitCodeValue> {
         out.data(tokenToJson(updated));
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} token ${maskToken(tokenId)} 已更新`);
+      out.line(`${style.green("✓")} token ${maskToken(tokenId)} updated`);
       return ExitCode.OK;
     } finally {
       handle.raw.close();
@@ -679,7 +679,7 @@ async function tokenRename(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`${style.green("✓")} token ${maskToken(tokenId)} 已更新`);
+  out.line(`${style.green("✓")} token ${maskToken(tokenId)} updated`);
   return ExitCode.OK;
 }
 
@@ -696,10 +696,10 @@ function openRemoteAdmin(
   if (ctx.backend.mode !== "remote") {
     closeCtx(ctx);
     throw KanbanError.usage(
-      "需要指定远程 server 与管理员 token",
-      "两种用法：\n" +
-        "  1. 在 server 所在机器上直连：agent-kanban admin token create --db /path/to/server.db ...\n" +
-        "  2. 从任意机器走 API：\n" +
+      "a remote server and an admin token are required",
+      "Two ways:\n" +
+        "  1. Direct connection on the machine hosting the server: agent-kanban admin token create --db /path/to/server.db ...\n" +
+        "  2. Via the API from any machine:\n" +
         "     kanban --server https://kanban.corp --key <admin-token> admin token create ...",
     );
   }

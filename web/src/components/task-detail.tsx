@@ -51,6 +51,8 @@ import {
 } from "@/lib/api"
 import type { KanbanEvent } from "@/lib/types"
 import { useI18n } from "@/lib/i18n"
+import { errorText } from "@/lib/error-text"
+import { ApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { PRIORITY_LABEL, STATUS_META, describeEvent, relativeTime, statusLabel } from "@/lib/status"
 
@@ -89,7 +91,8 @@ export function TaskDetailSheet({
         if (!cancelled) setDetail(d)
       })
       .catch((e: Error) => {
-        if (!cancelled) setError(e.message)
+        // 错误正文优先走词典（后端 details.reason → error.* 键），查不到回退英文 message
+        if (!cancelled) setError(e instanceof ApiError ? errorText(e, t) : e.message)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)

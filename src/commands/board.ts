@@ -24,25 +24,25 @@ import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./arg
 import { closeCtx, openCtx } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
-const USAGE = `用法：agent-kanban board [--ready] [--mine] [--all] [--json]
+const USAGE = `Usage: agent-kanban board [--ready] [--mine] [--all] [--json]
 
-选项：
-  --ready   只看可认领任务（依赖已满足且无人持有）
-  --mine    只看当前会话持有/负责的任务
-  --all     包含已取消任务
-  --json    结构化输出（与 /api/board 同一形状）
+Options:
+  --ready   only claimable tasks (dependencies met, nobody holds them)
+  --mine    only tasks held by / owned by the current session
+  --all     include cancelled tasks
+  --json    structured output (same shape as /api/board)
 
-模式：
-  本地：   agent-kanban board
-  远程：   kanban --server https://kanban.corp --project app --key k_xxx board`;
+Modes:
+  Local:   agent-kanban board
+  Remote:  kanban --server https://kanban.corp --project app --key k_xxx board`;
 
 /** board 泳道顺序：与人的心智模型一致 */
 const LANES: Array<{ status: TaskStatus; title: string; hint: string }> = [
-  { status: "todo", title: "待办", hint: "依赖已满足，认领即可开工" },
-  { status: "doing", title: "进行中", hint: "有会话持有租约" },
-  { status: "blocked", title: "阻塞", hint: "等待外部条件，需要人介入" },
-  { status: "review", title: "待评审", hint: "产出待确认" },
-  { status: "done", title: "已完成", hint: "最近完成" },
+  { status: "todo", title: "Todo", hint: "dependencies met, claim it to start" },
+  { status: "doing", title: "Doing", hint: "a session holds the lease" },
+  { status: "blocked", title: "Blocked", hint: "waiting on an external condition, needs a human" },
+  { status: "review", title: "Review", hint: "output waiting for confirmation" },
+  { status: "done", title: "Done", hint: "recently completed" },
 ];
 
 export async function cmdBoard(argv: string[]): Promise<ExitCodeValue> {
@@ -115,10 +115,10 @@ function renderBoard(
   out.line("");
   out.line(
     `${style.bold(snapshot.project.name)}  ${style.gray(`(${snapshot.project.key})`)}  ` +
-      style.cyan(`${c.doing} 进行中`) + style.gray(" · ") +
-      style.yellow(`${c.blocked} 阻塞`) + style.gray(" · ") +
-      `${c.todo} 待办` + style.gray(" · ") +
-      style.green(`${c.done} 已完成`),
+      style.cyan(`${c.doing} Doing`) + style.gray(" · ") +
+      style.yellow(`${c.blocked} Blocked`) + style.gray(" · ") +
+      `${c.todo} Todo` + style.gray(" · ") +
+      style.green(`${c.done} Done`),
   );
 
   // ---- 失联会话告警：最高优先级信息 ----
@@ -128,11 +128,11 @@ function renderBoard(
   if (zombies.length > 0) {
     out.line("");
     for (const z of zombies) {
-      out.line(`${style.yellow("⚠ 失联会话")} ${z.id} ${style.gray(`(${z.agent_name}，最后心跳 ${z.fresh})`)}`);
+      out.line(`${style.yellow("⚠ Stale session")} ${z.id} ${style.gray(`(${z.agent_name}, last heartbeat ${z.fresh})`)}`);
       for (const taskId of (z.tasks as string[]) ?? []) {
         out.line(
-          `    持有 ${style.cyan(taskId)} ${style.gray("→ ")}${style.bold("agent-kanban resume " + taskId)}` +
-            style.gray("  接管（进度会自动保留）"),
+          `    holds ${style.cyan(taskId)} ${style.gray("→ ")}${style.bold("agent-kanban resume " + taskId)}` +
+            style.gray("  take over (progress is preserved automatically)"),
         );
       }
     }
@@ -163,17 +163,17 @@ function renderBoard(
 
   if (active === 0) {
     out.line("");
-    out.line(style.gray('  （看板为空）用 `agent-kanban task add "标题"` 创建第一张卡'));
+    out.line(style.gray('  (the board is empty) create the first card with `agent-kanban task add "title"`'));
   } else if (opts.readyOnly && !renderedAny) {
     out.line("");
-    out.line(style.gray("  （没有可认领的任务：其余待办都还有未完成的依赖，或已被其他会话持有）"));
+    out.line(style.gray("  (no claimable tasks: the remaining todo tasks still have unfinished dependencies, or another session already holds them)"));
   }
 
   // ---- 会话区 ----
   const live = snapshot.sessions.filter((s) => s.status !== "closed");
   if (live.length > 0) {
     out.line("");
-    out.line(style.gray(`会话（${live.length}）`));
+    out.line(style.gray(`Sessions (${live.length})`));
     for (const s of live) {
       const mark = s.stale ? style.yellow("⚠") : style.green("●");
       const tasks = (s.tasks as string[]) ?? [];
@@ -213,7 +213,7 @@ function renderCard(
   if (task.assignee_session_id) {
     const holder = sessions.find((s) => s.id === task.assignee_session_id);
     const raw = holder?.stale
-      ? `${task.assignee_session_id} ⚠失联`
+      ? `${task.assignee_session_id} ⚠stale`
       : `${task.assignee_session_id} ${relativeTime(Number(task.updated_at), now)}`;
     holderPart = padEndWidth(holder?.stale ? style.yellow(raw) : style.gray(raw), 16);
   }
@@ -225,8 +225,8 @@ function renderCard(
   } else if (task.status === "todo" && !task.assignee_session_id) {
     const unfinished = (task.unfinished_dependencies as string[] | undefined) ?? [];
     tailPart = unfinished.length > 0
-      ? style.gray(`⏳ 等 ${unfinished.join(",")}`)
-      : style.cyan("可认领");
+      ? style.gray(`⏳ waiting for ${unfinished.join(",")}`)
+      : style.cyan("claimable");
   }
 
   return `${idPart}${pPart}  ${titlePart}  ${progressPart}  ${checkPart}  ${holderPart}${tailPart}`;

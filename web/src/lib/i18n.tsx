@@ -108,6 +108,18 @@ const zh = {
   "sidebar.handoff.empty": "没有待接手的交接",
   "sidebar.sessions": "会话",
   "sidebar.next": "建议接下来",
+  // 建议正文：后端给「代号 + 参数」，这里给「怎么把参数说成人话」。
+  // 单复数不做 ICU，需要的地方拆成 .one / .many 两个键（见 lib/next-actions.ts）。
+  "sidebar.next.takeover": "接管失联会话留下的任务（进度已保留）：{commands}",
+  "sidebar.next.readHandoff": "读交接 #{id}（{task}）：{summary}",
+  "sidebar.next.crashHandoffs.one": "有 1 条崩溃自动交接待处理：{tasks}",
+  "sidebar.next.crashHandoffs.many": "有 {n} 条崩溃自动交接待处理：{tasks}",
+  "sidebar.next.continueMine": "继续你正在做的：{tasks}",
+  "sidebar.next.blocked.one": "有 1 张卡阻塞中（可能需要人介入）：{tasks}",
+  "sidebar.next.blocked.many": "有 {n} 张卡阻塞中（可能需要人介入）：{tasks}",
+  "sidebar.next.claim": "认领新任务：{commands}",
+  "sidebar.next.claimAfter": "完成手上的后，可认领：{id}",
+  "sidebar.next.idle": "没有待办任务。可用 agent-kanban task add 新建，或 agent-kanban board 复查看板。",
   "sidebar.cliEquiv": "命令行等价",
 
   // ---- 任务状态 ----
@@ -273,6 +285,97 @@ const zh = {
   "api.error.networkHint": "确认 agent-kanban serve 是否在运行",
   "api.error.badShape": "服务端返回的任务详情形状异常",
 
+  // ---- 后端 KanbanError 的中文文案（lib/error-text.ts 经 tActive 翻译） ----
+  //
+  // 键名 = `error.` + 后端 `details.reason` 的 slug。后端（src/core/** 与
+  // src/server/http.ts）在每个面向 Web 的错误里都带了这个稳定 slug，
+  // error-text.ts 按它查词典：命中就用这里的模板渲染，**查不到或模板为空就回退
+  // 后端 message**（英文）。
+  //
+  // ⚠ 两条约定，改这里之前先读：
+  // 1. **`en` 侧一律留空字符串 `""`，不要把英文句子抄过来。**
+  //    后端那句已经是英文，抄一份就多一处会漂移的第二真相
+  //    （同 next-actions.ts 里记的那个教训）。空串 = “英文界面直接用后端原文”。
+  // 2. **占位符只能用 `details` 里真实存在的键名**（原样 snake_case）。
+  //    error-text.ts 的 fill() 就是拿 `{name}` 去 details 里查：
+  //    - 有 → 替换成值；
+  //    - 没有 → **占位符原样留着**（`{task_id}` 会显示给用户）；
+  //    - 有但值是 undefined/null → 渲染成 "undefined"。
+  //    所以值只出现在 message 里（比如 `unknown status: nope` 的状态名）就别写占位符，
+  //    直接写不带值的中文（"未知状态"）。
+  //    状态名 / project key 这类标识符保持原样不翻译：它们是数据不是 chrome
+  //    （与文件头第 3 条约定一致）。
+  //
+  // 收进来的范围：`src/core/**` + `src/server/http.ts` 里的全部 slug，
+  // 排除了 backend-remote.ts 的 7 个 `remote_*`（只有 CLI 的 RemoteBackend 会抛，
+  // Web 走不到）以及 tokens.ts 里 AuthResult 的类型判别式
+  // （missing/invalid/revoked/expired/forbidden 那些不是 details.reason）。
+  "error.task_not_found": "任务 {task_id} 不存在",
+  "error.project_not_found": "项目 {project} 不存在",
+  "error.session_not_found": "会话 {session_id} 不存在",
+  "error.plan_not_found": "计划 {plan_id} 不存在",
+  "error.handoff_not_found": "找不到这条交接：#{handoff_id}",
+  "error.token_not_found": "找不到这个 token：{token}",
+  "error.token_already_revoked": "这个 token 已经吊销过了",
+  "error.invalid_task_id": "任务 id 写法不对，应该像 T-0007",
+  "error.invalid_status": "未知状态",
+  "error.invalid_project_key":
+    "项目 key 不合法：只能用小写字母、数字和连字符，且必须以字母或数字开头，最长 64 个字符",
+  "error.invalid_admin_token_format": "KANBAN_ADMIN_TOKEN 环境变量的格式不对",
+  "error.invalid_duration": "租约时长写法不对，只支持 15m / 2h / 1d，或者 short",
+  "error.invalid_progress": "进度得在 0 到 100 之间",
+  "error.invalid_param": "缺少必填参数，或者它不是非空字符串",
+  "error.invalid_op": "Op 的写法不对，应该是 { kind, params } 这样的对象",
+  "error.invalid_op_params": "Op 的 params 必须是一个对象",
+  "error.unimplemented_op": "这个 Op 还没实现",
+  "error.no_fields_to_update": "没有要更新的字段",
+  "error.illegal_transition": "任务 {task_id} 不能从 {from} 移到 {to}，允许的流转：{legal_transitions}",
+  "error.force_required":
+    "任务 {task_id} 不能直接从 {from} 跳到 {to}，需要加 --force 确认（推荐按正常流转走）",
+  "error.task_not_cancelled":
+    "任务 {task_id} 现在是 {status} 状态，只有已取消的任务才能直接删除，加 --force 确认",
+  "error.progress_not_complete": "任务 {task_id} 的进度还没到 100%，加 --force 确认才能关掉",
+  "error.reason_required": "这次流转必须用 --reason 说明原因",
+  "error.not_lease_holder": "任务 {task_id} 正被另一个会话处理",
+  "error.checklist_item_not_found": "任务 {task_id} 里没有这条未完成的清单项，未完成的有：{available}",
+  "error.self_dependency": "任务 {task_id} 不能依赖自己",
+  "error.dependency_cycle": "加上这条依赖会形成环：{cycle}",
+  "error.empty_handoff_summary": "交接的「做了什么」不能为空",
+  "error.empty_plan_title": "计划的标题不能为空",
+  "error.empty_plan_body": "计划的正文不能为空",
+  "error.missing_task_id": "任务级计划必须用 --task 指定是哪张卡",
+  "error.plan_scope_mismatch": "这不是该卡的任务级计划，不能挂到卡上",
+  "error.missing_session_id": "缺少会话 id，请先执行 session start",
+  "error.project_exists": "项目 {project} 已经存在了",
+  "error.project_not_empty": "项目 {project} 里还有 {task_count} 张卡，删掉没法恢复",
+  "error.token_requires_project": "项目级 token 至少得授权一个项目",
+  "error.admin_token_with_projects": "管理员 token 本来就能访问所有项目，不能再指定项目列表",
+  "error.admin_token_scope_fixed": "管理员 token 的权限范围不能收窄",
+  "error.auth_token_missing": "缺少访问 token",
+  "error.auth_token_invalid": "访问 token 无效",
+  "error.auth_token_revoked": "访问 token 已被吊销",
+  "error.auth_token_expired": "访问 token 已过期",
+  "error.auth_project_forbidden": "这个 token 没有该项目的权限",
+  "error.auth_project_missing": "请求里没有 project 参数",
+  "error.auth_project_mismatch": "请求体里的 project 和鉴权用的 project 不一致（{url_project} / {body_project}）",
+  "error.auth_admin_required": "这个操作需要管理员 token",
+  "error.auth_failed": "项目访问用的 API key 缺失或不对",
+  "error.invalid_request_body": '请求体写法不对，应该是 { "project": "...", "op": { "kind": "...", "params": {...} } }',
+  "error.missing_project_key": "缺少 project",
+  "error.unknown_endpoint": "接口不存在",
+  "error.db_file_not_found": "找不到数据库文件，看板还没初始化",
+  "error.kanban_dir_not_found": "找不到看板数据目录",
+  "error.journal_not_found": "目录 {dir} 里没有 journal 文件（events-YYYYMMDD.jsonl）",
+  "error.schema_read_failed": "读取数据库结构文件失败",
+  "error.schema_apply_failed": "应用数据库结构失败",
+  "error.schema_version_too_new":
+    "数据库结构版本是 {db_version}，比这个 CLI 支持的 {cli_version} 还新，请先升级 agent-kanban",
+  "error.migration_script_missing": "缺少从结构版本 {from} 升到 {to} 的迁移脚本",
+  "error.sqlite_busy": "数据库正忙（可能另一个 agent 在写），退避 1 秒重试，最多 3 次",
+  "error.sqlite_io_error": "数据库读写冲突（Windows 上 SQLite WAL 的老毛病），退避后重试",
+  "error.unique_constraint": "撞了唯一约束（并发下的正常竞争），重试一次就行",
+  "error.toml_parse_failed": "解析配置文件 {file} 失败",
+
   // ---- 登录卡片 ----
   "login.title": "连接看板",
   "login.desc.before": "粘贴访问 token。它由管理员用",
@@ -362,6 +465,16 @@ const en: Record<MessageKey, string> = {
   "sidebar.handoff.empty": "No handoffs waiting",
   "sidebar.sessions": "Sessions",
   "sidebar.next": "Suggested next",
+  "sidebar.next.takeover": "Take over tasks left by unresponsive sessions (progress kept): {commands}",
+  "sidebar.next.readHandoff": "Read handoff #{id} ({task}): {summary}",
+  "sidebar.next.crashHandoffs.one": "1 auto-synthesized handoff is waiting: {tasks}",
+  "sidebar.next.crashHandoffs.many": "{n} auto-synthesized handoffs are waiting: {tasks}",
+  "sidebar.next.continueMine": "Keep going on what you already hold: {tasks}",
+  "sidebar.next.blocked.one": "1 card is blocked (a human may need to step in): {tasks}",
+  "sidebar.next.blocked.many": "{n} cards are blocked (a human may need to step in): {tasks}",
+  "sidebar.next.claim": "Claim new work: {commands}",
+  "sidebar.next.claimAfter": "Once that is done, claim: {id}",
+  "sidebar.next.idle": "Nothing to do. Add a card with agent-kanban task add, or review the board with agent-kanban board.",
   "sidebar.cliEquiv": "CLI equivalents",
 
   "status.backlog": "Ideas",
@@ -516,6 +629,71 @@ const en: Record<MessageKey, string> = {
   "api.error.networkHint": "Check that agent-kanban serve is running",
   "api.error.badShape": "The server returned an unexpected task-detail shape",
 
+  // ---- 后端 KanbanError：见 zh 词典里那组的约定 ----
+  // 一律留空 = 英文界面直接用后端 message（那句本来就是英文）。
+  // 抄一份过来就多一处会漂移的第二真相。
+  "error.task_not_found": "",
+  "error.project_not_found": "",
+  "error.session_not_found": "",
+  "error.plan_not_found": "",
+  "error.handoff_not_found": "",
+  "error.token_not_found": "",
+  "error.token_already_revoked": "",
+  "error.invalid_task_id": "",
+  "error.invalid_status": "",
+  "error.invalid_project_key": "",
+  "error.invalid_admin_token_format": "",
+  "error.invalid_duration": "",
+  "error.invalid_progress": "",
+  "error.invalid_param": "",
+  "error.invalid_op": "",
+  "error.invalid_op_params": "",
+  "error.unimplemented_op": "",
+  "error.no_fields_to_update": "",
+  "error.illegal_transition": "",
+  "error.force_required": "",
+  "error.task_not_cancelled": "",
+  "error.progress_not_complete": "",
+  "error.reason_required": "",
+  "error.not_lease_holder": "",
+  "error.checklist_item_not_found": "",
+  "error.self_dependency": "",
+  "error.dependency_cycle": "",
+  "error.empty_handoff_summary": "",
+  "error.empty_plan_title": "",
+  "error.empty_plan_body": "",
+  "error.missing_task_id": "",
+  "error.plan_scope_mismatch": "",
+  "error.missing_session_id": "",
+  "error.project_exists": "",
+  "error.project_not_empty": "",
+  "error.token_requires_project": "",
+  "error.admin_token_with_projects": "",
+  "error.admin_token_scope_fixed": "",
+  "error.auth_token_missing": "",
+  "error.auth_token_invalid": "",
+  "error.auth_token_revoked": "",
+  "error.auth_token_expired": "",
+  "error.auth_project_forbidden": "",
+  "error.auth_project_missing": "",
+  "error.auth_project_mismatch": "",
+  "error.auth_admin_required": "",
+  "error.auth_failed": "",
+  "error.invalid_request_body": "",
+  "error.missing_project_key": "",
+  "error.unknown_endpoint": "",
+  "error.db_file_not_found": "",
+  "error.kanban_dir_not_found": "",
+  "error.journal_not_found": "",
+  "error.schema_read_failed": "",
+  "error.schema_apply_failed": "",
+  "error.schema_version_too_new": "",
+  "error.migration_script_missing": "",
+  "error.sqlite_busy": "",
+  "error.sqlite_io_error": "",
+  "error.unique_constraint": "",
+  "error.toml_parse_failed": "",
+
   "login.title": "Connect to the board",
   "login.desc.before": "Paste your access token. It is issued by an admin with",
   "login.desc.cmd": "agent-kanban admin token create",
@@ -603,7 +781,11 @@ function readStoredLocale(): Locale | null {
 function detectLocale(): Locale {
   const stored = readStoredLocale()
   if (stored) return stored
-  const lang = typeof navigator === "undefined" ? "" : navigator.language
+  // `navigator.language` 在浏览器里一定有，但本模块会在 Bun 测试等无 DOM 运行时里被
+  // 间接 import（error-text.ts → tActive），那里 navigator 存在却没有 language。
+  // 原来直接 `navigator.language.toLowerCase()` 会在那里抛 TypeError，
+  // 连带整个导入链挂掉——所以两处都兜住。
+  const lang = typeof navigator === "undefined" ? "" : (navigator.language ?? "")
   return lang.toLowerCase().startsWith("en") ? "en" : "zh"
 }
 

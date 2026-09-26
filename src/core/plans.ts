@@ -56,13 +56,18 @@ export function savePlan(ctx: TxContext, input: SavePlanInput): Plan {
   const projectKey = ctx.projectKey;
 
   if (typeof input.title !== "string" || input.title.trim().length === 0) {
-    throw KanbanError.usage("计划标题不能为空", '用法：agent-kanban plan save --title "标题" [--body-file plan.md]');
+    throw KanbanError.usage(
+      "plan title must not be empty",
+      'Usage: agent-kanban plan save --title "Title" [--body-file plan.md]',
+      { reason: "empty_plan_title" },
+    );
   }
   if (typeof input.body !== "string" || input.body.trim().length === 0) {
     throw KanbanError.usage(
-      "计划正文不能为空",
-      "正文是计划的价值所在（标题只是一句话）。\n" +
-        "用 --body-file <路径> 或 --body \"...\" 提供 markdown 内容。",
+      "plan body must not be empty",
+      "The body is where the value of a plan lives (the title is only one sentence).\n" +
+        "Provide the markdown content with --body-file <path> or --body \"...\".",
+      { reason: "empty_plan_body" },
     );
   }
 
@@ -70,8 +75,9 @@ export function savePlan(ctx: TxContext, input: SavePlanInput): Plan {
   const taskId = input.scope === "task" ? normalizeTaskId(input.taskId ?? "") : null;
   if (input.scope === "task" && !taskId) {
     throw KanbanError.usage(
-      "任务级计划需要 --task",
-      '用法：agent-kanban plan save --task T-0007 --title "标题" --body-file plan.md',
+      "a task-scoped plan requires --task",
+      'Usage: agent-kanban plan save --task T-0007 --title "Title" --body-file plan.md',
+      { reason: "missing_task_id" },
     );
   }
   // 任务必须存在且属于本 project（防止计划指向别的 project 的卡）
@@ -165,8 +171,9 @@ export function attachPlan(ctx: TxContext, taskId: string, planId: string): Plan
 
   if (plan.scope !== "task" || plan.taskId !== task.id) {
     throw KanbanError.usage(
-      `计划 ${plan.id} 不是任务 ${task.id} 的任务级计划`,
-      "项目级计划（PL-0001）不能挂到任务上；任务级计划（PL-T-0007-01）才可以。",
+      `plan ${plan.id} is not the task-scoped plan of task ${task.id}`,
+      "A project-scoped plan (PL-0001) cannot be attached to a task; only a task-scoped plan (PL-T-0007-01) can.",
+      { reason: "plan_scope_mismatch" },
     );
   }
 
@@ -197,9 +204,10 @@ export function getPlan(scope: Scope, planId: string): Plan | null {
 export function requirePlan(scope: Scope, planId: string): Plan {
   const plan = getPlan(scope, planId);
   if (!plan) {
-    throw KanbanError.state(`计划 ${planId} 不存在`, {
+    throw KanbanError.state(`plan ${planId} not found`, {
+      reason: "plan_not_found",
       plan_id: planId,
-      hint: "用 `agent-kanban plan list` 看现有计划",
+      hint: "Run `agent-kanban plan list` to see the existing plans",
     });
   }
   return plan;
@@ -218,10 +226,10 @@ export function getActivePlan(
 ): Plan | null {
   // planScope 只用于校验入参：SQL 里直接用字面量，避免多传绑定值（bun:sqlite 会严格校验个数）
   if (planScope === "task" && !taskId) {
-    throw KanbanError.usage("任务级计划需要 taskId", "内部调用错误：getActivePlan(scope, 'task', null)");
+    throw KanbanError.usage("a task-scoped plan requires taskId", "Internal call error: getActivePlan(scope, 'task', null)");
   }
   if (planScope === "project" && taskId) {
-    throw KanbanError.usage("项目级计划不应带 taskId", "内部调用错误：getActivePlan(scope, 'project', taskId)");
+    throw KanbanError.usage("a project-scoped plan must not carry taskId", "Internal call error: getActivePlan(scope, 'project', taskId)");
   }
   const row = taskId
     ? scope.db
