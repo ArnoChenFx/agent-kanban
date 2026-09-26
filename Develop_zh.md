@@ -127,7 +127,8 @@ cd web && bun run typecheck # 前端
 
 | 脚本 | 它证明了什么 |
 |---|---|
-| `verify-web.ts` | 静态资源、SPA 回退、路径穿越、API、鉴权、SSE、缓存头 |
+| `verify-web.ts` | 静态资源、SPA 回退、路径穿越、API、鉴权、SSE、缓存头、**任务详情 Op 契约** |
+| `verify-web-ui.ts` | 无头 Chrome **真点开一张卡**：详情抽屉能开、三个页签有数据、无运行时异常 |
 | `verify-binary.ts` | 编译出的二进制确实是自包含的 |
 | `verify-deploy.ts` | Dockerfile、compose、`.env` 的结构正确 |
 | `verify-deps.ts` | 没有未声明的（幽灵）依赖 |
@@ -143,6 +144,7 @@ cd web && bun run typecheck # 前端
 
 ```bash
 bun run verify:web
+bun run verify:web:ui   # 需要本机有 Chrome/Edge，没有则跳过
 bun run verify:deps
 bun run verify:workflows
 bun run verify:docs

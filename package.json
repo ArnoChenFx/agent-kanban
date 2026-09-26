@@ -1,6 +1,6 @@
 {
   "name": "agent-kanban",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "多会话 agent 共享的项目级任务看板：共享任务列表、进度、历史计划，并在 agent 崩溃后恢复上下文",
   "type": "module",
   "module": "src/cli.ts",
@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "kanban": "bun run src/cli.ts",
-    "serve": "bun run src/cli.ts serve",
+    "serve": "bun run --hot src/cli.ts serve",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "web:dev": "bun run --cwd web dev",
@@ -23,6 +23,7 @@
     "gen:assets": "bun run scripts/gen-assets.ts",
     "build:binary": "bun run web:build && bun build --compile src/cli.ts --outfile dist/kanban",
     "verify:web": "bun run scripts/verify-web.ts",
+    "verify:web:ui": "bun run scripts/verify-web-ui.ts",
     "verify:deps": "bun run scripts/verify-deps.ts",
     "verify:workflows": "bun run scripts/verify-workflows.ts",
     "verify:docs": "bun run scripts/verify-docs.ts",

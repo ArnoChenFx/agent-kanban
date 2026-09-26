@@ -24,6 +24,7 @@ const GATES: Gate[] = [
   { name: "鉴权与 project 隔离", cmd: ["bun", "run", "scripts/verify-auth.ts"], quiet: true },
   { name: "远程双模式", cmd: ["bun", "run", "scripts/verify-remote.ts"], quiet: true },
   { name: "Web 看板", cmd: ["bun", "run", "verify:web"] },
+  { name: "Web 看板 UI", cmd: ["bun", "run", "verify:web:ui"], quiet: true },
   { name: "MCP 端到端", cmd: ["bun", "run", "verify:mcp"] },
   { name: "备份与维护", cmd: ["bun", "run", "verify:backup"] },
 ];
@@ -54,5 +55,29 @@ for (const gate of GATES) {
 }
 
 const total = ((Date.now() - started) / 1000).toFixed(1);
+
+// ---------------------------------------------------------------------------
+// Staged-area drift guard
+// ---------------------------------------------------------------------------
+// Every gate above reads the **working tree**. If the index holds an older copy
+// (a leftover `MM` in `git status`), the suite reports "all green" while the
+// content that would actually be committed still fails those same gates - it
+// happened with Chinese comments in release.yml and an unverifiable
+// `[[:space:]]` regex. Surface the drift instead of staying silent.
+const gitStatus = spawnSync("git", ["status", "--porcelain"], {
+  cwd: ROOT,
+  encoding: "utf8",
+});
+if (gitStatus.status === 0) {
+  const drifted = gitStatus.stdout
+    .split("\n")
+    .filter((l) => l.length > 1 && l[0] !== " " && l[0] !== "?")
+    .map((l) => `${l.slice(0, 2)} ${l.slice(3)}`);
+  if (drifted.length > 0) {
+    console.log(`\n⚠ ${drifted.length} file(s) staged but newer in the working tree:`);
+    for (const d of drifted) console.log(`    ${d}`);
+    console.log("  Gates above validated the working tree only. Run `git add -u` before committing.");
+  }
+}
 console.log(`\n${failed.length === 0 ? `✓ ${GATES.length} 道门禁全绿（${total}s）` : `✗ ${failed.length} 道失败：${failed.join("、")}`}`);
 process.exit(failed.length === 0 ? 0 : 1);

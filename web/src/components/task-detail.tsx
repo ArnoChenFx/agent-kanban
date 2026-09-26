@@ -104,60 +104,72 @@ export function TaskDetailSheet({
                 {task.progress}% · 创建于 {relativeTime(task.created_at)}
                 {task.updated_at && ` · 更新于 ${relativeTime(task.updated_at)}`}
               </SheetDescription>
+              {/* 进度条放进 header 而不是它的同级：
+                  SheetContent 自身没有内边距（p-4 都在 SheetHeader/Footer 上），
+                  放在同级时进度条会左右顶到抽屉边框、与描述和页签都没有空隙。
+                  颜色跟着状态走，与卡片上的进度条保持一致（“进度 100% 的待评审卡”不该是绿的）。 */}
+              {task.progress > 0 && (
+                <Progress
+                  value={task.progress}
+                  className="text-primary mt-1.5 h-1"
+                  style={{ color: `var(${meta.colorVar})` }}
+                />
+              )}
             </SheetHeader>
 
-            {task.block_reason && (
-              <div className="text-destructive bg-destructive/8 flex items-start gap-2 rounded-md p-3 text-sm">
-                <TriangleAlertIcon className="mt-0.5 shrink-0" />
-                <div>
-                  <p className="font-medium">阻塞原因</p>
-                  <p>{task.block_reason}</p>
+            {/* SheetContent 没有内边距，下面的内容统一收在这层里，避免顶到抽屉边框 */}
+            <div className="flex flex-col gap-4 px-4">
+              {task.block_reason && (
+                <div className="text-destructive bg-destructive/8 flex items-start gap-2 rounded-md p-3 text-sm">
+                  <TriangleAlertIcon className="mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium">阻塞原因</p>
+                    <p>{task.block_reason}</p>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {task.progress > 0 && <Progress value={task.progress} className="h-1.5" />}
+              {loading && (
+                <div className="flex flex-col gap-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-4 w-1/2" />
+                  <Skeleton className="h-24 w-full" />
+                </div>
+              )}
 
-            {loading && (
-              <div className="flex flex-col gap-2">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-1/2" />
-                <Skeleton className="h-24 w-full" />
-              </div>
-            )}
+              {error && <p className="text-destructive text-sm">{error}</p>}
 
-            {error && <p className="text-destructive text-sm">{error}</p>}
+              {detail && (
+                <Tabs defaultValue="timeline">
+                  <TabsList>
+                    <TabsTrigger value="timeline">时间线</TabsTrigger>
+                    <TabsTrigger value="handoff">
+                      交接
+                      {detail.handoffs.length > 0 && (
+                        <Badge variant="secondary" className="ml-1">
+                          {detail.handoffs.length}
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                    {detail.plan && <TabsTrigger value="plan">计划</TabsTrigger>}
+                  </TabsList>
 
-            {detail && (
-              <Tabs defaultValue="timeline">
-                <TabsList>
-                  <TabsTrigger value="timeline">时间线</TabsTrigger>
-                  <TabsTrigger value="handoff">
-                    交接
-                    {detail.handoffs.length > 0 && (
-                      <Badge variant="secondary" className="ml-1">
-                        {detail.handoffs.length}
-                      </Badge>
-                    )}
-                  </TabsTrigger>
-                  {detail.plan && <TabsTrigger value="plan">计划</TabsTrigger>}
-                </TabsList>
-
-                <TabsContent value="timeline">
-                  <Timeline events={detail.timeline} />
-                </TabsContent>
-
-                <TabsContent value="handoff">
-                  <Handoffs items={detail.handoffs} />
-                </TabsContent>
-
-                {detail.plan && (
-                  <TabsContent value="plan">
-                    <PlanView plan={detail.plan} />
+                  <TabsContent value="timeline">
+                    <Timeline events={detail.timeline} />
                   </TabsContent>
-                )}
-              </Tabs>
-            )}
+
+                  <TabsContent value="handoff">
+                    <Handoffs items={detail.handoffs} />
+                  </TabsContent>
+
+                  {detail.plan && (
+                    <TabsContent value="plan">
+                      <PlanView plan={detail.plan} />
+                    </TabsContent>
+                  )}
+                </Tabs>
+              )}
+            </div>
 
             <SheetFooter className="mt-4">
               <p className="text-muted-foreground text-xs">

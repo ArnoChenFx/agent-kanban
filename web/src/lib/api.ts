@@ -147,23 +147,54 @@ export async function fetchProjects(token: string): Promise<ProjectInfo[]> {
   return throwIfError(env)
 }
 
-/** 任务详情（含事件时间线） */
+/**
+ * `task.get` 的响应体：**任务本体 + 详情附加字段**。
+ *
+ * 服务端 ops.ts 的 task.get 分支是 `{ ...taskToJson(task), body, checklist, dependencies, ... }`，
+ * 所以这里必须带索引签名，否则读 plan_id / timeline 时 TS 会报错而运行时却是好的。
+ */
+interface TaskGetData extends Partial<TaskItem> {
+  /** timeline: true 时服务端同响应附带事件（旧服务端不返回，故可选） */
+  timeline?: KanbanEvent[]
+  body?: string
+  [key: string]: unknown
+}
+
+/**
+ * 任务详情（含事件时间线）。
+ *
+ * 契约要点：`task.get` 的 `data` **就是任务本体**（扁平对象），
+ * 与 CLI `kanban task show` / MCP `kanban_task_get` 消费的是同一个形状，
+ * 并不是 `{ task: {...} }` 包装。早期版本前端误按包装形状取值，
+ * 导致打开详情时读 `task.plan_id` 抛 `Cannot read properties of undefined`。
+ */
 export async function fetchTaskDetail(
   token: string,
   project: string,
   taskId: string,
 ): Promise<{ task: Record<string, unknown>; timeline: KanbanEvent[]; handoffs: HandoffItem[]; plan: PlanItem | null }> {
-  const { data } = await executeOp<{ task: Record<string, unknown> }>(token, project, {
+  // timeline: true 让服务端在同一次响应里带上事件，省一次往返
+  const { data } = await executeOp<TaskGetData>(token, project, {
     kind: "task.get",
     params: { task_id: taskId, timeline: true, tail: 60 },
   })
-  const task = data.task
+  const task = data as unknown as Record<string, unknown>
+  if (!task || typeof task !== "object" || typeof task.id !== "string") {
+    // 形状不符时给出可读报错，而不是让它顺着下面的 `task.plan_id` 崩成 TypeError
+    throw new ApiError(6, "INTERNAL", "服务端返回的任务详情形状异常", {
+      task_id: taskId,
+      keys: Object.keys((task ?? {}) as object).slice(0, 20).join(","),
+    })
+  }
 
-  // 时间线 / 交接 / 计划分开取：任一失败都不该让整个详情面板打不开
+  // 时间线优先用同响应内嵌的那份；老服务端没带时再单独拉一次
+  const embedded = Array.isArray(data.timeline) ? (data.timeline as KanbanEvent[]) : null
+  // 交接 / 计划分开取：任一失败都不该让整个详情面板打不开
   const [timeline, handoffs, plan] = await Promise.all([
-    executeOp<KanbanEvent[]>(token, project, { kind: "events.tail", params: { task_id: taskId, tail: 60 } })
-      .then((r) => r.data)
-      .catch(() => [] as KanbanEvent[]),
+    embedded ??
+      executeOp<KanbanEvent[]>(token, project, { kind: "events.tail", params: { task_id: taskId, tail: 60 } })
+        .then((r) => r.data)
+        .catch(() => [] as KanbanEvent[]),
     executeOp<HandoffItem[]>(token, project, { kind: "handoff.list", params: { task_id: taskId } })
       .then((r) => r.data)
       .catch(() => [] as HandoffItem[]),

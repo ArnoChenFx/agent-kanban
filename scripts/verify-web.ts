@@ -145,6 +145,31 @@ try {
   });
   check("task.progress", progressRes.status === 200 && ((await progressRes.json()) as { ok: boolean }).ok);
 
+  // 详情页那条链路：前端点开卡片后 fetchTaskDetail 发的三个 Op。
+  // 曾经的真实故障：task.get 的 data 被前端按 { task } 拆开 → 读 plan_id 崩；
+  // handoff.list / task.transition 前端在调、服务端没实现（静默失效）。
+  console.log("\n=== 4.1 任务详情链路（点开单卡走这条）===");
+  const op = async (kind: string, params: Record<string, unknown>) => {
+    const res = await fetch(`${BASE}/api/op`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ project: "web-demo", op: { kind, params } }),
+    });
+    return (await res.json()) as { ok: boolean; data?: Record<string, unknown> & Record<string, unknown>[]; error?: { code: number; message: string } };
+  };
+
+  const detail = await op("task.get", { task_id: newId, timeline: true, tail: 20 });
+  check("task.get 成功", detail.ok, detail.error?.message ?? "");
+  const d = (detail.data ?? {}) as Record<string, unknown>;
+  check("data 就是任务本体（无 { task } 包装）", d.id === newId && !("task" in d), `id=${d.id}`);
+  check("含 plan_id 字段（前端用它决定要不要拉计划）", "plan_id" in d);
+  check("timeline 同响应返回（前端省一次往返）", Array.isArray(d.timeline) && (d.timeline as unknown[]).length > 0);
+
+  const handoffs = await op("handoff.list", { task_id: newId });
+  check("handoff.list 存在且返回数组", handoffs.ok && Array.isArray(handoffs.data), handoffs.error?.message ?? "");
+  const trans = await op("task.transition", { task_id: newId, to: "blocked", reason: "等接口定稿" });
+  check("task.transition 能改状态", trans.ok && (trans.data as { status?: string } | undefined)?.status === "blocked", trans.error?.message ?? "");
+
   console.log("\n=== 5. 鉴权 ===");
   // /api/projects 不带 project 参数：它的用途就是“客户端还不知道要看哪个 project”
   // （曾经因为被 project 参数检查挡在前面而永远 401，前端的 project 列表一直是坏的）

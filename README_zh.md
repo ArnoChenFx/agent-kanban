@@ -300,6 +300,21 @@ pi mcp add kanban -- cmd kanban mcp
 claude mcp add kanban -- cmd kanban mcp
 ```
 
+本仓库已经自带：根目录的 `.mcp.json` 注册的就是本地构建产物，任何读取标准 MCP 配置的
+harness 都能零配置接上。注意要从项目根启动 harness——`command` 路径相对于它的工作目录解析，
+看板本身也是从那里逐级向上查找的。
+
+```json
+{
+  "mcpServers": {
+    "kanban": {
+      "command": "dist/kanban",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 20 个工具，全部是 CLI 同一套 core 的薄封装：
 
 | 分组 | 工具 |

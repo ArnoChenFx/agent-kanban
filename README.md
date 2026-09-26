@@ -303,6 +303,22 @@ pi mcp add kanban -- cmd kanban mcp
 claude mcp add kanban -- cmd kanban mcp
 ```
 
+Already in this repo: `.mcp.json` at the project root registers the local build, so any
+harness that reads standard MCP files picks it up with no extra setup. Start the
+harness from the project root — the `command` path is relative to its working
+directory, and the board itself is found by walking up from there.
+
+```json
+{
+  "mcpServers": {
+    "kanban": {
+      "command": "dist/kanban",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 20 tools, all thin wrappers over the same core the CLI uses:
 
 | Group | Tools |

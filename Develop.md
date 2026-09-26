@@ -129,7 +129,8 @@ Unit tests cover logic. The scripts below boot real servers, spawn real processe
 
 | Script | What it proves |
 |---|---|
-| `verify-web.ts` | Static assets, SPA fallback, path traversal, API, auth, SSE, cache headers |
+| `verify-web.ts` | Static assets, SPA fallback, path traversal, API, auth, SSE, cache headers, **task-detail Op contract** |
+| `verify-web-ui.ts` | Headless Chrome **really clicks a card**: detail sheet opens, all three tabs have data, no runtime exceptions |
 | `verify-binary.ts` | The compiled binary is genuinely self-contained |
 | `verify-deploy.ts` | Dockerfile, compose, and `.env` structure |
 | `verify-deps.ts` | No undeclared ("phantom") dependencies |
@@ -145,6 +146,7 @@ Unit tests cover logic. The scripts below boot real servers, spawn real processe
 
 ```bash
 bun run verify:web
+bun run verify:web:ui   # needs Chrome/Edge locally; skips when absent
 bun run verify:deps
 bun run verify:workflows
 bun run verify:docs

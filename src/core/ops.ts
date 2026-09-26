@@ -48,9 +48,11 @@ import { countEvents, queryEvents, taskRecentEvents } from "./events.ts";
 import {
   consumeHandoff,
   pendingHandoffs,
+  taskHandoffs,
   writeHandoff,
 } from "./handoff.ts";
 import { buildContext, resumeTask } from "./context.ts";
+import { relativeTime } from "./format.ts";
 import { runDoctor } from "./doctor.ts";
 import { rebuild } from "./rebuild.ts";
 import {
@@ -174,6 +176,7 @@ export type Op =
   | { kind: "task.cancel"; params: { task_id: string; reason: string } }
   | { kind: "task.reopen"; params: { task_id: string; reason: string } }
   | { kind: "task.release"; params: { task_id: string; reason?: string } }
+  | { kind: "task.transition"; params: { task_id: string; to: TaskStatus; force?: boolean; reason?: string; note?: string } }
   | { kind: "task.dep.add"; params: { task_id: string; depends_on: string } }
   | { kind: "task.dep.remove"; params: { task_id: string; depends_on: string } }
   | { kind: "task.dep.list"; params: { task_id: string } }
@@ -189,6 +192,7 @@ export type Op =
   | { kind: "events.tail"; params: { task_id: string; tail?: number } }
   // ---- 崩溃恢复（ADR-7）----
   | { kind: "context.get"; params: { tail?: number; consume?: boolean } }
+  | { kind: "handoff.list"; params: { task_id: string; limit?: number } }
   | { kind: "handoff.create"; params: { task_id: string; summary: string; next_step?: string; blockers?: string[]; open_questions?: string[] } }
   | { kind: "resume.task"; params: { task_id: string; force?: boolean; tail?: number } }
   | { kind: "doctor.check"; params: { deep?: boolean; fix?: boolean } }
@@ -471,6 +475,24 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       };
     }
 
+    // 通用状态转移：Web 看板拖拽/菜单改状态走这条。
+    // 具体动作（block/done/cancel…）仍有各自的专用 Op，这里只补“任意合法转移”这个缺口，
+    // 合法性、守卫（requireReason / requireProgress100 / forceOnly）全部交给 transition()。
+    case "task.transition": {
+      const { task, unblocked } = doTransition(ctx, actor, op.params.task_id, op.params.to, {
+        force: op.params.force,
+        reason: op.params.reason,
+        note: op.params.note,
+      });
+      return {
+        data: { ...taskToJson(task), unblocked },
+        nextActions:
+          unblocked.length > 0
+            ? [`依赖它的任务现在可以开工了：${unblocked.join(", ")}`, `认领：kanban task claim ${unblocked[0]}`]
+            : [],
+      };
+    }
+
     case "task.dep.add": {
       const deps = withOp(ctx, (tx) =>
         addDependency(tx, op.params.task_id, op.params.depends_on),
@@ -645,6 +667,33 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         (result as { consumed_count?: number }).consumed_count = toConsume.length;
       }
       return { data: result, nextActions: result.next_actions };
+    }
+
+    // 单任务的完整交接史（Web 详情页“交接”页签）。
+    // 与 context.get 的 pending_handoffs 区别：那个只给“未被人接手的”，这个给全部（含已被消费的）。
+    case "handoff.list": {
+      requireTask(scope, op.params.task_id);
+      const now = ctx.now();
+      const items = taskHandoffs(scope, op.params.task_id, op.params.limit ?? 50).map((h) => {
+        const t = getTask(scope, h.taskId);
+        return {
+          id: h.id,
+          task_id: h.taskId,
+          task_title: t?.title ?? "(任务已删除)",
+          from_session: h.sessionId,
+          kind: h.kind,
+          summary: h.summary,
+          next_step: h.nextStep,
+          blockers: h.blockers,
+          open_questions: h.openQuestions,
+          created_at: h.createdAt,
+          created_relative: relativeTime(h.createdAt, now),
+          task_progress: t?.progress ?? 0,
+          consumed_by: h.consumedBy,
+          consumed_at: h.consumedAt,
+        };
+      });
+      return { data: items, nextActions: [] };
     }
 
     case "handoff.create": {

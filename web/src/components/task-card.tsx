@@ -11,6 +11,7 @@ import { CSS } from "@dnd-kit/utilities"
 import {
   BanIcon,
   CircleCheckIcon,
+  GripVerticalIcon,
   HandIcon,
   ListChecksIcon,
   MoreHorizontalIcon,
@@ -94,15 +95,18 @@ export function TaskCard({
           用顶部而不是左侧：左侧色条容易被卡片圆角和 border 吃掉，看不见。 */}
       <div className="lane-accent absolute inset-x-0 top-0 h-1" aria-hidden />
 
-      <div className="flex items-start justify-between gap-2 pt-0.5">
-        {/* 拖拽把手：整卡可点开，把手只负责拖，避免误触 */}
+      {/* 顶部行。pr-6 是给右上角 hover 出现的操作菜单（absolute right-1 size-6）预留的位置：
+          不留位的话长标题会钻到按钮底下。任务号已移到卡片底部，不在这里抢位。 */}
+      <div className="flex items-start justify-between gap-2 pr-6 pt-0.5">
+        {/* 拖拽把手：整卡可点开，把手只负责拖，避免误触。
+            用抓手图标而不是 ⋯：右上角的 ⋯ 才是操作菜单，两个同名图标会让人点错。 */}
         <button
           type="button"
           {...listeners}
-          className="text-muted-foreground/50 cursor-grab touch-none active:cursor-grabbing hover:text-muted-foreground"
+          className="text-muted-foreground/50 -ml-1 cursor-grab touch-none active:cursor-grabbing hover:text-muted-foreground"
           aria-label="拖动以调整状态"
         >
-          <MoreHorizontalIcon data-icon="inline-start" />
+          <GripVerticalIcon data-icon="inline-start" />
         </button>
         <button
           type="button"
@@ -111,9 +115,6 @@ export function TaskCard({
         >
           {task.title}
         </button>
-        <Badge variant="outline" className="shrink-0 font-mono text-[10px]">
-          {task.id}
-        </Badge>
       </div>
 
       {/* 优先级 + 标签 */}
@@ -186,9 +187,15 @@ export function TaskCard({
         </div>
       )}
 
-      {task.updated_at && (
-        <p className="text-muted-foreground/70 text-[10px]">{relativeTime(task.updated_at)}</p>
-      )}
+      {/* 底部元信息行：任务号 + 更新时间。
+          任务号原来放在右上角，与 hover 浮现的操作按钮（absolute top-1.5 right-1）
+          叠在同一个位置——卡片一被悬停，id 就被按钮盖住。挪到这里两边都不挤。 */}
+      <div className="text-muted-foreground/70 flex items-center gap-2 text-[10px]">
+        <span data-slot="task-id" className="font-mono">
+          {task.id}
+        </span>
+        {task.updated_at && <span className="ml-auto shrink-0">{relativeTime(task.updated_at)}</span>}
+      </div>
 
       {/* 操作菜单：写操作都收在这里（需要 reason 的走对话框） */}
       <TaskMenu task={task} onAction={onAction} />
@@ -218,7 +225,8 @@ function TaskMenu({ task, onAction }: { task: TaskItem; onAction: (t: TaskItem, 
           <MoreHorizontalIcon />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      {/* min-w-40：最长的文案是“释放（保留进度）”，160px 能一行放下，不用折行 */}
+      <DropdownMenuContent align="end" className="min-w-40">
         <DropdownMenuGroup>
           <DropdownMenuItem disabled={!canClaim} onSelect={run("claim")}>
             <HandIcon data-icon="inline-start" />

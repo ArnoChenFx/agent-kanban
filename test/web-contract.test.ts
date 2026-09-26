@@ -1,0 +1,235 @@
+/**
+ * Web 看板与后端之间的**接口契约**测试。
+ *
+ * 为什么单独一个文件：Web 前端（web/src）不在 `tsc --noEmit` 的编译范围里，
+ * 也没有前端测试运行器，所以前后端"形状漂移"没人拦。
+ * 已经踩过一次：前端按 `{ task: {...} }` 拆 `task.get` 的返回值，
+ * 而服务端（以及 CLI / MCP）一直返回**任务本体**，
+ * 结果点开任务详情就抛 `Cannot read properties of undefined (reading 'plan_id')`。
+ *
+ * 这里钉住三件事：
+ * 1. `task.get` 的 data 就是任务本体（不是包装对象），且带上前端要读的字段
+ * 2. 前端 `web/src/lib/api.ts` 不能再出现 `data.task` 这种拆包装的写法
+ * 3. `handoff.list` / `task.transition` 这类前端在调的 Op 必须真的存在（曾长期是"未实现"）
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { migrate, openDb, setInitialConfig, type Db } from "../src/core/db.ts";
+import { createProject } from "../src/core/projects.ts";
+import { issueToken } from "../src/core/tokens.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { withTx } from "../src/core/tx.ts";
+import { startServer } from "../src/server/http.ts";
+import type { Op } from "../src/core/ops.ts";
+
+const FIXED_NOW = 1_767_225_600_000;
+const PROJECT = "web-demo";
+const ROOT = resolve(import.meta.dir, "..");
+
+let dir: string;
+let handle: Db;
+let server: ReturnType<typeof startServer>;
+let baseUrl: string;
+let token: string;
+
+beforeAll(() => {
+  dir = mkdtempSync(join(tmpdir(), "kanban-web-contract-"));
+  const dbPath = join(dir, "server.db");
+  handle = openDb(dbPath);
+  migrate(handle);
+  setInitialConfig(handle.raw, { projectName: "web-contract" });
+
+  withTx(handle.raw, (tx) => {
+    createProject(tx.db, { key: PROJECT, name: "Web 演示" });
+    createSession(tx, { agentName: "pi-main", id: "s-aaaaaa" });
+  });
+  token = issueToken(
+    handle.raw,
+    { role: "project", projects: [PROJECT], name: "web 测试 token" },
+    FIXED_NOW,
+  ).plaintext;
+
+  server = startServer({
+    dbPath,
+    host: "127.0.0.1",
+    port: 0,
+    reapIntervalSec: 3600,
+    now: () => FIXED_NOW,
+    noBootstrap: true,
+  });
+  baseUrl = server.url;
+});
+
+afterAll(() => {
+  server.stop();
+  handle.raw.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/** 走前端那条路：POST /api/op */
+async function callOp<T = Record<string, unknown>>(
+  op: Op,
+  sessionId: string | null = "s-aaaaaa",
+): Promise<{ status: number; ok: boolean; data: T; error?: { code: number; message: string } }> {
+  const res = await fetch(`${baseUrl}/api/op`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Kanban-Key": token,
+      ...(sessionId ? { "X-Kanban-Session": sessionId } : {}),
+    },
+    body: JSON.stringify({ project: PROJECT, op }),
+  });
+  const body = (await res.json()) as {
+    ok: boolean;
+    data?: T;
+    error?: { code: number; message: string };
+  };
+  return { status: res.status, ok: body.ok, data: body.data as T, error: body.error };
+}
+
+describe("task.get 的返回形状（前端点开任务详情走这条）", () => {
+  let taskId = "";
+
+  test("先建一张卡、认领、写交接（造出有 plan/时间线/交接的数据）", async () => {
+    const created = await callOp<{ id: string }>({
+      kind: "task.create",
+      params: { title: "打开任务详情的卡", priority: 1, checklist: ["第一步", "第二步"] },
+    });
+    expect(created.ok).toBe(true);
+    taskId = created.data.id;
+
+    await callOp({ kind: "task.claim", params: { task_id: taskId } });
+    await callOp({ kind: "task.progress", params: { task_id: taskId, pct: 50, note: "改到一半" } });
+    await callOp({
+      kind: "handoff.create",
+      params: { task_id: taskId, summary: "前半段做完了", next_step: "收尾" },
+    });
+  });
+
+  test("data 就是任务本体，不带 { task } 包装", async () => {
+    const res = await callOp<Record<string, unknown>>({
+      kind: "task.get",
+      params: { task_id: taskId, timeline: true, tail: 20 },
+    });
+    expect(res.ok).toBe(true);
+
+    // 前端就是按"顶层即任务"来读字段的：任何一层少字段都会在页面上崩或空白
+    expect(res.data.id).toBe(taskId);
+    expect(res.data.title).toBe("打开任务详情的卡");
+    expect(typeof res.data.status).toBe("string");
+    expect(typeof res.data.progress).toBe("number");
+    expect("plan_id" in res.data).toBe(true);
+    expect(Array.isArray(res.data.labels)).toBe(true);
+    expect(Array.isArray(res.data.checklist)).toBe(true);
+
+    // 关键回归点：如果哪天服务端又改成包装返回，这里会看到 data.task 有值
+    expect("task" in res.data).toBe(false);
+  });
+
+  test("timeline: true 时事件与任务在同一次响应里", async () => {
+    const res = await callOp<Record<string, unknown>>({
+      kind: "task.get",
+      params: { task_id: taskId, timeline: true, tail: 20 },
+    });
+    expect(Array.isArray(res.data.timeline)).toBe(true);
+    // 至少要有认领/进度/交接这几条事件
+    expect((res.data.timeline as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  test("任务不存在时给的是 state 错误，不是空对象", async () => {
+    const res = await callOp({ kind: "task.get", params: { task_id: "T-9999" } });
+    expect(res.ok).toBe(false);
+    expect(res.error?.code).toBe(2);
+  });
+});
+
+describe("前端在调、服务端必须存在的 Op", () => {
+  test("handoff.list 返回交接数组（详情页“交接”页签的数据源）", async () => {
+    const list = await callOp<{ kind: "task.list"; params: { limit: number } }>({
+      kind: "task.list",
+      params: { limit: 1 },
+    });
+    const taskId = (list.data as unknown as Array<{ id: string }>)[0]!.id;
+
+    const res = await callOp<Array<Record<string, unknown>>>({
+      kind: "handoff.list",
+      params: { task_id: taskId },
+    });
+    expect(res.ok).toBe(true);
+    expect(Array.isArray(res.data)).toBe(true);
+    // Handoffs 组件读的字段
+    for (const h of res.data) {
+      expect(typeof h.id).toBe("number");
+      expect(typeof h.summary).toBe("string");
+      expect(typeof h.from_session).toBe("string");
+      expect(typeof h.created_at).toBe("number");
+      expect(Array.isArray(h.blockers)).toBe(true);
+      expect(Array.isArray(h.open_questions)).toBe(true);
+      expect("consumed_by" in h).toBe(true);
+    }
+  });
+
+  test("task.transition 能改状态（看板拖拽/菜单改状态走这条）", async () => {
+    const created = await callOp<{ id: string }>({
+      kind: "task.create",
+      params: { title: "改状态的卡", priority: 2 },
+    });
+    const id = created.data.id;
+
+    const ok = await callOp<{ status: string; unblocked: string[] }>({
+      kind: "task.transition",
+      params: { task_id: id, to: "blocked", reason: "等接口定稿" },
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.data.status).toBe("blocked");
+    expect(Array.isArray(ok.data.unblocked)).toBe(true);
+
+    // 非法转移必须报 state（exit 2），而不是被放行
+    const bad = await callOp({ kind: "task.transition", params: { task_id: id, to: "done" } });
+    expect(bad.ok).toBe(false);
+    expect(bad.error?.code).toBe(2);
+  });
+
+  test("未知 Op 仍然是明确报错，不会被当成成功", async () => {
+    const res = await callOp({ kind: "task.definitely-not-real" } as unknown as Op);
+    expect(res.ok).toBe(false);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe("前端源码不得再拆 { task } 包装（本次 bug 的静态守卫）", () => {
+  /** web/src 下的所有源码（前端不在根 tsc 编译范围，只能静态扫） */
+  function readWebSources(): Array<[string, string]> {
+    const dir = join(ROOT, "web", "src");
+    return readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile() && /\.tsx?$/.test(e.name) && !e.name.endsWith(".d.ts"))
+      .map((e) => [join(e.parentPath, e.name), readFileSync(join(e.parentPath, e.name), "utf8")] as [string, string]);
+  }
+
+  test("web 源码里没有 data.task 取值", () => {
+    for (const [file, src] of readWebSources()) {
+      // 曾经的写法：const task = data.task → 运行时 undefined → 读 plan_id 崩
+      expect(`${file}: ${/data\s*\.\s*task\b/.test(src)}`).toContain("false");
+    }
+  });
+
+  test("web 调用的每个 Op 都在服务端 Op 联合类型里有实现", () => {
+    const opsSrc = readFileSync(join(ROOT, "src", "core", "ops.ts"), "utf8");
+
+    // Op 名都是 `领域.动作`，因此只取带点的字面量
+    // （HandoffItem 里的 kind: "voluntary" 这类枚举值不带点，会被自然排除）
+    const kinds = new Set<string>();
+    for (const [file, src] of readWebSources()) {
+      for (const m of src.matchAll(/kind:\s*"([a-z]+\.[a-z.]+)"/g)) kinds.add(m[1]!);
+    }
+    expect(kinds.size).toBeGreaterThan(0);
+
+    // 未实现的 Op 会让整段交互静默失效（前端 .catch 吞掉），所以这里逐个钉住
+    const missing = [...kinds].filter((k) => !opsSrc.includes(`case "${k}":`));
+    expect(missing).toEqual([]);
+  });
+});
