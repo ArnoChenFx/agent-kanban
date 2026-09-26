@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ],
+  // shadcn CLI 读取根 tsconfig 的 paths 解析 `@/` 别名
+  // 注意：不写 baseUrl（TypeScript 7 已弃用），paths 用相对路径即可
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}

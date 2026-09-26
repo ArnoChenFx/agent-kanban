@@ -1,0 +1,666 @@
+/**
+ * 看板主页面。
+ *
+ * 三块结构：
+ *   顶栏  —— project 切换、新建任务、亮/暗切换、连接状态
+ *   泳道  —— 7 条泳道，卡片可拖拽改状态（受状态机守卫约束）
+ *   侧栏  —— 交接（崩溃恢复的核心）、会话、建议动作
+ *
+ * 数据流：首次 load 拉 /api/board → SSE 收到事件 → 防抖后重新拉 board。
+ * 不做增量更新：看板数据量小（几百张卡），全量重拉比维护 diff 更不容易出错。
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core"
+import {
+  AlertTriangleIcon,
+  CheckIcon,
+  InboxIcon,
+  MoonIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SunIcon,
+  WifiIcon,
+  WifiOffIcon,
+} from "lucide-react"
+import { toast } from "sonner"
+
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+
+import { Lane, TaskCard, type CardAction } from "@/components/task-card"
+import { TaskDetailSheet, SessionsPanel } from "@/components/task-detail"
+import {
+  ConflictDialog,
+  HandoffDialog,
+  NewTaskDialog,
+  ProgressDialog,
+  ReasonDialog,
+} from "@/components/dialogs"
+import { LoginCard } from "@/components/login"
+import {
+  ApiError,
+  executeOp,
+  fetchBoard,
+  fetchContext,
+  fetchProjects,
+  getLastProject,
+  getToken,
+  setLastProject,
+  setToken,
+  subscribeEvents,
+  type BoardSnapshot,
+  type RecoveryContext,
+  type TaskItem,
+  type TaskStatus,
+} from "@/lib/api"
+import { LANE_ORDER, STATUS_META, canMove, relativeTime } from "@/lib/status"
+
+export function Board() {
+  // 注意：URL 里的 ?key=… 由 main.tsx 在 render 前统一处理（启动引导）
+  const [token, setTokenState] = useState<string | null>(getToken())
+  const [project, setProject] = useState<string | null>(getLastProject())
+  const [projects, setProjects] = useState<Array<{ key: string; name: string }>>([])
+  const [board, setBoard] = useState<BoardSnapshot | null>(null)
+  const [context, setContext] = useState<RecoveryContext | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [online, setOnline] = useState(false)
+  const [dark, setDark] = useState(() => localStorage.getItem("kanban.theme") === "dark")
+
+  const [selected, setSelected] = useState<TaskItem | null>(null)
+  const [dragging, setDragging] = useState<TaskItem | null>(null)
+  const [dialog, setDialog] = useState<{ kind: CardAction; task: TaskItem } | null>(null)
+  const [newTaskOpen, setNewTaskOpen] = useState(false)
+  const [conflict, setConflict] = useState<{ task: TaskItem; holder: { session: string; progress?: number; lastSeen?: string } | null } | null>(null)
+
+  // 亮/暗模式：写 <html class="dark">，主题令牌整体切换
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark)
+    localStorage.setItem("kanban.theme", dark ? "dark" : "light")
+  }, [dark])
+
+  // ---- 拉取 project 列表 ----
+  useEffect(() => {
+    if (!token) return
+    fetchProjects(token)
+      .then((list) => {
+        setProjects(list.map((p) => ({ key: p.key, name: p.name })))
+        if (!project && list.length > 0) {
+          setProject(list[0]!.key)
+          setLastProject(list[0]!.key)
+        }
+      })
+      .catch((e) => {
+        if (e instanceof ApiError && e.isAuth) {
+          setToken(null)
+          setTokenState(null)
+        }
+      })
+  }, [token, project])
+
+  // ---- 拉取看板 + 恢复上下文 ----
+  const reload = useCallback(async () => {
+    if (!token || !project) return
+    try {
+      const [b] = await Promise.all([fetchBoard(token, project), fetchContext(token, project, null).catch(() => null)])
+      setBoard(b)
+      if (b) setContext((c) => c)
+    } catch (e) {
+      if (e instanceof ApiError && e.isAuth) {
+        setTokenState(null)
+        setToken(null)
+      }
+    }
+  }, [token, project])
+
+  useEffect(() => {
+    setLoading(true)
+    setBoard(null)
+    fetchContext(token ?? "", project ?? "", null)
+      .then(setContext)
+      .catch(() => undefined)
+      .finally(() => setLoading(false))
+  }, [token, project])
+
+  useEffect(() => {
+    reload()
+  }, [reload])
+
+  // ---- SSE：收到事件就防抖重拉 ----
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!token || !project) return
+    const handle = subscribeEvents(
+      token,
+      project,
+      board?.head_seq ?? 0,
+      () => {
+        if (reloadTimer.current) clearTimeout(reloadTimer.current)
+        // agent 批量写时会连发很多事件，防抖避免请求风暴
+        reloadTimer.current = setTimeout(reload, 400)
+      },
+      setOnline,
+    )
+    return () => {
+      handle.close()
+      if (reloadTimer.current) clearTimeout(reloadTimer.current)
+    }
+  }, [token, project, board?.head_seq, reload])
+
+  // ---- 派生数据 ----
+  const sessionById = useMemo(() => {
+    const map = new Map<string, { agent_name: string; stale: boolean }>()
+    for (const s of board?.sessions ?? []) map.set(s.id, { agent_name: s.agent_name, stale: s.stale })
+    return map
+  }, [board])
+
+  const tasksById = useMemo(() => {
+    const map = new Map<string, TaskItem>()
+    for (const list of Object.values(board?.lanes ?? {})) {
+      for (const t of list ?? []) map.set(t.id, t)
+    }
+    return map
+  }, [board])
+
+  const isStale = (task: TaskItem) =>
+    task.assignee_session_id ? (sessionById.get(task.assignee_session_id)?.stale ?? false) : false
+
+  // ---- 写操作统一出口：把后端错误翻译成人话 ----
+  const run = useCallback(
+    async (op: { kind: string; params?: Record<string, unknown> }, successMsg: string) => {
+      if (!token || !project) return false
+      try {
+        const { nextActions } = await executeOp<unknown>(token, project, op)
+        toast.success(successMsg, {
+          // 把后端给的 next_actions 也显示出来：这是给 agent 看的，对人同样有用
+          description: nextActions[0],
+        })
+        await reload()
+        return true
+      } catch (e) {
+        if (e instanceof ApiError) {
+          if (e.isAuth) toast.error("token 无效或已过期", { description: "重新登录一下" })
+          else if (e.isConflict) toast.error("被别的 agent 抢先了", { description: String(e.details.holder ?? e.message) })
+          else if (e.isBusy) toast.error("数据库忙，请稍后重试")
+          else toast.error(e.message, {
+            description: typeof e.details.hint === "string" ? e.details.hint : undefined,
+          })
+        } else {
+          toast.error("未知错误", { description: String(e) })
+        }
+        return false
+      }
+    },
+    [token, project, reload],
+  )
+
+  // ---- 卡片操作分发 ----
+  const onCardAction = useCallback(
+    async (task: TaskItem, action: CardAction) => {
+      switch (action) {
+        case "claim":
+          await run({ kind: "task.claim", params: { task_id: task.id } }, `已认领 ${task.id}`)
+          break
+        case "progress":
+        case "handoff":
+        case "block":
+        case "cancel":
+        case "reopen":
+          // 这四个需要额外信息（hmm/block/cancel/reopen 要 reason，progress 要数值）
+          setDialog({ kind: action, task })
+          break
+        case "review":
+          await run({ kind: "task.review", params: { task_id: task.id } }, `已提交评审：${task.id}`)
+          break
+        case "done":
+          await run({ kind: "task.done", params: { task_id: task.id, force: true } }, `已完成：${task.id}`)
+          break
+        case "unblock":
+          await run({ kind: "task.unblock", params: { task_id: task.id } }, `已解除阻塞：${task.id}`)
+          break
+        case "release":
+          await run({ kind: "task.release", params: { task_id: task.id } }, `已释放（进度保留）：${task.id}`)
+          break
+      }
+    },
+    [run],
+  )
+
+  // ---- 拖拽 ----
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  const onDragStart = (e: DragStartEvent) => {
+    const id = String(e.active.id)
+    setDragging(tasksById.get(id) ?? null)
+  }
+
+  const onDragEnd = async (e: DragEndEvent) => {
+    setDragging(null)
+    const id = String(e.active.id)
+    const task = tasksById.get(id)
+    if (!task || !e.over) return
+
+    const to = e.over.data.current?.status as TaskStatus | undefined
+    if (!to || to === task.status) return
+
+    const check = canMove(task.status, to)
+    if (!check.ok) {
+      toast.warning(check.reason ?? "这一步走不通")
+      return
+    }
+    // todo → cancelled / backlog → todo 这类直接调状态机即可
+    const ok = await run({ kind: "task.transition", params: { task_id: task.id, to } }, `${task.id} → ${STATUS_META[to].label}`)
+    if (!ok) {
+      // 冲突：给出"强行接管"的选项
+      if (task.status === "doing") {
+        setConflict({
+          task,
+          holder: {
+            session: task.assignee_session_id ?? "?",
+            progress: task.progress,
+          },
+        })
+      }
+    }
+  }
+
+  // ---- 未登录 ----
+  if (!token) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <LoginCard
+          onLogin={(t, p) => {
+            setToken(t)
+            setTokenState(t)
+            if (p) {
+              setProject(p)
+              setLastProject(p)
+            }
+          }}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-screen flex-col">
+      {/* ---------- 顶栏 ---------- */}
+      <header className="border-border flex items-center gap-3 border-b px-4 py-2.5">
+        <h1 className="font-heading text-lg font-semibold">agent-kanban</h1>
+
+        <Select value={project ?? undefined} onValueChange={setProject}>
+          <SelectTrigger size="sm" className="w-44">
+            <SelectValue placeholder="选择 project" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {projects.map((p) => (
+                <SelectItem key={p.key} value={p.key}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+
+        <div className="ml-auto flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setNewTaskOpen(true)
+                }}
+                aria-label="新建任务"
+              >
+                <PlusIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>新建任务</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" onClick={reload} aria-label="刷新">
+                <RefreshCwIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>刷新</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setDark(!dark)}
+                aria-label="切换亮暗"
+              >
+                {dark ? <SunIcon /> : <MoonIcon />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{dark ? "切到浅色" : "切到深色"}</TooltipContent>
+          </Tooltip>
+
+          {/* 实时连接状态：SSE 断了要看得见，否则用户会以为看板不动了 */}
+          <Badge variant={online ? "secondary" : "outline"} className="gap-1">
+            {online ? <WifiIcon /> : <WifiOffIcon />}
+            {online ? "实时" : "离线"}
+          </Badge>
+
+          <Separator orientation="vertical" className="mx-1 h-5" />
+
+          <Button variant="ghost" size="sm" onClick={() => setToken(null)}>
+            退出
+          </Button>
+        </div>
+      </header>
+
+      {/* ---------- 失联告警条：最高优先级信息，不能藏在侧栏 ---------- */}
+      {context && context.zombie_sessions.length > 0 && (
+        <Alert variant="destructive" className="mx-4 mt-3">
+          <AlertTriangleIcon />
+          <AlertTitle>
+            {context.zombie_sessions.length} 个会话失联
+          </AlertTitle>
+          <AlertDescription>
+            {context.zombie_sessions.map((z) => (
+              <p key={z.session_id}>
+                {z.agent_name}（{z.session_id}，{z.silent_minutes} 分钟无心跳）持有{" "}
+                {z.tasks.map((t) => `${t.id} ${t.title}`).join("、") || "无任务"}
+              </p>
+            ))}
+            <p className="text-xs">
+              CLI 接管：<code>kanban resume &lt;任务号&gt;</code>（进度会自动保留）
+            </p>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* ---------- 主体 ---------- */}
+      <div className="flex min-h-0 flex-1">
+        <ScrollArea className="min-w-0 flex-1">
+          {loading ? (
+            <div className="flex min-h-[60vh] flex-wrap content-start gap-4 p-4">
+              {LANE_ORDER.slice(0, 4).map((s) => (
+                <div key={s} className="min-w-72 flex-1">
+                  <Skeleton className="mb-2 h-5 w-20" />
+                  <Skeleton className="mb-2 h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </div>
+              ))}
+            </div>
+          ) : board && Object.values(board.lanes).some((l) => (l ?? []).length > 0) ? (
+            <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+              {/* 泳道换行而不是横向滚动：7 条泳道在 1400px 宽度下会排成 2-3 行，
+                  全局扫视比左右拖动重要得多；卡片窄一点也能读 */}
+              <div className="flex flex-wrap content-start gap-4 p-4">
+                {LANE_ORDER.map((status) => {
+                  const tasks = board.lanes[status] ?? []
+                  return (
+                    <Lane key={status} status={status} tasks={tasks}>
+                      {tasks.map((task) => (
+                        <TaskCard
+                          key={task.id}
+                          task={task}
+                          holderName={sessionById.get(task.assignee_session_id ?? "")?.agent_name}
+                          holderStale={isStale(task)}
+                          onOpen={setSelected}
+                          onAction={onCardAction}
+                        />
+                      ))}
+                    </Lane>
+                  )
+                })}
+              </div>
+              {/* 拖拽中的浮层：让用户看清自己拖的是哪张卡 */}
+              <DragOverlay>
+                {dragging && (
+                  <div className="card-lift w-72">
+                    <TaskCardPreview task={dragging} />
+                  </div>
+                )}
+              </DragOverlay>
+            </DndContext>
+          ) : (
+            <Empty className="min-h-[60vh]">
+              <EmptyHeader>
+                <InboxIcon />
+                <EmptyTitle>看板还是空的</EmptyTitle>
+                <EmptyDescription>
+                  新建第一张卡，或在项目目录里执行 <code>kanban task add "..."</code>
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button onClick={() => setNewTaskOpen(true)}>
+                  <PlusIcon data-icon="inline-start" />
+                  新建任务
+                </Button>
+              </EmptyContent>
+            </Empty>
+          )}
+        </ScrollArea>
+
+        {/* ---------- 右侧栏：交接 / 会话 / 建议 ---------- */}
+        <aside className="border-border bg-sidebar hidden w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l p-4 lg:flex">
+          <section>
+            <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+              交给你的交接
+              {context && context.pending_handoffs.length > 0 && (
+                <Badge className="status-chip border-0" style={{ ["--chip-color" as string]: "var(--status-review)" }}>
+                  {context.pending_handoffs.length}
+                </Badge>
+              )}
+            </h2>
+            {context && context.pending_handoffs.length > 0 ? (
+              <ul className="flex flex-col gap-2">
+                {context.pending_handoffs.map((h) => (
+                  <li
+                    key={h.id}
+                    className="flex flex-col gap-1 rounded-md border p-2 text-sm"
+                    style={{
+                      ["--chip-color" as string]:
+                        h.kind === "crash" ? "var(--status-stale)" : "var(--status-doing)",
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge className="status-chip border-0">
+                        {h.kind === "crash" ? "崩溃合成" : "主动"}
+                      </Badge>
+                      <span className="text-muted-foreground text-[11px]">{relativeTime(h.created_at)}</span>
+                    </div>
+                    <p className="font-mono text-xs">{h.task_id}</p>
+                    <p className="line-clamp-3 text-xs">{h.summary}</p>
+                    {h.next_step && <p className="text-muted-foreground text-[11px]">→ {h.next_step}</p>}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-1 h-7 text-xs"
+                      onClick={() => {
+                        const t = tasksById.get(h.task_id)
+                        if (t) setSelected(t)
+                      }}
+                    >
+                      查看
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-muted-foreground text-sm">没有待接手的交接</p>
+            )}
+          </section>
+
+          <Separator />
+
+          <section>
+            <h2 className="mb-2 text-sm font-semibold">会话</h2>
+            <SessionsPanel sessions={board?.sessions ?? []} tasksById={tasksById} />
+          </section>
+
+          {context && context.next_actions.length > 0 && (
+            <>
+              <Separator />
+              <section>
+                <h2 className="mb-2 text-sm font-semibold">建议接下来</h2>
+                <ul className="text-muted-foreground flex flex-col gap-1 text-xs">
+                  {context.next_actions.slice(0, 6).map((a, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <CheckIcon className="text-status-done mt-0.5 size-3 shrink-0" />
+                      {a}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </>
+          )}
+
+          <Separator />
+
+          <section>
+            <h2 className="mb-2 text-sm font-semibold">命令行等价</h2>
+            <ul className="text-muted-foreground space-y-1 font-mono text-[11px]">
+              <li>kanban context</li>
+              <li>kanban resume &lt;任务号&gt;</li>
+              <li>kanban board</li>
+              <li>kanban doctor --deep</li>
+            </ul>
+          </section>
+        </aside>
+      </div>
+
+      {/* ---------- 对话框 ---------- */}
+      <TaskDetailSheet task={selected} token={token} project={project ?? ""} onClose={() => setSelected(null)} />
+
+      <NewTaskDialog
+        open={newTaskOpen}
+        onOpenChange={setNewTaskOpen}
+        onConfirm={async (input) => {
+          await run(
+            {
+              kind: "task.create",
+              params: {
+                title: input.title,
+                body: input.body,
+                priority: input.priority,
+                labels: input.labels,
+                checklist: input.checklist,
+                blocked_by: input.blocked_by,
+              },
+            },
+            "任务已创建",
+          )
+        }}
+      />
+
+      <ProgressDialog
+        open={dialog?.kind === "progress"}
+        onOpenChange={(v) => !v && setDialog(null)}
+        task={dialog?.task ?? null}
+        onConfirm={async (input) => {
+          if (!dialog) return
+          await run(
+            { kind: "task.progress", params: { task_id: dialog.task.id, ...input } },
+            `进度已更新：${dialog.task.id}`,
+          )
+        }}
+      />
+
+      <HandoffDialog
+        open={dialog?.kind === "handoff"}
+        onOpenChange={(v) => !v && setDialog(null)}
+        task={dialog?.task ?? null}
+        onConfirm={async (input) => {
+          if (!dialog) return
+          await run(
+            { kind: "handoff.create", params: { task_id: dialog.task.id, ...input } },
+            "交接已记录，下一个会话会看到",
+          )
+        }}
+      />
+
+      <ReasonDialog
+        open={dialog?.kind === "block" || dialog?.kind === "cancel" || dialog?.kind === "reopen"}
+        onOpenChange={(v) => !v && setDialog(null)}
+        title={
+          dialog?.kind === "block" ? "标记阻塞" : dialog?.kind === "cancel" ? "取消任务" : "重新打开"
+        }
+        description={
+          dialog?.kind === "block"
+            ? "阻塞需要人介入，说明白卡在哪，下一个 agent 才知道该不该换路。"
+            : dialog?.kind === "cancel"
+              ? "取消是终态。写清原因，将来有人问起时能看到当时的判断。"
+              : "重新打开会把任务拉回待办（进度保留）。"
+        }
+        confirmLabel={dialog?.kind === "block" ? "标记阻塞" : dialog?.kind === "cancel" ? "取消任务" : "重新打开"}
+        onConfirm={async (reason) => {
+          if (!dialog) return
+          const op =
+            dialog.kind === "block"
+              ? { kind: "task.block", params: { task_id: dialog.task.id, reason } }
+              : dialog.kind === "cancel"
+                ? { kind: "task.cancel", params: { task_id: dialog.task.id, reason } }
+                : { kind: "task.reopen", params: { task_id: dialog.task.id, reason } }
+          await run(op, "已更新")
+        }}
+      />
+
+      <ConflictDialog
+        open={conflict !== null}
+        onOpenChange={(v) => !v && setConflict(null)}
+        holder={conflict?.holder ?? null}
+        onForce={async () => {
+          if (!conflict) return
+          await run(
+            { kind: "task.claim", params: { task_id: conflict.task.id, force: true } },
+            `已强行接管 ${conflict.task.id}（已记录 reclaimed 事件）`,
+          )
+        }}
+      />
+    </div>
+  )
+}
+
+/** 拖拽浮层里的卡片缩略（不需要交互，只要能认出来） */
+function TaskCardPreview({ task }: { task: TaskItem }) {
+  const meta = STATUS_META[task.status]
+  return (
+    <div
+      className="bg-card flex flex-col gap-1 rounded-lg border p-3 shadow-lg"
+      style={{ ["--chip-color" as string]: `var(${meta.colorVar})` }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="lane-accent size-2 rounded-full" />
+        <span className="font-mono text-[10px] text-muted-foreground">{task.id}</span>
+      </div>
+      <p className="line-clamp-2 text-sm font-medium">{task.title}</p>
+    </div>
+  )
+}

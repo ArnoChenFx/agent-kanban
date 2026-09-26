@@ -1,0 +1,7 @@
+[install]
+# 全部使用精确版本，避免不同 agent 会话装出不同依赖树
+exact = true
+
+[test]
+# 串行执行：并发与租约相关测试共享真实时间语义，串行更稳定
+coverage = false

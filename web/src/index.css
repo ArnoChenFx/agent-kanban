@@ -1,0 +1,250 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    /* ---- 任务状态色（接入 Tailwind，可写 text-status-doing / bg-status-todo）---- */
+    --color-status-backlog: var(--status-backlog);
+    --color-status-todo: var(--status-todo);
+    --color-status-doing: var(--status-doing);
+    --color-status-blocked: var(--status-blocked);
+    --color-status-review: var(--status-review);
+    --color-status-done: var(--status-done);
+    --color-status-cancelled: var(--status-cancelled);
+    --color-status-stale: var(--status-stale);
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', sans-serif;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    /* 标题用衬线：纸面看板的“手写标题”感；正文保持无衬线以保证可读性 */
+    --font-heading: "Iowan Old Style", "Palatino Linotype", "Source Han Serif SC", "Songti SC", "Noto Serif CJK SC", serif;
+    --font-sans: 'Geist Variable', -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    --font-mono: 'Geist Mono Variable', ui-monospace, "Cascadia Code", "SFMono-Regular", monospace;
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ============================================================================
+   晨雾 Paper —— agent-kanban 专属主题
+   ----------------------------------------------------------------------------
+   设计意图：像一张摆在会议室里的实体白板。暖米白纸面、墨绿笔迹、蛭石便签。
+   刻意避开“黑白灰”的开发者默认配色——中性色全部带暖度，靠色温而非明度分层，
+   因此浅色模式下长时间盯屏不会显得刺眼，会议室投影下也有足够对比。
+
+   状态色与任务状态一一对应（见 --status-* 令牌），让“这条卡是什么状态”
+   不必读文字就能判断：
+
+   | 状态       | 颜色     | 语义           |
+   | backlog    | 淡藤灰   | 还没进待办      |
+   | todo       | 蛭石     | 排队中          |
+   | doing      | 墨绿     | 有人正在做      |
+   | blocked    | 酒红     | 卡住，需要人介入 |
+   | review     | 黛紫     | 等待人确认      |
+   | done       | 草绿     | 完成            |
+   | cancelled  | 淡陶土   | 取消            |
+   ========================================================================== */
+
+:root {
+    /* ---- 纸面 ---- */
+    --background: oklch(0.977 0.008 85);        /* #FBF8F2 暖米白 */
+    --foreground: oklch(0.245 0.012 60);        /* #2B2825 墨色 */
+
+    --card: oklch(1 0 0);                        /* 纯白，带微阴影 */
+    --card-foreground: oklch(0.245 0.012 60);
+    --popover: oklch(0.995 0.004 85);
+    --popover-foreground: oklch(0.245 0.012 60);
+
+    /* ---- 墨绿主色：进行中 / 主动作 ---- */
+    --primary: oklch(0.46 0.072 168);            /* #2F6F5E */
+    --primary-foreground: oklch(0.985 0.008 85);
+
+    --secondary: oklch(0.945 0.014 82);          /* 淡奶褐 */
+    --secondary-foreground: oklch(0.34 0.02 65);
+    --muted: oklch(0.952 0.01 85);
+    --muted-foreground: oklch(0.52 0.014 70);   /* #7A746B */
+    --accent: oklch(0.935 0.028 82);            /* 蛭石调的淡底 */
+    --accent-foreground: oklch(0.36 0.045 55);
+
+    /* ---- 强调：蛭石（待办 / 次要强调）---- */
+    --status-todo: oklch(0.63 0.106 62);         /* #C98A3C */
+    --status-doing: oklch(0.46 0.072 168);       /* #2F6F5E 墨绿 */
+    --status-blocked: oklch(0.47 0.132 25);      /* #A6403C 酒红 */
+    --status-done: oklch(0.52 0.078 140);        /* #5B7F5A 草绿 */
+    --status-review: oklch(0.5 0.096 295);       /* 黛紫 */
+    --status-backlog: oklch(0.68 0.028 80);      /* 淡藤灰 */
+    --status-cancelled: oklch(0.62 0.03 45);     /* 淡陶土 */
+    --status-stale: oklch(0.55 0.15 60);         /* 失联告警 */
+
+    --destructive: oklch(0.47 0.132 25);         /* 与 blocked 同色：都是“出事了” */
+
+    /* ---- 线条：比纯黑淡、带暖度 ---- */
+    --border: oklch(0.895 0.012 78);
+    --input: oklch(0.885 0.014 78);
+    --ring: oklch(0.46 0.072 168);
+
+    /* ---- 图表序列：按主色→状态色的顺序取，保证语义一致 ---- */
+    --chart-1: oklch(0.46 0.072 168);   /* 墨绿 */
+    --chart-2: oklch(0.63 0.106 62);    /* 蛭石 */
+    --chart-3: oklch(0.52 0.078 140);   /* 草绿 */
+    --chart-4: oklch(0.5 0.096 295);    /* 黛紫 */
+    --chart-5: oklch(0.47 0.132 25);    /* 酒红 */
+
+    --radius: 0.5rem;
+
+    --sidebar: oklch(0.955 0.01 84);
+    --sidebar-foreground: oklch(0.245 0.012 60);
+    --sidebar-primary: oklch(0.46 0.072 168);
+    --sidebar-primary-foreground: oklch(0.985 0.008 85);
+    --sidebar-accent: oklch(0.93 0.02 82);
+    --sidebar-accent-foreground: oklch(0.34 0.02 65);
+    --sidebar-border: oklch(0.895 0.012 78);
+    --sidebar-ring: oklch(0.46 0.072 168);
+}
+
+/* ----------------------------------------------------------------------------
+   暗色：不是简单反色，而是“夜里的灯下白板”。
+   背景变成深墨褐，卡片略亮于背景，色相保持不变但提高明度与彩度以适配深底。
+   -------------------------------------------------------------------------- */
+.dark {
+    --background: oklch(0.19 0.012 65);
+    --foreground: oklch(0.93 0.01 80);
+    /* 卡片比背景亮一阶就行；差距太小则卡片会“浮不起来”，看不出边界 */
+    --card: oklch(0.265 0.015 65);
+    --card-foreground: oklch(0.93 0.01 80);
+    --popover: oklch(0.265 0.015 65);
+    --popover-foreground: oklch(0.93 0.01 80);
+
+    --primary: oklch(0.68 0.09 168);
+    --primary-foreground: oklch(0.18 0.02 168);
+    --secondary: oklch(0.32 0.016 65);
+    --secondary-foreground: oklch(0.92 0.01 80);
+    --muted: oklch(0.3 0.013 65);
+    --muted-foreground: oklch(0.7 0.014 75);
+    --accent: oklch(0.35 0.028 75);
+    --accent-foreground: oklch(0.94 0.01 80);
+
+    /* 暗底上把状态色整体提亮，否则墨绿/酒红会隐进背景 */
+    --status-todo: oklch(0.74 0.12 68);
+    --status-doing: oklch(0.68 0.09 168);
+    --status-blocked: oklch(0.66 0.15 25);
+    --status-done: oklch(0.68 0.1 145);
+    --status-review: oklch(0.68 0.11 295);
+    --status-backlog: oklch(0.55 0.03 80);
+    --status-cancelled: oklch(0.58 0.035 45);
+    --status-stale: oklch(0.72 0.16 62);
+
+    --destructive: oklch(0.66 0.15 25);
+
+    --border: oklch(0.36 0.016 65);
+    --input: oklch(0.37 0.018 65);
+    --ring: oklch(0.68 0.09 168);
+
+    --chart-1: oklch(0.68 0.09 168);
+    --chart-2: oklch(0.74 0.12 68);
+    --chart-3: oklch(0.68 0.1 145);
+    --chart-4: oklch(0.68 0.11 295);
+    --chart-5: oklch(0.66 0.15 25);
+
+    --sidebar: oklch(0.215 0.012 65);
+    --sidebar-foreground: oklch(0.93 0.01 80);
+    --sidebar-primary: oklch(0.68 0.09 168);
+    --sidebar-primary-foreground: oklch(0.18 0.02 168);
+    --sidebar-accent: oklch(0.33 0.022 72);
+    --sidebar-accent-foreground: oklch(0.94 0.01 80);
+    --sidebar-border: oklch(0.36 0.016 65);
+    --sidebar-ring: oklch(0.68 0.09 168);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    /* 纸面质感：一层极淡的暖色渐晕，避免大块纯色显得“死” */
+    background-image: radial-gradient(
+      ellipse 80% 60% at 50% -10%,
+      color-mix(in oklch, var(--primary) 5%, transparent),
+      transparent 70%
+    );
+    }
+  html {
+    @apply font-sans;
+    }
+  /* 标题默认走衬线，与“纸面”主题一致 */
+  h1, h2, h3 {
+    @apply font-heading;
+    }
+  /* --chip-color 是状态工具类的唯一颜色来源，
+     默认给墨绿；具体状态由组件行内 style 覆盖（见 lib/status.ts） */
+  :root {
+    --chip-color: var(--status-doing);
+  }
+}
+
+/* ============================================================================
+   任务状态专用工具类
+   ----------------------------------------------------------------------------
+   为什么不用 Badge 的 variant：shadcn 的 variant 是有限枚举，而看板有 7 个状态
+   × 亮/暗两套语义。这里用 CSS 变量驱动，颜色变了只要改 :root 里的令牌。
+   写法遵循「用语义类名，不在组件里写裸颜色值」的原则。
+   ========================================================================== */
+
+@layer components {
+  /* 状态徽标：淡底 + 同色系文字 + 细边 */
+  .status-chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap;
+    background-color: color-mix(in oklch, var(--chip-color) 12%, transparent);
+    border-color: color-mix(in oklch, var(--chip-color) 30%, transparent);
+    color: var(--chip-color);
+  }
+
+  /* 泳道色条：卡片顶部的细线，一眼区分状态 */
+  .lane-accent {
+    background-color: var(--chip-color);
+  }
+
+  /* 卡片被拖起时的抬起效果 */
+  .card-lift {
+    @apply shadow-lg;
+    transform: rotate(1.5deg);
+    cursor: grabbing;
+  }
+}
