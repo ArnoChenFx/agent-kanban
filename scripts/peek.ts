@@ -1,7 +1,10 @@
 // 一次性排查脚本：检查数据库结构与 project 数据
 import { Database } from "bun:sqlite";
+import { join, resolve } from "node:path";
 
-const path = process.argv[2] ?? "E:/Project/agent-kanban/.kanban/kanban.db";
+// 默认打开仓库自用的开发库；从脚本位置推导，不能写死绝对路径
+const ROOT = resolve(import.meta.dir, "..");
+const path = process.argv[2] ?? join(ROOT, ".kanban", "kanban.db");
 const db = new Database(path, { readwrite: true, create: false });
 
 console.log("schema_version =", db.query("SELECT v FROM meta WHERE k='schema_version'").get());

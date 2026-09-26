@@ -3,10 +3,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const ROOT = "E:/Project/agent-kanban";
+// 仓库根目录：从本脚本位置推导，不能写死绝对路径（CI 克隆路径不同）
+const ROOT = resolve(import.meta.dir, "..");
 /** CLI 入口的绝对路径：客户端在临时目录，不能用相对路径 */
 const CLI = join(ROOT, "src", "cli.ts");
 const dir = mkdtempSync(join(tmpdir(), "kanban-auth-"));

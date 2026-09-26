@@ -7,10 +7,11 @@
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const ROOT = "E:/Project/agent-kanban";
+// 仓库根目录：从本脚本位置推导，不能写死绝对路径（CI 克隆路径不同）
+const ROOT = resolve(import.meta.dir, "..");
 const dir = mkdtempSync(join(tmpdir(), "kanban-remote-"));
 const serverDb = join(dir, "server.db");
 const workdir = join(dir, "client");

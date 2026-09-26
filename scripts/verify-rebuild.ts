@@ -1,7 +1,9 @@
 // rebuild 自证端到端验证：真实 CLI 进程做一堆操作，然后核对投影与事件流
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 
-const ROOT = "E:/Project/agent-kanban";
+// 仓库根目录：从本脚本位置推导，不能写死绝对路径（CI 克隆路径不同）
+const ROOT = resolve(import.meta.dir, "..");
 const CLI = `${ROOT}/src/cli.ts`;
 
 function run(args: string[], env: Record<string, string> = {}) {

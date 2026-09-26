@@ -1,8 +1,11 @@
 // 校验 docker-compose.yml / Caddyfile / bootstrap.sh 的结构与关键约定
 // 本机没有 docker 时，至少把能静态查的问题查出来
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-const ROOT = "E:/Project/agent-kanban";
+// 仓库根目录：从本脚本位置推导。
+// 不能写死绝对路径 —— CI 上仓库克隆到 /home/runner/work/...，写死的路径必然 ENOENT。
+const ROOT = resolve(import.meta.dir, "..");
 let fails = 0;
 const check = (label: string, ok: boolean, detail = "") => {
   console.log(`${ok ? "✓" : "✗"} ${label}${detail ? `  ${detail}` : ""}`);

@@ -25,6 +25,7 @@
     "verify:web": "bun run scripts/verify-web.ts",
     "verify:deps": "bun run scripts/verify-deps.ts",
     "verify:workflows": "bun run scripts/verify-workflows.ts",
+    "verify:docs": "bun run scripts/verify-docs.ts",
     "verify:deploy": "bun run scripts/verify-deploy.ts",
     "snapshot:web": "bun run scripts/snapshot-web.ts"
   },

@@ -1,13 +1,16 @@
 // 验证：编译后的单文件二进制能独立跑（前端已内嵌，web/dist 不存在）
 // 做法：把二进制复制到一个完全不含 web/dist 的隔离目录，在那里起 server
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const ROOT = "E:/Project/agent-kanban";
-const BIN = `${ROOT}/dist-test/kanban.exe`;
+// 仓库根目录：从本脚本位置推导，不能写死绝对路径（CI 克隆路径不同）
+const ROOT = resolve(import.meta.dir, "..");
+// 编译产物名按平台推导：CI 在 Linux 上产出 dist-test/kanban（无扩展名），
+// 写死 kanban.exe 会在 Linux 上直接 ENOENT。
+const BIN = join(ROOT, "dist-test", process.platform === "win32" ? "kanban.exe" : "kanban");
 const PORT = 7841;
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -18,16 +21,18 @@ const check = (label: string, ok: boolean, detail = "") => {
 };
 
 if (!existsSync(BIN)) {
-  console.error(`未找到编译产物 ${BIN}，先执行：bun run build:binary`);
+  console.error(`未找到编译产物 ${BIN}`);
+  console.error("先执行：bun run gen:assets && bun build --compile src/cli.ts --outfile dist-test/kanban");
   process.exit(1);
 }
 
 const iso = mkdtempSync(join(tmpdir(), "kanban-iso-"));
 // 隔离目录里**只有**二进制，没有源码、没有 web/dist、没有 node_modules
-cpSync(BIN, join(iso, "kanban.exe"));
+const isoBin = join(iso, basename(BIN));
+cpSync(BIN, isoBin);
 check("隔离目录里没有 web/dist", !existsSync(join(iso, "web")), iso);
 
-const server = spawn(join(iso, "kanban.exe"), ["serve", "--port", String(PORT), "--host", "127.0.0.1"], {
+const server = spawn(isoBin, ["serve", "--port", String(PORT), "--host", "127.0.0.1"], {
   cwd: iso,
   env: { ...process.env, KANBAN_ADMIN_TOKEN: "k_" + "a".repeat(32) },
   stdio: ["ignore", "pipe", "pipe"],
@@ -75,7 +80,6 @@ try {
   // 字体（woff2 是内嵌里最大的部分，抽一个验证）
   const font = html.match(/\/assets\/[^"]+\.woff2/)?.[0];
   void font;
-
   // ---- 5. SPA 回退 ----
   const spa = await fetch(`${BASE}/deep/route`);
   check("SPA 回退到 index.html", spa.status === 200 && (await spa.text()).includes('id="root"'));
@@ -140,8 +144,6 @@ try {
   server.kill();
   await sleep(300);
   rmSync(iso, { recursive: true, force: true });
-  rmSync(`${ROOT}/.tmp/iso-check`, { recursive: true, force: true });
-  void readFileSync;
 }
 
 console.log(`\n${fails === 0 ? "✓ 单文件二进制自包含验证通过" : `✗ ${fails} 项失败`}`);

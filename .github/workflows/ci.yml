@@ -65,6 +65,11 @@ jobs:
       - name: Verify workflow files
         run: bun run verify:workflows
 
+      # Checks that exit codes, env vars, flags, command names and script names in
+      # the docs still match the code. Documentation drifts silently otherwise.
+      - name: Verify documentation accuracy
+        run: bun run verify:docs
+
   build:
     name: Frontend build and binary smoke test
     runs-on: ubuntu-latest
@@ -134,7 +139,14 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - run: bun install --frozen-lockfile
+      # `web/` is a separate package with its own lockfile. This job builds the
+      # frontend, so it needs web's dependencies too — installing only the root
+      # leaves `vite` and its type definitions missing, and the build then fails
+      # with TS2688 (`vite/client`) and TS2307.
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          cd web && bun install --frozen-lockfile
 
       - name: Build frontend
         run: bun run build
@@ -165,8 +177,9 @@ jobs:
       - name: Install dependencies and build frontend
         run: |
           bun install --frozen-lockfile
-          cd web && bun install --frozen-lockfile
-          cd web && bun run build
+          # One `cd` only: every line of a `run:` block shares the same shell, so
+          # a second `cd web` would run from inside web/ and fail with ENOENT.
+          cd web && bun install --frozen-lockfile && bun run build
 
       # These scripts each boot a throwaway server and drive the real thing through
       # child processes, which catches cross-process / cross-environment failures
