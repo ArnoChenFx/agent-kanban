@@ -123,12 +123,12 @@ jobs:
           set -euo pipefail
           bun run gen:assets
           mkdir -p dist smoke
-          bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/kanban
-          chmod +x dist/kanban
-          dist/kanban --version
-          ( cd smoke && ../dist/kanban init >/dev/null && \
-            ../dist/kanban task add "CI smoke task" >/dev/null && \
-            ../dist/kanban --json task list | grep -q T-0001 )
+          bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/agent-kanban
+          chmod +x dist/agent-kanban
+          dist/agent-kanban --version
+          ( cd smoke && ../dist/agent-kanban init >/dev/null && \
+            ../dist/agent-kanban task add "CI smoke task" >/dev/null && \
+            ../dist/agent-kanban --json task list | grep -q T-0001 )
           echo "Binary smoke test passed"
 
       # Required before any `cache-to: type=gha`. The runner's default builder
@@ -173,7 +173,7 @@ jobs:
         run: |
           bun run gen:assets
           mkdir -p dist-test
-          bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist-test/kanban
+          bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist-test/agent-kanban
 
       # The point: run the binary in a directory with **no source and no web/dist**,
       # which proves schema.sql and the frontend assets are really embedded rather

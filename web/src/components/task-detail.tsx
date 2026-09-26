@@ -198,7 +198,7 @@ export function TaskDetailSheet({
 
             <SheetFooter className="mt-4">
               <p className="text-muted-foreground text-xs">
-                {t("detail.cliEquivalent")} <code>kanban task show {task.id}</code>
+                {t("detail.cliEquivalent")} <code>agent-kanban task show {task.id}</code>
               </p>
             </SheetFooter>
           </>

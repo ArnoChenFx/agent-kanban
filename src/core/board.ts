@@ -1,7 +1,7 @@
-﻿/**
+/**
  * 看板快照：把散落的任务、会话、事件汇成一份可直接渲染的数据。
  *
- * CLI 的 `kanban board`、Web 首屏 /api/board、MCP 的 kanban_board 共用这个函数，
+ * CLI 的 `agent-kanban board`、Web 首屏 /api/board、MCP 的 kanban_board 共用这个函数，
  * 保证三处看到的数据形状完全一致（ADR-6）。
  */
 

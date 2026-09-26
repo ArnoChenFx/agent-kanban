@@ -438,7 +438,7 @@ export function requireJournalDir(dir: string): void {
   const files = listJournalFiles(dir);
   if (files.length === 0) {
     throw KanbanError.state(`${dir} 里没有 journal 文件（events-YYYYMMDD.jsonl）`, {
-      hint: "先运行 `kanban export` 导出，再 import",
+      hint: "先运行 `agent-kanban export` 导出，再 import",
       dir,
     });
   }

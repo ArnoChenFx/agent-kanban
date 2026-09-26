@@ -1,8 +1,8 @@
 /**
- * `kanban init` —— 初始化项目级看板（本地模式）。
+ * `agent-kanban init` —— 初始化项目级看板（本地模式）。
  *
  * 幂等：已初始化时只补齐缺失的配置项，不覆盖用户已调过的 ttl/grace。
- * 远程模式下不需要 init —— 直接 `kanban remote set` + `--server` 即可。
+ * 远程模式下不需要 init —— 直接 `agent-kanban remote set` + `--server` 即可。
  */
 
 import { existsSync, mkdirSync, rmSync } from "node:fs";
@@ -24,7 +24,7 @@ import { createOutput } from "./output.ts";
 import { style } from "../core/format.ts";
 import { CONFIG_FILE, readConfigFile, writeConfigFile } from "../core/config.ts";
 
-const USAGE = `用法：kanban init [--name <项目名>] [--project <key>] [--ttl <分钟>] [--grace <分钟>] [--force]
+const USAGE = `用法：agent-kanban init [--name <项目名>] [--project <key>] [--ttl <分钟>] [--grace <分钟>] [--force]
 
 选项：
   --name      显示名（默认取当前目录名）
@@ -36,7 +36,7 @@ const USAGE = `用法：kanban init [--name <项目名>] [--project <key>] [--tt
 说明：
   · 本地模式：.kanban/ 对应唯一一个 project（ADR-9），零配置可用。
   · init 会同时生成 .kanban/config.toml（mode = "local"），以后的命令不必再传参数。
-  · 改配置用 \`kanban config set\`；改成远程用 \`kanban config set mode remote\`。`;
+  · 改配置用 \`agent-kanban config set\`；改成远程用 \`agent-kanban config set mode remote\`。`;
 
 export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
   const args = parseArgs(argv, {
@@ -89,7 +89,7 @@ export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
       out.line(`看板已存在于 ${paths.dir}（schema v${version}），未做修改`);
       out.line(`  project：${style.cyan(project.key)} ${project.name}`);
       if (existsSync(paths.journalDir)) {
-        out.line(`提示：检测到 journal 目录，如需从事件恢复可运行 \`kanban import <journal>/*.jsonl\``);
+        out.line(`提示：检测到 journal 目录，如需从事件恢复可运行 \`agent-kanban import <journal>/*.jsonl\``);
       }
       out.data({ ok: true, already_initialized: true, dir: paths.dir, db: paths.db, project: project.key });
       return ExitCode.OK;
@@ -164,18 +164,18 @@ export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
   }
   out.line("");
   out.line("下一步：");
-  out.line("  1. 注册会话：kanban session start --agent pi-main --harness pi");
-  out.line("  2. 开工前读取现场：kanban context");
-  out.line('  3. 创建任务：kanban task add "实现存储层"');
+  out.line("  1. 注册会话：agent-kanban session start --agent pi-main --harness pi");
+  out.line("  2. 开工前读取现场：agent-kanban context");
+  out.line('  3. 创建任务：agent-kanban task add "实现存储层"');
   out.line("");
   out.line(style.gray("要让多台机器共享同一份看板（server 端）："));
-  out.line("  kanban serve                              → 启动服务（自动生成管理员 token）");
-  out.line("  kanban admin project add <key>            → 创建 project 并签发 token");
+  out.line("  agent-kanban serve                              → 启动服务（自动生成管理员 token）");
+  out.line("  agent-kanban admin project add <key>            → 创建 project 并签发 token");
   out.line(style.gray("客户端切到远程："));
-  out.line("  kanban config set mode remote");
-  out.line("  kanban config set server.url http://<host>:7788");
-  out.line("  kanban config set project.key <key>");
-  out.line("  kanban config set server.token k_xxx");
+  out.line("  agent-kanban config set mode remote");
+  out.line("  agent-kanban config set server.url http://<host>:7788");
+  out.line("  agent-kanban config set project.key <key>");
+  out.line("  agent-kanban config set server.token k_xxx");
 
   out.data({
     ok: true,

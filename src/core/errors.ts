@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 错误码与异常体系。
  *
  * 设计要点（见 docs/plan/002-接口契约.md §1.2）：
@@ -19,7 +19,7 @@ export const ExitCode = {
   CONFLICT: 3,
   /** 数据库忙：退避后重试，最多 3 次 */
   BUSY: 4,
-  /** 未初始化：找不到 .kanban/ 或 schema 未迁移。跑 kanban init */
+  /** 未初始化：找不到 .kanban/ 或 schema 未迁移。跑 agent-kanban init */
   NOT_INIT: 5,
   /** 内部错误：视为 bug，上报而不是重试 */
   INTERNAL: 6,
@@ -48,7 +48,7 @@ export type ErrorNameValue = (typeof ErrorName)[keyof typeof ErrorName];
  * details 中承载"让调用方能自我修正"的结构化信息，例如：
  * - 抢占冲突：details.holder = { session_id, agent_name, progress, last_seen_at, last_event }
  * - 非法转移：details.legal_transitions = ["doing", "blocked", "cancelled"]
- * - 用法错误：details.usage = "kanban task claim <id> [--ttl ms] [--force]"
+ * - 用法错误：details.usage = "agent-kanban task claim <id> [--ttl ms] [--force]"
  */
 export class KanbanError extends Error {
   readonly code: ExitCodeValue;
@@ -146,7 +146,7 @@ export function toKanbanError(err: unknown): KanbanError {
   if (rawCode === "SQLITE_BUSY" || rawCode === "SQLITE_LOCKED" || /database is locked/i.test(message)) {
     return KanbanError.busy(
       "数据库繁忙（可能有其他 agent 正在写入），请退避 1 秒后重试，最多 3 次",
-      { sqlite_code: rawCode ?? null, hint: "重试命令；若持续出现请运行 kanban doctor" },
+      { sqlite_code: rawCode ?? null, hint: "重试命令；若持续出现请运行 agent-kanban doctor" },
     );
   }
 
@@ -168,7 +168,7 @@ export function toKanbanError(err: unknown): KanbanError {
       {
         sqlite_code: rawCode ?? null,
         retryable: true,
-        hint: "直接重试同一命令即可；若持续出现请运行 kanban doctor",
+        hint: "直接重试同一命令即可；若持续出现请运行 agent-kanban doctor",
       },
     );
   }

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RemoteBackend：把 Op 发到云端 server 执行（ADR-10）。
  *
  * 关键点：它**不含任何业务逻辑**。所有判断（状态机、守卫、project 隔离、鉴权）
@@ -79,7 +79,7 @@ export class RemoteBackend implements Backend {
     return { data: result.data, nextActions: result.next_actions ?? [] };
   }
 
-  /** SSE 事件流（Web 看板与 `kanban watch` 用） */
+  /** SSE 事件流（Web 看板与 `agent-kanban watch` 用） */
   async streamEvents(opts: { afterSeq?: number; signal?: AbortSignal } = {}): Promise<ReadableStream<Uint8Array>> {
     const url = new URL(`${this.server}/api/stream`);
     url.searchParams.set("project", this.projectKey);

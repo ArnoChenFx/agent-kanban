@@ -35,7 +35,7 @@ import { readPackageVersion } from "./core/version.ts";
 /** 主帮助 */
 const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看板
 
-用法：kanban <命令> [子命令] [参数] [选项]
+用法：agent-kanban <命令> [子命令] [参数] [选项]
 
 命令：
   init        初始化本地看板（.kanban/，自动创建唯一 project）
@@ -57,20 +57,20 @@ const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看
   mcp         启动 MCP server（stdio，agent 通过 tool call 读写看板）
 
 两种模式
-  本地：kanban task list
+  本地：agent-kanban task list
         数据在 <项目>/.kanban/kanban.db，自动对应唯一 project，无需任何配置
   远程：kanban --server https://kanban.corp --project app --key k_xxx task list
         数据在 server；一个 server 管多个 project
 
 配置（推荐：配置一次，固定生效）
-  kanban config init --server https://kanban.corp --project app --key k_xxx
-  kanban task list                 # 之后无需再传参数
-  kanban config show               # 查看生效配置与来源
+  agent-kanban config init --server https://kanban.corp --project app --key k_xxx
+  agent-kanban task list                 # 之后无需再传参数
+  agent-kanban config show               # 查看生效配置与来源
 
 管理员（server 端或任意机器）
-  kanban serve                     # 启动（首次自动生成管理员 token）
-  kanban admin project add app     # 建项目
-  kanban admin token create --project app --name "CI 专用"
+  agent-kanban serve                     # 启动（首次自动生成管理员 token）
+  agent-kanban admin project add app     # 建项目
+  agent-kanban admin token create --project app --name "CI 专用"
   浏览器打开 http://127.0.0.1:7788/admin  # 管理界面
 
 全局选项（优先级高于配置文件）：
@@ -84,30 +84,30 @@ const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看
   --version, -V      打印版本号
 
 典型工作流（agent 视角）：
-  kanban session start --agent pi-main --harness pi   # 1. 注册会话
-  kanban context                                      # 2. 读现场（交接/在做/可认领）
-  kanban task claim T-0007                            # 3. 认领
-  kanban task progress T-0007 --pct 60 --note "..."   # 4. 推进（自动续租）
-  kanban handoff --task T-0007 --summary "..." --next "..."  # 5. 交接
-  kanban plan save --task T-0007 --title "..." --body-file <路径>  # 5'. 方案变了就存新版
-  kanban session end                                  # 6. 收工
+  agent-kanban session start --agent pi-main --harness pi   # 1. 注册会话
+  agent-kanban context                                      # 2. 读现场（交接/在做/可认领）
+  agent-kanban task claim T-0007                            # 3. 认领
+  agent-kanban task progress T-0007 --pct 60 --note "..."   # 4. 推进（自动续租）
+  agent-kanban handoff --task T-0007 --summary "..." --next "..."  # 5. 交接
+  agent-kanban plan save --task T-0007 --title "..." --body-file <路径>  # 5'. 方案变了就存新版
+  agent-kanban session end                                  # 6. 收工
 
 崩溃恢复：
-  kanban context                # 新会话开工：先看现场
-  kanban resume T-0007          # 接管那张卡，交接与时间线一并注入
+  agent-kanban context                # 新会话开工：先看现场
+  agent-kanban resume T-0007          # 接管那张卡，交接与时间线一并注入
 
-更多：kanban task --help · kanban config --help · kanban admin --help
+更多：agent-kanban task --help · agent-kanban config --help · agent-kanban admin --help
 文档：docs/plan/001-总体设计.md · docs/plan/002-接口契约.md`;
 
-/** `kanban mcp` 的用法（它是给 harness 看的，不是给人天天敲的，所以与主帮助分开） */
-const MCP_USAGE = `用法：kanban mcp [--server <url>] [--project <key>] [--key <k_xxx>]
+/** `agent-kanban mcp` 的用法（它是给 harness 看的，不是给人天天敲的，所以与主帮助分开） */
+const MCP_USAGE = `用法：agent-kanban mcp [--server <url>] [--project <key>] [--key <k_xxx>]
 
 以 stdio 方式启动 MCP server，把看板暴露成 agent 可调用的工具。
 harness 会把它当子进程拉起，不需要手动运行。
 
 注册示例：
-  pi mcp add kanban -- cmd kanban mcp
-  claude mcp add kanban -- cmd kanban mcp
+  pi mcp add kanban -- cmd agent-kanban mcp
+  claude mcp add kanban -- cmd agent-kanban mcp
 
 工具分组：
   会话   kanban_session_start / kanban_bootstrap / kanban_session_end
@@ -280,7 +280,7 @@ async function main(): Promise<void> {
 }
 
 /**
- * `kanban serve` —— 启动 server。
+ * `agent-kanban serve` —— 启动 server。
  *
  * 与其他命令不同：它需要能直连数据库（不通过 Backend），因为
  * server 本身就是提供 Backend 能力的那一端。
@@ -295,18 +295,18 @@ function cmdServe(argv: string[]): ExitCodeValue {
 
   if (getBool(args, "help")) {
     process.stdout.write(
-      `用法：kanban serve [--host 127.0.0.1] [--port 7788] [--reap-interval 30]
+      `用法：agent-kanban serve [--host 127.0.0.1] [--port 7788] [--reap-interval 30]
 
 在 server 所在机器上运行。一个 server 管多个 project（ADR-9），
 每个 project 用自己的 API key 隔离（ADR-11）。
 
 配套命令：
-  kanban project add <key>    创建 project 并生成 API key（key 只显示一次）
-  kanban project list         列出所有 project
+  agent-kanban project add <key>    创建 project 并生成 API key（key 只显示一次）
+  agent-kanban project list         列出所有 project
 
 客户端接入：
-  kanban remote set <url> --project <key> --key k_xxx
-  kanban task list           # 之后无需重复传参
+  agent-kanban remote set <url> --project <key> --key k_xxx
+  agent-kanban task list           # 之后无需重复传参
 
 注意：默认只绑定 127.0.0.1。跨机访问请置于 TLS 反向代理之后。\n`,
     );
@@ -322,7 +322,7 @@ function cmdServe(argv: string[]): ExitCodeValue {
   const dbPath = ctx.handle?.dbPath;
   closeCtx(ctx);
   if (!dbPath) {
-    process.stderr.write("错误：无法定位数据库文件，请先运行 `kanban init` 或用 --db 指定\n");
+    process.stderr.write("错误：无法定位数据库文件，请先运行 `agent-kanban init` 或用 --db 指定\n");
     return ExitCode.NOT_INIT;
   }
 

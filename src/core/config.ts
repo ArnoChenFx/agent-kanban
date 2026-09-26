@@ -87,7 +87,7 @@ export interface KanbanConfigFile {
   adminTokenGeneratedAt?: number;
 }
 
-/** 配置来源（用于 `kanban config show` 说明"这个值从哪来"） */
+/** 配置来源（用于 `agent-kanban config show` 说明"这个值从哪来"） */
 export interface ConfigSourceInfo {
   mode: KanbanMode;
   modeSource: "cli" | "env" | "config" | "default";
@@ -277,7 +277,7 @@ export function writeConfigFile(kanbanDir: string, config: KanbanConfigFile): st
     "字段说明：",
     '  mode = "local" | "remote"    有 server.url 时自动视为 remote',
     "  server.url                   远程 server 地址，如 https://kanban.corp:7788",
-    "  server.token                 访问 token（用 `kanban admin token create` 签发）",
+    "  server.token                 访问 token（用 `agent-kanban admin token create` 签发）",
     "  project.key                  project 标识（一个 token 可同时授权多个 project）",
     "",
     "本地模式无需这些字段：数据默认存在 .kanban/kanban.db。",

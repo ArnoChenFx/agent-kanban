@@ -46,7 +46,7 @@ export function writeHandoff(ctx: TxContext, input: WriteHandoffInput): Handoff 
   if (summary.length === 0) {
     throw KanbanError.usage(
       "交接内容不能为空",
-      '用法：kanban handoff --task T-0007 --summary "完成了 X，卡在 Y" --next "接着做 Z"',
+      '用法：agent-kanban handoff --task T-0007 --summary "完成了 X，卡在 Y" --next "接着做 Z"',
     );
   }
 

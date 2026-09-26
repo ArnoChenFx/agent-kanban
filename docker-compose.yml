@@ -4,8 +4,8 @@
 # Three steps:
 #     cp .env.example .env          # set KANBAN_ADMIN_TOKEN (openssl rand -hex 16)
 #     docker compose up -d
-#     docker compose exec kanban kanban admin project add my-app
-#     docker compose exec kanban kanban admin token create --project my-app --name ci
+#     docker compose exec kanban agent-kanban admin project add my-app
+#     docker compose exec kanban agent-kanban admin token create --project my-app --name ci
 #
 # Why a single service:
 #   The server does not terminate TLS and binds to loopback by default — HTTPS
@@ -43,7 +43,7 @@ services:
       # or written to the config file — the right choice for CI / K8s Secrets.
       KANBAN_ADMIN_TOKEN: "${KANBAN_ADMIN_TOKEN:-}"
 
-      # Where `kanban serve` looks for the built frontend.
+      # Where `agent-kanban serve` looks for the built frontend.
       KANBAN_WEB_DIR: /opt/kanban/web
 
     volumes:

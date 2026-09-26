@@ -2,7 +2,7 @@
  * 协作协议：把「agent 怎么用这个看板」写进项目根目录的 AGENTS.md。
  *
  * 为什么需要它（本项目存在的理由就是这个）：
- * 一个 agent 知道"有个 kanban 工具"和知道"开工第一步该 `kanban context`"，
+ * 一个 agent 知道"有个 kanban 工具"和知道"开工第一步该 `agent-kanban context`"，
  * 是两件完全不同的事。没有这份协议，agent 大概率会绕过看板直接改代码，
  * 于是看板和现实再次脱节 —— 而看板一旦不真实，就再也没人信它了。
  *
@@ -17,7 +17,7 @@
  *
  * 3. **内容随 CLI 版本演进，且版本写在区块里。**
  *    升级 kanban 之后，旧协议里可能写着已经不存在的命令。`--check` 与
- *    `kanban doctor` 都靠区块内的版本标记判断“是否落后”。
+ *    `agent-kanban doctor` 都靠区块内的版本标记判断“是否落后”。
  *
  * ## 为什么正文是英文
  *
@@ -71,8 +71,8 @@ export interface ProtocolApplyResult extends ProtocolInspection {
  * 除命令名外一律英文，顺带避开非 ASCII 标点在不同 shell 与编码环境下的问题。
  *
  * ⚠ 里面的命令名必须与 `src/cli.ts` 的实际子命令一致。
- *   设计文档 §12 写的是 `kanban claim` / `kanban hold`，
- *   实际实现是 `kanban task claim`，且没有 hold —— 协议写错的话，
+ *   设计文档 §12 写的是 `agent-kanban claim` / `agent-kanban hold`，
+ *   实际实现是 `agent-kanban task claim`，且没有 hold —— 协议写错的话，
  *   agent 会照着执行然后失败，比没有协议更糟。
  */
 export function renderProtocol(version: string = readPackageVersion()): string {
@@ -85,31 +85,31 @@ describing a project that no longer exists.
 ### Start of every work session
 
 \`\`\`bash
-kanban session start --agent <your-name> --harness pi   # 1. register the session
-kanban context                                          # 2. read the situation, do this first
-kanban task claim T-0007                                # 3. claim it, you get the lease
+agent-kanban session start --agent <your-name> --harness pi   # 1. register the session
+agent-kanban context                                          # 2. read the situation, do this first
+agent-kanban task claim T-0007                                # 3. claim it, you get the lease
 \`\`\`
 
-\`kanban context\` tells you whether anyone left you a handoff, which cards you already
+\`agent-kanban context\` tells you whether anyone left you a handoff, which cards you already
 hold, and what is free to claim right now. **Skipping it means working blind.**
 
 ### While working
 
 \`\`\`bash
-kanban task progress T-0007 --pct 60 --note "rewrote the storage layer"   # renews your lease
-kanban task check T-0007 --item "add migration test"                      # checklist item
-kanban task note T-0007 "found a dependency conflict"                     # quick note
-kanban task block T-0007 --reason "waiting on API key"                    # releases the lease
+agent-kanban task progress T-0007 --pct 60 --note "rewrote the storage layer"   # renews your lease
+agent-kanban task check T-0007 --item "add migration test"                      # checklist item
+agent-kanban task note T-0007 "found a dependency conflict"                     # quick note
+agent-kanban task block T-0007 --reason "waiting on API key"                    # releases the lease
 \`\`\`
 
-Tasks over 30 minutes long: \`kanban task claim T-0007 --ttl 7200\` extends the lease.
+Tasks over 30 minutes long: \`agent-kanban task claim T-0007 --ttl 7200\` extends the lease.
 
 ### Before you stop
 
 \`\`\`bash
-kanban handoff --task T-0007 --summary "what got done" --next "where to pick up"
-kanban task done T-0007 --note "tests green"                             # only when finished
-kanban session end
+agent-kanban handoff --task T-0007 --summary "what got done" --next "where to pick up"
+agent-kanban task done T-0007 --note "tests green"                             # only when finished
+agent-kanban session end
 \`\`\`
 
 **A handoff is written for whoever picks this up next, not for you.** Name the function,
@@ -119,8 +119,8 @@ full round trip.
 ### After a crash
 
 \`\`\`bash
-kanban context              # whose lease expired, which cards are unattended
-kanban resume T-0007        # take over: handoff content plus the full timeline
+agent-kanban context              # whose lease expired, which cards are unattended
+agent-kanban resume T-0007        # take over: handoff content plus the full timeline
 \`\`\`
 
 No scrolling through chat logs, no asking a human.
@@ -131,8 +131,8 @@ No scrolling through chat logs, no asking a human.
 - A rejected claim (exit code \`3\`) means another session holds the lease. The error names
   the holder and their last action. Pick a different card rather than forcing it
 - Every command accepts \`--json\`. Use it in scripts, never parse the coloured output
-- Plans are versioned: \`kanban plan save\` writes a new version and keeps the old one
-- \`kanban doctor\` self-checks consistency, \`kanban rebuild\` re-derives the board from the event log
+- Plans are versioned: \`agent-kanban plan save\` writes a new version and keeps the old one
+- \`agent-kanban doctor\` self-checks consistency, \`agent-kanban rebuild\` re-derives the board from the event log
 
 ### Exit codes
 
@@ -143,7 +143,7 @@ No scrolling through chat logs, no asking a human.
 | \`2\` | State error | Task missing or transition not allowed; do not retry as-is |
 | \`3\` | Conflict | Another session holds the lease; pick a different card |
 | \`4\` | Database busy | Back off and retry, at most 3 times |
-| \`5\` | Not initialised | Run \`kanban init\` |
+| \`5\` | Not initialised | Run \`agent-kanban init\` |
 | \`6\` | Internal error | Treat as a bug and report it |
 | \`7\` | Auth failed | Check the token and the project key |
 
@@ -168,7 +168,7 @@ function extractBlock(text: string): { body: string | null; installedVersion: st
 /**
  * 只看不改：文件里有没有区块、有没有落后于当前 CLI。
  *
- * `kanban doctor` 靠它报警，`--check` 靠它决定退出码。
+ * `agent-kanban doctor` 靠它报警，`--check` 靠它决定退出码。
  */
 export function inspectProtocol(file: string): ProtocolInspection {
   const currentVersion = readPackageVersion();

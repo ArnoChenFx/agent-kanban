@@ -1,5 +1,5 @@
 /**
- * `kanban export / import / snapshot / compact` —— 备份与维护。
+ * `agent-kanban export / import / snapshot / compact` —— 备份与维护。
  *
  * 这组命令只碰本地库，不参与远程模式：导出的是本机数据，
  * 而远程模式的真身在 server 上（要备份请在 server 机器上跑）。
@@ -25,7 +25,7 @@ import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./arg
 import { createOutput } from "./output.ts";
 import type { Scope } from "../core/tasks.ts";
 
-const USAGE = `用法：kanban export | import | snapshot | compact
+const USAGE = `用法：agent-kanban export | import | snapshot | compact
 
   export   [--out <目录>] [--since <ts>]   导出事件 journal（按天分文件）
   import   <文件|目录>... [--dry-run]      从 journal 重建库（按 seq 幂等去重）
@@ -42,11 +42,11 @@ const USAGE = `用法：kanban export | import | snapshot | compact
   · 这几个命令只在本地模式可用（远程模式的真身在 server 上）
 
 示例：
-  kanban export --out .kanban/journal
-  kanban import .kanban/journal --dry-run
-  kanban import .kanban/journal
-  kanban rebuild --write        # 重放后重建投影
-  kanban compact --keep-days 30`;
+  agent-kanban export --out .kanban/journal
+  agent-kanban import .kanban/journal --dry-run
+  agent-kanban import .kanban/journal
+  agent-kanban rebuild --write        # 重放后重建投影
+  agent-kanban compact --keep-days 30`;
 
 /** 打开本地库并解析 project */
 function openLocal(): { db: Db; scope: Scope; paths: ReturnType<typeof resolvePaths>; close: () => void } {
@@ -116,7 +116,7 @@ function doExport(argv: string[]): ExitCodeValue {
     );
     for (const f of result.files) out.line(`  ${style.gray(f)}`);
     out.blank();
-    out.line(style.gray("在新机器上：kanban import <该目录> && kanban rebuild --write"));
+    out.line(style.gray("在新机器上：agent-kanban import <该目录> && agent-kanban rebuild --write"));
     return ExitCode.OK;
   } finally {
     local.close();
@@ -194,11 +194,11 @@ function doImport(argv: string[]): ExitCodeValue {
     out.blank();
     if (dryRun) {
       out.line(style.yellow("这是 --dry-run，没有写入任何东西。"));
-      out.line(style.gray("去掉 --dry-run 真正导入，然后跑 `kanban rebuild --write` 重建投影。"));
+      out.line(style.gray("去掉 --dry-run 真正导入，然后跑 `agent-kanban rebuild --write` 重建投影。"));
     } else {
       out.line(
         `${style.green("✓")} 已导入 ${result.applied} 个事件。` +
-          style.gray(" 投影还是旧的，跑 `kanban rebuild --write` 用事件重算。"),
+          style.gray(" 投影还是旧的，跑 `agent-kanban rebuild --write` 用事件重算。"),
       );
     }
     return hasError ? ExitCode.STATE : ExitCode.OK;

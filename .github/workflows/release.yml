@@ -130,16 +130,16 @@ jobs:
         include:
           - target: bun-linux-x64
             os: ubuntu-latest
-            asset: kanban-linux-x64
+            asset: agent-kanban-linux-x64
           - target: bun-darwin-x64
             os: macos-latest
-            asset: kanban-darwin-x64
+            asset: agent-kanban-darwin-x64
           - target: bun-darwin-arm64
             os: macos-latest
-            asset: kanban-darwin-arm64
+            asset: agent-kanban-darwin-arm64
           - target: bun-windows-x64
             os: windows-latest
-            asset: kanban-windows-x64.exe
+            asset: agent-kanban-windows-x64.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -363,14 +363,14 @@ jobs:
 
           | Platform | File |
           | --- | --- |
-          | Linux x64 | \`kanban-linux-x64\` |
-          | macOS x64 | \`kanban-darwin-x64\` |
-          | macOS arm64 | \`kanban-darwin-arm64\` |
-          | Windows x64 | \`kanban-windows-x64.exe\` |
+          | Linux x64 | \`agent-kanban-linux-x64\` |
+          | macOS x64 | \`agent-kanban-darwin-x64\` |
+          | macOS arm64 | \`agent-kanban-darwin-arm64\` |
+          | Windows x64 | \`agent-kanban-windows-x64.exe\` |
 
           The binaries are **self-contained** (the Bun runtime and the database schema are
           embedded), so download and run, no bun installation required.
-          On Linux: \`chmod +x kanban-linux-x64\`.
+          On Linux: \`chmod +x agent-kanban-linux-x64\`.
 
           No Linux arm64 binary is published. Use the Docker image, which resolves the
           architecture for you.
@@ -401,10 +401,10 @@ jobs:
           ### Quick start
 
           \`\`\`bash
-          kanban init                      # create a local board
-          kanban session start --agent pi-main
-          kanban task add "implement the storage layer"
-          kanban context                   # read the situation: handoffs, your cards, what is free
+          agent-kanban init                      # create a local board
+          agent-kanban session start --agent pi-main
+          agent-kanban task add "implement the storage layer"
+          agent-kanban context                   # read the situation: handoffs, your cards, what is free
           \`\`\`
 
           SHA-256 checksums are in the matching \`.sha256\` files.
@@ -421,7 +421,7 @@ jobs:
           # ⚠ **One glob, never two overlapping ones.** A second
           #   `release-assets/*.sha256` line does NOT "add the checksums": glob `*`
           #   spans any character except `/`, and a dot is just a character, so
-          #   `kanban-*` already matches all four `*.sha256` files. The extra line
+          #   `agent-kanban-*` already matches all four `*.sha256` files. The extra line
           #   makes the action upload each of them twice.
           #   The action concatenates every pattern's matches (no dedup) and uploads
           #   them all with Promise.all, so the two POSTs for one asset name race
@@ -434,7 +434,7 @@ jobs:
           #   `bun run verify:workflows` asserts that every expected asset is matched
           #   by exactly one pattern, so this cannot come back unnoticed.
           files: |
-            release-assets/kanban-*
+            release-assets/agent-kanban-*
             release-notes.md
           # Re-running a failed release is the normal repair path, and a failed run
           # always leaves assets behind (the action publishes the release only after

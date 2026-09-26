@@ -1,5 +1,5 @@
 /**
- * `kanban install-protocol` 的行为测试。
+ * `agent-kanban install-protocol` 的行为测试。
  *
  * 重点不在“能不能写进去”，而在三条容易被忽略的约束：
  *   1. 区块外的内容必须逐字保留（AGENTS.md 往往还写着别的规范）
@@ -45,14 +45,14 @@ function outsideBlock(text: string): string {
 describe("renderProtocol", () => {
   test("内容与实际命令一致（agent 照着执行不能失败）", () => {
     const body = renderProtocol("9.9.9");
-    // 这些是设计文档 §12 里写成 kanban claim / kanban progress 的形式，
+    // 这些是设计文档 §12 里写成 agent-kanban claim / agent-kanban progress 的形式，
     // 但实际实现挂在 task 子命令下。协议写错比没有协议更糟。
-    expect(body).toContain("kanban task claim");
-    expect(body).toContain("kanban task progress");
-    expect(body).toContain("kanban context");
-    expect(body).toContain("kanban handoff");
-    expect(body).toContain("kanban resume");
-    expect(body).toContain("kanban session start");
+    expect(body).toContain("agent-kanban task claim");
+    expect(body).toContain("agent-kanban task progress");
+    expect(body).toContain("agent-kanban context");
+    expect(body).toContain("agent-kanban handoff");
+    expect(body).toContain("agent-kanban resume");
+    expect(body).toContain("agent-kanban session start");
     // 不存在的命令不能出现
     expect(body).not.toMatch(/kanban (claim|progress|hold)\b/);
   });

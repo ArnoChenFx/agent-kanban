@@ -63,7 +63,7 @@ const MILESTONES: Array<{ title: string; desc: string; labels: string[] }> = [
 ];
 
 if (!existsSync(join(ROOT, ".kanban", "kanban.db"))) {
-  check("看板已初始化", false, "先跑 `bun run kanban init`");
+  check("看板已初始化", false, "先跑 `bun run agent-kanban init`");
   process.exit(1);
 }
 

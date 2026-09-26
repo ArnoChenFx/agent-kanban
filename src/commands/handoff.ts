@@ -1,5 +1,5 @@
 /**
- * `kanban handoff` —— 写交接。
+ * `agent-kanban handoff` —— 写交接。
  *
  * 这是 agent 收工前的最后一步，也是下一个 agent 恢复工作的主要依据。
  * 写得越具体，下一个 agent 越不需要猜：
@@ -17,10 +17,10 @@ import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput } from "./output.ts";
 
 const USAGE = `用法：
-  kanban handoff --task T-0007 --summary "完成了什么" [--next "接着做什么"]
+  agent-kanban handoff --task T-0007 --summary "完成了什么" [--next "接着做什么"]
                    [--blockers "卡点1,卡点2"] [--open "待确认问题"]
-  kanban handoff list --task T-0007        # 查看某任务的交接史
-  kanban handoff pending                    # 查看所有待接手的交接
+  agent-kanban handoff list --task T-0007        # 查看某任务的交接史
+  agent-kanban handoff pending                    # 查看所有待接手的交接
 
 说明：
   · --summary 必填：没有它交接就没有意义
@@ -28,7 +28,7 @@ const USAGE = `用法：
   · 不需要交接的卡（刚创建、已完成）不用写
 
 示例：
-  kanban handoff --task T-0007 \\
+  agent-kanban handoff --task T-0007 \\
     --summary "完成 WAL 事务层，store.ts 20 个测试全绿" \\
     --next "实现 handoff 崩溃自动合成，见实施计划 M2" \\
     --blockers "无" \\
@@ -63,14 +63,14 @@ export async function cmdHandoff(argv: string[]): Promise<ExitCodeValue> {
     if (!taskId) {
       throw KanbanError.usage(
         "缺少任务号",
-        '用法：kanban handoff --task T-0007 --summary "完成了什么"',
+        '用法：agent-kanban handoff --task T-0007 --summary "完成了什么"',
       );
     }
     const summary = getString(args, "summary") ?? args.positionals[1];
     if (!summary) {
       throw KanbanError.usage(
         "缺少 --summary",
-        '用法：kanban handoff --task T-0007 --summary "完成了什么" --next "接着做什么"',
+        '用法：agent-kanban handoff --task T-0007 --summary "完成了什么" --next "接着做什么"',
       );
     }
 
@@ -96,8 +96,8 @@ export async function cmdHandoff(argv: string[]): Promise<ExitCodeValue> {
     out.line(`${style.green("✓")} 交接已记录 ${style.cyan(`#${handoff.id}`)} → ${handoff.task_id}`);
     if (handoff.next_step) out.line(`  下一步：${handoff.next_step}`);
     out.line("");
-    out.line(style.gray("  下一个会话执行 `kanban context` 就会看到这条交接"));
-    out.line(style.gray("  或用 `kanban session end` 收尾"));
+    out.line(style.gray("  下一个会话执行 `agent-kanban context` 就会看到这条交接"));
+    out.line(style.gray("  或用 `agent-kanban session end` 收尾"));
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -153,7 +153,7 @@ async function handoffQuery(sub: string, argv: string[]): Promise<ExitCodeValue>
       if (h.next_step) out.line(`    ${style.gray("下一步：")}${h.next_step}`);
     }
     out.line("");
-    out.line(style.gray("  用 `kanban resume <任务号>` 接管并注入这些交接"));
+    out.line(style.gray("  用 `agent-kanban resume <任务号>` 接管并注入这些交接"));
     out.line("");
     return ExitCode.OK;
   } finally {

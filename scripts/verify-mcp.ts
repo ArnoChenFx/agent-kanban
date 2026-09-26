@@ -1,5 +1,5 @@
 /**
- * 端到端验证：真起一个 `kanban mcp` 子进程，走 stdio JSON-RPC，
+ * 端到端验证：真起一个 `agent-kanban mcp` 子进程，走 stdio JSON-RPC，
  * 跑一遍契约 §3.4 的恢复流程。
  *
  * 为什么不用 SDK 的 in-memory transport：它会绕开进程边界，

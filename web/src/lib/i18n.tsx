@@ -87,7 +87,7 @@ const zh = {
   "board.empty.title": "看板还是空的",
   // 命令本身单独一个键：它是 <code>，要保留等宽字形，不能跟解释文案溟在一起
   "board.empty.desc": "新建第一张卡，或在项目目录里执行",
-  "board.empty.cmd": "kanban task add \"...\"",
+  "board.empty.cmd": "agent-kanban task add \"...\"",
 
   // ---- 失联告警条 ----
   "board.zombie.title": "{n} 个会话失联",
@@ -270,13 +270,13 @@ const zh = {
   // ---- API 客户端自己的错误（lib/api.ts，经 tActive 翻译） ----
   "api.error.unknown": "未知错误",
   "api.error.network": "连不上看板服务（网络错误）",
-  "api.error.networkHint": "确认 kanban serve 是否在运行",
+  "api.error.networkHint": "确认 agent-kanban serve 是否在运行",
   "api.error.badShape": "服务端返回的任务详情形状异常",
 
   // ---- 登录卡片 ----
   "login.title": "连接看板",
   "login.desc.before": "粘贴访问 token。它由管理员用",
-  "login.desc.cmd": "kanban admin token create",
+  "login.desc.cmd": "agent-kanban admin token create",
   "login.desc.mid": "签发，或直接看 server 的 .kanban/config.toml 里的 admin_token。",
   "login.label.token": "访问 token",
   "login.label.project": "project（可选）",
@@ -345,7 +345,7 @@ const en: Record<MessageKey, string> = {
 
   "board.empty.title": "This board is empty",
   "board.empty.desc": "Create the first card, or run this in the project directory:",
-  "board.empty.cmd": "kanban task add \"...\"",
+  "board.empty.cmd": "agent-kanban task add \"...\"",
 
   "board.zombie.title": "{n} unresponsive session(s)",
   "board.zombie.line": "{agent} ({session}, silent for {minutes} min) holds {tasks}",
@@ -513,12 +513,12 @@ const en: Record<MessageKey, string> = {
   // ---- API 客户端自己的错误 ----
   "api.error.unknown": "Unknown error",
   "api.error.network": "Cannot reach the board service (network error)",
-  "api.error.networkHint": "Check that kanban serve is running",
+  "api.error.networkHint": "Check that agent-kanban serve is running",
   "api.error.badShape": "The server returned an unexpected task-detail shape",
 
   "login.title": "Connect to the board",
   "login.desc.before": "Paste your access token. It is issued by an admin with",
-  "login.desc.cmd": "kanban admin token create",
+  "login.desc.cmd": "agent-kanban admin token create",
   "login.desc.mid": ", or find admin_token in the server's .kanban/config.toml.",
   "login.label.token": "Access token",
   "login.label.project": "Project (optional)",

@@ -147,7 +147,7 @@ export function buildContext(input: ContextInput): RecoveryContext {
         last_seen_at: session.lastSeenAt,
         silent_minutes: Math.round((now - session.lastSeenAt) / 60000),
         tasks: [{ id: task.id, title: task.title, progress: task.progress }],
-        suggestion: `运行 \`kanban resume ${task.id}\` 接管（进度会自动保留）`,
+        suggestion: `运行 \`agent-kanban resume ${task.id}\` 接管（进度会自动保留）`,
       });
     }
   }
@@ -278,7 +278,7 @@ function buildNextActions(input: {
   if (orphanTasks.size > 0) {
     const ids = [...orphanTasks].slice(0, 3);
     actions.push(
-      `接管失联会话留下的任务（进度已保留）：${ids.map((id) => `kanban resume ${id}`).join(" / ")}`,
+      `接管失联会话留下的任务（进度已保留）：${ids.map((id) => `agent-kanban resume ${id}`).join(" / ")}`,
     );
   }
 
@@ -312,7 +312,7 @@ function buildNextActions(input: {
   // 5. 领新活
   if (my_tasks.length === 0 && ready.length > 0) {
     actions.push(
-      `认领新任务：${ready.slice(0, 2).map((r) => `kanban task claim ${r.id}`).join(" / ")}`,
+      `认领新任务：${ready.slice(0, 2).map((r) => `agent-kanban task claim ${r.id}`).join(" / ")}`,
     );
   } else if (ready.length > 0) {
     actions.push(`完成手上的后，可认领：${ready[0]!.id}`);
@@ -320,7 +320,7 @@ function buildNextActions(input: {
 
   // 6. 兜底
   if (actions.length === 0) {
-    actions.push("没有待办任务。可用 `kanban task add \"标题\"` 新建，或 `kanban board` 复查看板。");
+    actions.push("没有待办任务。可用 `agent-kanban task add \"标题\"` 新建，或 `agent-kanban board` 复查看板。");
   }
 
   void projectKey;
@@ -497,7 +497,7 @@ function buildResumeActions(
     }
   }
   if (plan) {
-    actions.push(`读计划全文：kanban plan show ${plan.id}`);
+    actions.push(`读计划全文：agent-kanban plan show ${plan.id}`);
   }
   if (remaining.length > 0) {
     actions.push(`剩余工作：${remaining.join("、")}`);
@@ -505,8 +505,8 @@ function buildResumeActions(
     actions.push(`checklist 已全部勾选但进度 ${progress}%，先确认实际完成情况`);
   }
 
-  actions.push(`推进时更新进度：kanban task progress ${taskId} --pct <数字> --note "<做了什么>"`);
-  actions.push(`收工前写交接：kanban handoff --task ${taskId} --summary "..." --next "..."`);
+  actions.push(`推进时更新进度：agent-kanban task progress ${taskId} --pct <数字> --note "<做了什么>"`);
+  actions.push(`收工前写交接：agent-kanban handoff --task ${taskId} --summary "..." --next "..."`);
 
   return actions;
 }

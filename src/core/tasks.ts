@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 任务领域逻辑：状态机 + 抢占 + 进度 + 依赖。
  *
  * 设计要点：
@@ -104,8 +104,8 @@ const TRANSITIONS: Record<TaskStatus, Partial<Record<TaskStatus, TransitionDef>>
 /** 非法转移错误里"合法后继"的计算：包含普通转移 + 始终可用的取消/重开 */
 export function legalTransitions(status: TaskStatus): string[] {
   const list = Object.keys(TRANSITIONS[status] ?? {});
-  if (status === "todo" || status === "doing") list.push("doing (通过 kanban task claim 抢占)");
-  if (status === "doing") list.push("todo (通过 kanban task release 释放)");
+  if (status === "todo" || status === "doing") list.push("doing (通过 agent-kanban task claim 抢占)");
+  if (status === "doing") list.push("todo (通过 agent-kanban task release 释放)");
   return list;
 }
 
@@ -694,7 +694,7 @@ function buildConflictError(db: Database, current: Task, actor: Actor, now: numb
       last_event: lastEvent
         ? { type: lastEvent.type, ts: lastEvent.ts, data: safeParse(lastEvent.data) }
         : null,
-      hint: "该卡正被别人处理。改做 `kanban task list --ready` 里的任务；确实需要接管请人工确认后用 --force",
+      hint: "该卡正被别人处理。改做 `agent-kanban task list --ready` 里的任务；确实需要接管请人工确认后用 --force",
     },
   );
 }
@@ -903,7 +903,7 @@ export function transition(
       {
         task_id: id,
         progress: before.progress,
-        hint: "用 `kanban task progress " + id + " --pct 100` 标记完成，或直接 --force",
+        hint: "用 `agent-kanban task progress " + id + " --pct 100` 标记完成，或直接 --force",
       },
     );
   }

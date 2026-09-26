@@ -1,5 +1,5 @@
 /**
- * `kanban rebuild` —— 从事件流重建投影。
+ * `agent-kanban rebuild` —— 从事件流重建投影。
  *
  * 这是本项目**自证一致**的命令：events 是唯一事实来源，
  * tasks/plans/handoffs 都只是投影。能从事件把它们完整重算出来，
@@ -17,11 +17,11 @@ import { closeCtx, openCtx } from "./context.ts";
 import { createOutput } from "./output.ts";
 
 const USAGE = `用法：
-  kanban rebuild                  # 只校验：比对投影与事件流，不改任何数据
-  kanban rebuild --write          # 用事件流重算结果覆盖投影（需无漂移，或配合 --force）
-  kanban rebuild --write --force  # 有漂移也强制覆盖
-  kanban rebuild --from-seq 100   # 只重放 seq >= 100 的事件（排查局部问题）
-  kanban rebuild --json
+  agent-kanban rebuild                  # 只校验：比对投影与事件流，不改任何数据
+  agent-kanban rebuild --write          # 用事件流重算结果覆盖投影（需无漂移，或配合 --force）
+  agent-kanban rebuild --write --force  # 有漂移也强制覆盖
+  agent-kanban rebuild --from-seq 100   # 只重放 seq >= 100 的事件（排查局部问题）
+  agent-kanban rebuild --json
 
 说明：
   · 默认只读，可以放心随时跑（CI 里也可以跑）
@@ -113,7 +113,7 @@ export async function cmdRebuild(argv: string[]): Promise<ExitCodeValue> {
       }
       out.line("");
       if (!report.written) {
-        out.line(style.gray(`  修复：kanban rebuild --write${report.drift.length > 0 ? " --force" : ""}`));
+        out.line(style.gray(`  修复：agent-kanban rebuild --write${report.drift.length > 0 ? " --force" : ""}`));
         out.line(style.gray("  （--write 会用事件流覆盖 tasks/plans/handoffs/task_deps）"));
       }
     }

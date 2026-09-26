@@ -2,7 +2,7 @@
  * 命令上下文：决定本地/远程模式，构建 Backend。
  *
  * ⚠ 文件名说明：这个模块叫 context.ts，但它管的是"命令执行的连接上下文"，
- * 与 core/context.ts（恢复现场组装）和 commands/recovery.ts（kanban context 命令）
+ * 与 core/context.ts（恢复现场组装）和 commands/recovery.ts（agent-kanban context 命令）
  * 是三件不同的事。改名前先想清楚命名。
  *
  * 优先级链（ADR-12）：
@@ -50,7 +50,7 @@ export interface Ctx {
   remote: { server: string; project: string; key: string } | null;
   /** 实际生效的配置（本地/远程都非空，来自 config.toml + CLI/env 合并） */
   effectiveConfig: KanbanConfigFile;
-  /** 配置来源（供 `kanban config show` 说明"这个值从哪来"） */
+  /** 配置来源（供 `agent-kanban config show` 说明"这个值从哪来"） */
   configSources: ConfigSourceInfo;
 }
 
@@ -235,7 +235,7 @@ function openRemoteCtx(input: {
       server,
       hint:
         "用法：kanban --server <url> --project <key> --key k_xxx <命令>\n" +
-        "或先保存配置：kanban config set server.url <url> / project.key <key> / server.token <token>",
+        "或先保存配置：agent-kanban config set server.url <url> / project.key <key> / server.token <token>",
     });
   }
   const projectKey = validateProjectKey(input.project);
@@ -244,7 +244,7 @@ function openRemoteCtx(input: {
     throw KanbanError.auth(`project "${projectKey}" 需要访问 token`, {
       project: projectKey,
       server,
-      hint: "用 `kanban config set server.token <token>` 保存，或用 --key 临时指定",
+      hint: "用 `agent-kanban config set server.token <token>` 保存，或用 --key 临时指定",
     });
   }
 
@@ -322,7 +322,7 @@ export function resolveSessionId(ctx: Ctx, explicit?: string): string {
     "三种方式任选其一：\n" +
       "  1. 命令行加 --session <id>\n" +
       "  2. 设置环境变量 KANBAN_SESSION\n" +
-      "  3. 先运行 `kanban session start --agent <名字>` 写入默认会话",
+      "  3. 先运行 `agent-kanban session start --agent <名字>` 写入默认会话",
   );
 }
 

@@ -1,7 +1,7 @@
 /**
- * `kanban install-protocol` —— 把协作协议写进项目的 AGENTS.md。
+ * `agent-kanban install-protocol` —— 把协作协议写进项目的 AGENTS.md。
  *
- * 解决的问题：agent 知道"有个 kanban"和知道"开工先跑 kanban context"
+ * 解决的问题：agent 知道"有个 kanban"和知道"开工先跑 agent-kanban context"
  * 是两回事。没有这份协议，agent 会绕过看板直接改代码，看板随即失真。
  */
 
@@ -18,7 +18,7 @@ import {
 import { assertKnownOptions, getBool, getString, parseArgs } from "./args.ts";
 import { createOutput } from "./output.ts";
 
-const USAGE = `用法：kanban install-protocol [选项]
+const USAGE = `用法：agent-kanban install-protocol [选项]
 
 幂等地把 agent 协作协议写入项目的 AGENTS.md。受管区块
 （<!-- kanban:begin --> ... <!-- kanban:end -->）之外的内容逐字保留，
@@ -34,9 +34,9 @@ const USAGE = `用法：kanban install-protocol [选项]
   2  --check 发现协议缺失或版本落后
 
 示例：
-  kanban install-protocol                 # 写入/更新
-  kanban install-protocol --check         # CI 里守住它是否最新
-  kanban install-protocol --file .cursor/rules/kanban.mdc`;
+  agent-kanban install-protocol                 # 写入/更新
+  agent-kanban install-protocol --check         # CI 里守住它是否最新
+  agent-kanban install-protocol --file .cursor/rules/kanban.mdc`;
 
 export function cmdInstallProtocol(argv: string[]): ExitCodeValue {
   const args = parseArgs(argv, {
@@ -75,7 +75,7 @@ export function cmdInstallProtocol(argv: string[]): ExitCodeValue {
     }
 
     out.line(`${style.yellow("!")} 协作协议${describeProtocol(insp)}  ${style.gray(insp.file)}`);
-    out.line(`  ${style.gray("修：kanban install-protocol")}`);
+    out.line(`  ${style.gray("修：agent-kanban install-protocol")}`);
     return ExitCode.STATE;
   }
 
@@ -105,7 +105,7 @@ export function assertProtocolFresh(projectRoot: string, fileOpt?: string | unde
   const insp = inspectProtocol(resolveProtocolFile(projectRoot, fileOpt));
   if (insp.status === "up_to_date") return;
   throw KanbanError.state(`协作协议${describeProtocol(insp)}`, {
-    hint: "运行 `kanban install-protocol` 更新",
+    hint: "运行 `agent-kanban install-protocol` 更新",
     file: insp.file,
     status: insp.status,
   });

@@ -78,7 +78,7 @@ export function requireSession(db: Database, sessionId: string): Session {
     // 会话行不存在通常意味着 DB 被重建过：给出可操作的提示而不是干巴巴的"不存在"
     throw KanbanError.state(`会话 ${sessionId} 不存在`, {
       session_id: sessionId,
-      hint: "会话可能因数据库重建而丢失；用 `kanban session start` 重新注册，并用 `kanban resume <任务号>` 接管任务",
+      hint: "会话可能因数据库重建而丢失；用 `agent-kanban session start` 重新注册，并用 `agent-kanban resume <任务号>` 接管任务",
     });
   }
   return session;

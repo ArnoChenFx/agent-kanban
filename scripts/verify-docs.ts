@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
-const DOCS = ["README.md", "README_zh.md", "Develop.md", "Develop_zh.md"];
+const DOCS = ["README.md", "README-zh.md", "Develop.md", "Develop-zh.md"];
 
 let fails = 0;
 const check = (label: string, ok: boolean, detail = "") => {
@@ -23,7 +23,7 @@ for (const f of DOCS) {
 for (const f of DOCS) {
   const text = readFileSync(join(ROOT, f), "utf8");
   const head = text.split("\n").slice(0, 12).join("\n");
-  const links = ["README.md", "README_zh.md", "Develop.md", "Develop_zh.md"].filter((l) => head.includes(`](${l})`));
+  const links = ["README.md", "README-zh.md", "Develop.md", "Develop-zh.md"].filter((l) => head.includes(`](${l})`));
   check(`${f} 顶部链到全部四份文档`, links.length === 4, links.join(" "));
 }
 
@@ -34,7 +34,7 @@ const realCodes = [...errorsSrc.matchAll(/^\s{2}([A-Z_]+):\s*(\d+),/gm)].map((m)
   code: Number(m[2]),
 }));
 console.log(`\n=== 退出码（实际 ${realCodes.length} 个）===`);
-for (const f of ["README.md", "README_zh.md"]) {
+for (const f of ["README.md", "README-zh.md"]) {
   const text = readFileSync(join(ROOT, f), "utf8");
   for (const { name, code } of realCodes) {
     check(`${f} 列出 ${name} = ${code}`, text.includes(`\`${code}\``) && text.includes(name));
@@ -93,7 +93,7 @@ const topCmds = [...cliSrc.matchAll(/^ {4}case "([a-z-]+)":/gm)]
 console.log(`\n=== 顶层命令（实际 ${topCmds.length} 个）===`);
 for (const f of ["README.md"]) {
   const text = readFileSync(join(ROOT, f), "utf8");
-  const missing = topCmds.filter((c) => !text.includes(`kanban ${c}`));
+  const missing = topCmds.filter((c) => !text.includes(`agent-kanban ${c}`));
   check(`${f} 速查表覆盖全部顶层命令`, missing.length === 0, `漏：${missing.join(",") || "无"}`);
 }
 
@@ -121,7 +121,7 @@ for (const f of ["Develop.md"]) {
 
 // ---- 事实核对：部署相关 ----
 console.log(`\n=== 部署 ===`);
-for (const f of ["README.md", "Develop.md", "README_zh.md", "Develop_zh.md"]) {
+for (const f of ["README.md", "Develop.md", "README-zh.md", "Develop-zh.md"]) {
   const text = readFileSync(join(ROOT, f), "utf8");
   check(`${f} 提到 KANBAN_BIND`, text.includes("KANBAN_BIND"));
   check(`${f} 提到 .env / docker compose`, /docker compose/.test(text));
@@ -136,7 +136,7 @@ check("compose 确实只有 kanban 一个服务", (readFileSync(join(ROOT, "dock
 // 干净 checkout 上的 verify:docs 必然失败。
 const GENERATED_PREFIXES = ["web/dist"];
 console.log(`\n=== Develop 文档引用的路径 ===`);
-for (const f of ["Develop.md", "Develop_zh.md"]) {
+for (const f of ["Develop.md", "Develop-zh.md"]) {
   const text = readFileSync(join(ROOT, f), "utf8");
   const paths = [...new Set([...text.matchAll(/`(src\/[\w./-]+|web\/[\w./-]+|docs\/[\w./-]+|scripts\/[\w./-]+)`/g)].map((m) => m[1]!))];
   const tracked = paths.filter((p) => !GENERATED_PREFIXES.some((g) => p === g || p.startsWith(`${g}/`)));

@@ -236,7 +236,7 @@ function normalizeDeps(raw: unknown): string[] {
  * 任务详情（含事件时间线）。
  *
  * 契约要点：`task.get` 的 `data` **就是任务本体**（扁平对象），
- * 与 CLI `kanban task show` / MCP `kanban_task_get` 消费的是同一个形状，
+ * 与 CLI `agent-kanban task show` / MCP `kanban_task_get` 消费的是同一个形状，
  * 并不是 `{ task: {...} }` 包装。早期版本前端误按包装形状取值，
  * 导致打开详情时读 `task.plan_id` 抛 `Cannot read properties of undefined`。
  */

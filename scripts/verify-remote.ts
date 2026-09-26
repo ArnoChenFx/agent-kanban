@@ -1,7 +1,7 @@
 // 跨进程远程模式端到端验证：真实起一个 server 进程，用 CLI 连上去
 //
-// v3 改造：project 改由 `kanban admin project add` 创建，token 由
-// `kanban admin token create` 签发（不再有 `project add` 自动发 key，
+// v3 改造：project 改由 `agent-kanban admin project add` 创建，token 由
+// `agent-kanban admin token create` 签发（不再有 `project add` 自动发 key，
 // 也不再用 remote.json 持久化连接——那些在 v3 已被 config.toml 取代）。
 // 用法：bun run scripts/verify-remote.ts
 import { spawn } from "node:child_process";

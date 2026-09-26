@@ -3,7 +3,7 @@ import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
-// 构建产物直接落在 web/dist，由 `kanban serve` 托管（src/server/http.ts 的 serveStatic）
+// 构建产物直接落在 web/dist，由 `agent-kanban serve` 托管（src/server/http.ts 的 serveStatic）
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {

@@ -1,11 +1,11 @@
-﻿/**
- * `kanban project ...` —— 项目查询与本机直连管理。
+/**
+ * `agent-kanban project ...` —— 项目查询与本机直连管理。
  *
  * 说明（ADR-12/ADR-13）：
- * - 远程连接配置已统一到 `.kanban/config.toml`（见 `kanban config`），不再有 remote.json
- * - 创建 project / 签发 token 走 `kanban admin`（需要管理员 token）
+ * - 远程连接配置已统一到 `.kanban/config.toml`（见 `agent-kanban config`），不再有 remote.json
+ * - 创建 project / 签发 token 走 `agent-kanban admin`（需要管理员 token）
  * - 本命令保留的是**本机直连**场景：server 所在机器上用 `--db` 直连库查看
- *   （不含权限控制的场景；管理操作请用 `kanban admin`）
+ *   （不含权限控制的场景；管理操作请用 `agent-kanban admin`）
  */
 
 import { existsSync, mkdirSync } from "node:fs";
@@ -25,7 +25,7 @@ import { assertKnownOptions, getBool, getString, parseArgs, requirePositional } 
 import { closeCtx, openCtx } from "./context.ts";
 import { createOutput } from "./output.ts";
 
-const PROJECT_USAGE = `用法：kanban project <子命令>
+const PROJECT_USAGE = `用法：agent-kanban project <子命令>
 
   list              列出可见的 project
   show [key]        显示 project 详情
@@ -225,7 +225,7 @@ async function projectAdd(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "no-key", "name", "root", "db"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const key = requirePositional(args, 0, "project key", "用法：kanban project add <key> [--name <名称>] [--root <路径>]");
+  const key = requirePositional(args, 0, "project key", "用法：agent-kanban project add <key> [--name <名称>] [--root <路径>]");
 
   const handle = openLocalDb(process.cwd(), getString(args, "db"));
   try {
@@ -270,9 +270,9 @@ async function projectRename(argv: string[]): Promise<ExitCodeValue> {
   });
   assertKnownOptions(args, ["json", "help", "name", "db"]);
   const out = createOutput(getBool(args, "json"));
-  const key = requirePositional(args, 0, "project key", "用法：kanban project rename <key> --name <新名>");
+  const key = requirePositional(args, 0, "project key", "用法：agent-kanban project rename <key> --name <新名>");
   const name = getString(args, "name");
-  if (!name) throw KanbanError.usage("缺少 --name", "用法：kanban project rename <key> --name <新名>");
+  if (!name) throw KanbanError.usage("缺少 --name", "用法：agent-kanban project rename <key> --name <新名>");
 
   const handle = openLocalDb(process.cwd(), getString(args, "db"));
   try {
@@ -294,7 +294,7 @@ async function projectKey(argv: string[]): Promise<ExitCodeValue> {
   });
   assertKnownOptions(args, ["json", "help", "rotate", "db"]);
   const out = createOutput(getBool(args, "json"));
-  const key = requirePositional(args, 0, "project key", "用法：kanban project key <key>");
+  const key = requirePositional(args, 0, "project key", "用法：agent-kanban project key <key>");
 
   const handle = openLocalDb(process.cwd(), getString(args, "db"));
   try {

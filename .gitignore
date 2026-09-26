@@ -1,6 +1,6 @@
 ﻿# ---- agent-kanban 运行时数据 ----
 # SQLite 主库是二进制且多 agent 并发写，纳入 git 会产生无意义的 diff 并有提交易损坏的风险。
-# 跨机器/新 clone 的历史通过 .kanban/journal/*.jsonl 恢复（kanban import），详见 docs/plan/001-总体设计.md ADR-5。
+# 跨机器/新 clone 的历史通过 .kanban/journal/*.jsonl 恢复（agent-kanban import），详见 docs/plan/001-总体设计.md ADR-5。
 .kanban/
 
 # ---- 依赖与构建产物 ----

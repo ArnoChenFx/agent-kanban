@@ -1,13 +1,13 @@
 ---
 name: agent-kanban
-description: 用 agent-kanban 看板协调多个 agent 会话的任务——开工读现场、认领租约、推进进度、写交接、崩溃后接管别人的卡。适用于任何存在 .kanban/ 目录、AGENTS.md 里带 kanban 协议块、或注册了 kanban MCP server 的仓库；CLI 与 MCP 工具（kanban_*）两套接口都覆盖。触发词：kanban、看板、认领、claim、交接、handoff、租约、lease、接管、resume、kanban context、kanban task progress、多会话协作、崩溃恢复、共享任务状态。不适用于：单 agent 的短任务、不需要跨会话共享的待办清单。
+description: 用 agent-kanban 看板协调多个 agent 会话的任务——开工读现场、认领租约、推进进度、写交接、崩溃后接管别人的卡。适用于任何存在 .kanban/ 目录、AGENTS.md 里带 kanban 协议块、或注册了 kanban MCP server 的仓库；CLI 与 MCP 工具（kanban_*）两套接口都覆盖。触发词：kanban、看板、认领、claim、交接、handoff、租约、lease、接管、resume、agent-kanban context、agent-kanban task progress、多会话协作、崩溃恢复、共享任务状态。不适用于：单 agent 的短任务、不需要跨会话共享的待办清单。
 ---
 
 # agent-kanban 协作
 
 看板是同一仓库所有 agent 会话共享的唯一事实源。**改代码却不更新看板，等于让看板描述一个不存在的项目。**
 
-看板有**本地**和**远程**两种模式（`kanban config show` 可查），行为差别很大，**开工前先确认自己在哪种模式**。
+看板有**本地**和**远程**两种模式（`agent-kanban config show` 可查），行为差别很大，**开工前先确认自己在哪种模式**。
 
 ## 硬规则
 
@@ -20,18 +20,18 @@ description: 用 agent-kanban 看板协调多个 agent 会话的任务——开�
 ## 第一步：确认模式（两种模式行为不同）
 
 ```bash
-kanban config show      # 看「模式」那行：本地 还是 远程
+agent-kanban config show      # 看「模式」那行：本地 还是 远程
 ```
 
-|  | 本地模式 | 远程模式（`kanban serve` 在别的机器上） |
+|  | 本地模式 | 远程模式（`agent-kanban serve` 在别的机器上） |
 |---|---|---|
 | 数据在哪 | 本地 `.kanban/kanban.db` | **server 的库里**；本地只有 `.kanban/config.toml` |
-| 怎么配 | `kanban init`，零配置 | `kanban config init --server <url> --project <key> --key k_xxx` |
+| 怎么配 | `agent-kanban init`，零配置 | `agent-kanban config init --server <url> --project <key> --key k_xxx` |
 | 会话身份 | `session start` 会写 `.kanban/session`，后续命令自动带上 | ⚠️ **`session start` 不写本地文件**——每条命令都要 `--session <id>` 或设 `KANBAN_SESSION` |
 | 失联回收 | 每次命令隐式触发 | **server 定时回收**（`serve --reap-interval`，默认 30s） |
 | `export`/`import`/`snapshot`/`compact`/`project list` | 可用 | ❌ 退出码 5（本地没库），要在 **server 机器上**跑 |
 
-最容易被坑的一条：**远程模式下 `kanban session start` 不会写 `.kanban/session`**，紧接着的 `task claim` 会报
+最容易被坑的一条：**远程模式下 `agent-kanban session start` 不会写 `.kanban/session`**，紧接着的 `task claim` 会报
 `缺少会话标识`。补救：`export KANBAN_SESSION=s-xxxx`（或每条命令带 `--session`）。
 详见 [references/remote.md](references/remote.md)。
 
@@ -40,24 +40,24 @@ kanban config show      # 看「模式」那行：本地 还是 远程
 每个工作会话的第一件事。**在仓库任意子目录执行都有效**——看板靠向上查找 `.kanban/` 定位：
 
 ```bash
-kanban session start --agent <你的名字> --harness pi   # 拿到 s-xxxx，并把 id 写进 .kanban/session
-kanban context                                        # 读现场：交接 / 我在做的 / 失联会话 / 阻塞 / 可认领 / 建议动作
+agent-kanban session start --agent <你的名字> --harness pi   # 拿到 s-xxxx，并把 id 写进 .kanban/session
+agent-kanban context                                        # 读现场：交接 / 我在做的 / 失联会话 / 阻塞 / 可认领 / 建议动作
 ```
 
 - `session start` 在**本地模式**下顺带触发僵尸回收：崩溃 agent 遗留的租约在这里被回收，卡片重新变成可认领（远程模式由 server 定时回收，见上表）。
 - **本地模式**下 `session start` 会把 id 写进 `.kanban/session`，之后的 CLI 命令不用再带 `--session`。
   **远程模式不会写**——每条命令都要显式带 `--session <id>`，或先 `export KANBAN_SESSION=s-xxxx`。
-- `kanban context` 会**消费**交接（标记已读）。只预览不消费用 `--no-consume`。
+- `agent-kanban context` 会**消费**交接（标记已读）。只预览不消费用 `--no-consume`。
 - MCP 是长驻进程、不读那个文件，**每次工具调用都要显式传 `session_id`**。
 - `context --json` 字段：`project` / `counts` / `zombie_sessions` / `pending_handoffs` / `my_tasks` / `in_progress` / `blocked` / `ready` / `next_actions`。**先读 `next_actions`，它直接告诉你下一步干什么。**
 
 ## 认领与推进：租约会过期
 
 ```bash
-kanban task claim T-0007                      # 默认租约 15 分钟
-kanban task claim T-0007 --ttl 2h             # 明确知道要干很久，直接把租约拉长
-kanban task progress T-0007 --pct 60 --note "存储层重写完，20 个测试全绿"
-kanban task progress T-0007 --check "加迁移测试"   # 按文本勾掉 checklist 项
+agent-kanban task claim T-0007                      # 默认租约 15 分钟
+agent-kanban task claim T-0007 --ttl 2h             # 明确知道要干很久，直接把租约拉长
+agent-kanban task progress T-0007 --pct 60 --note "存储层重写完，20 个测试全绿"
+agent-kanban task progress T-0007 --check "加迁移测试"   # 按文本勾掉 checklist 项
 ```
 
 - **`task progress` 同时续租。** 每完成一个有意义的步骤就跑一次——"保持看板诚实"和"保住租约"是同一件事，别攒到最后。
@@ -69,14 +69,14 @@ kanban task progress T-0007 --check "加迁移测试"   # 按文本勾掉 checkl
 做完了 —— 走评审再完成，工具会告诉你哪些下游卡解锁了：
 
 ```bash
-kanban task review T-0001
-kanban task done T-0001 --note "测试全绿"
+agent-kanban task review T-0001
+agent-kanban task done T-0001 --note "测试全绿"
 ```
 
 做不完 / 要让给别人 / 上下文快满了 —— 写交接，**并顺手释放租约**：
 
 ```bash
-kanban handoff --task T-0007 \
+agent-kanban handoff --task T-0007 \
   --summary "WAL 事务层完成，store.ts 20 个测试全绿" \
   --next "实现崩溃自动合成交接，见计划 PL-T-0007-02 的 M2" \
   --blockers "等 staging 的 API key" \
@@ -86,7 +86,7 @@ kanban handoff --task T-0007 \
 `--summary` 必填，`--next` 强烈建议。**写了交接等于主动让出这张卡**：下一个会话即使在租约有效期内也能直接接管，不必等超时。
 
 ```bash
-kanban session end --summary "本轮做完 T-0007 存储层"
+agent-kanban session end --summary "本轮做完 T-0007 存储层"
 ```
 
 `session end` **会释放本会话持有的所有任务**（进度保留、状态回 `todo`），并列出释放了哪些卡。所以它是"干净收工"，不是"挂着卡消失"。
@@ -94,8 +94,8 @@ kanban session end --summary "本轮做完 T-0007 存储层"
 ## 崩溃恢复
 
 ```bash
-kanban context           # 先看：哪些卡持有者失联、哪些交接待接手
-kanban resume T-0007     # 接管：注入原持有者、最近交接、剩余 checklist、时间线、当前计划版本
+agent-kanban context           # 先看：哪些卡持有者失联、哪些交接待接手
+agent-kanban resume T-0007     # 接管：注入原持有者、最近交接、剩余 checklist、时间线、当前计划版本
 ```
 
 - 原持有者**留过交接**时，`resume` 不需要 `--force`（写交接即让出）。
@@ -119,7 +119,7 @@ backlog ──> todo ──claim──> doing ──review──> review ──>
 ```
 
 **实际路径（实测）**：`todo`/`doing` → `done` 需要 `--force`，**正常路径是 `doing` → `review` → `done`**（`review` → `done` 不需要 force）。
-`review` 想打回重做时，`kanban task reopen` 会失败（退出码 2，`review` 的合法后继只有 `done` / `doing` / `cancelled`），
+`review` 想打回重做时，`agent-kanban task reopen` 会失败（退出码 2，`review` 的合法后继只有 `done` / `doing` / `cancelled`），
 且 CLI/MCP 都没暴露通用的 `review → doing` 转移。变通：`done --note "打回"` → `reopen --reason "回归失败"` → `claim`。
 
 守卫（不满足会返回退出码 1 或 2）：
@@ -137,10 +137,10 @@ backlog ──> todo ──claim──> doing ──review──> review ──>
 计划是版本化的：每次 `save` 产生新版本，旧版本转 `superseded`，不会丢。
 
 ```bash
-kanban plan save --task T-0007 --title "拆成 4 个里程碑" --body-file .kanban/plans/T-0007.md
-kanban plan list --task T-0007            # 当前生效版本
-kanban plan show PL-T-0007-02             # 读某个版本全文（位置参数是**计划号**，不是任务号）
-kanban plan history PL-T-0007-02          # 版本链
+agent-kanban plan save --task T-0007 --title "拆成 4 个里程碑" --body-file .kanban/plans/T-0007.md
+agent-kanban plan list --task T-0007            # 当前生效版本
+agent-kanban plan show PL-T-0007-02             # 读某个版本全文（位置参数是**计划号**，不是任务号）
+agent-kanban plan history PL-T-0007-02          # 版本链
 ```
 
 计划号形如 `PL-T-0007-02`（`PL-<任务号>-<版本号>`）。`--body` 必填：标题只是一句话，正文才是价值。
@@ -158,9 +158,9 @@ CLI **没有** `plan diff` 子命令（`plan.diff` 只在 core 与 MCP 层暴露
 | 2 | STATE | 任务不存在 / 非法流转 / 被守卫拦下 | 读 `legal_transitions` 换方案，**不要原样重试** |
 | 3 | CONFLICT | 他人持有且租约有效 | 读 `details.holder`（持有者、进度、剩余租约），换一张卡 |
 | 4 | BUSY | 数据库被锁 | 退避重试，最多 3 次 |
-| 5 | NOT_INIT | 没有 `.kanban/` 或 schema 待迁移 | `kanban init` |
+| 5 | NOT_INIT | 没有 `.kanban/` 或 schema 待迁移 | `agent-kanban init` |
 | 6 | INTERNAL | 工具自身的 bug | 报告，不要重试 |
-| 7 | AUTH | 缺 key / key 错 / 项目不存在 | `kanban config show` 查来源，修凭据 |
+| 7 | AUTH | 缺 key / key 错 / 项目不存在 | `agent-kanban config show` 查来源，修凭据 |
 
 ## 输出契约
 
@@ -180,8 +180,8 @@ CLI **没有** `plan diff` 子命令（`plan.diff` 只在 core 与 MCP 层暴露
 
 ## 坑（实测踩过的，别重蹈）
 
-- `kanban export` / `import` / `snapshot` / `compact` **不处理 `--help`**——加上 `--help` 会**真的执行该操作**（导出、裁剪事件）。要看用法去读文档，不是敲 `--help`。
-- `kanban task <子命令> --help` **不打印帮助**，而是真去执行该命令、因缺位置参数报 USAGE。只有 `kanban task --help` 打印用法。
-- 在**仓库的子目录**里跑 `kanban init` 不会建新看板——它向上找到已有的 `.kanban/` 就复用。要隔离测试得把目录放到仓库外面。
-- 远程模式的目录里跑 `kanban export` 会报 `NOT_INIT 未找到看板数据目录`——**这个提示是误导的**，你的看板在 server 上好好的。备份要去 server 机器跑。
+- `agent-kanban export` / `import` / `snapshot` / `compact` **不处理 `--help`**——加上 `--help` 会**真的执行该操作**（导出、裁剪事件）。要看用法去读文档，不是敲 `--help`。
+- `agent-kanban task <子命令> --help` **不打印帮助**，而是真去执行该命令、因缺位置参数报 USAGE。只有 `agent-kanban task --help` 打印用法。
+- 在**仓库的子目录**里跑 `agent-kanban init` 不会建新看板——它向上找到已有的 `.kanban/` 就复用。要隔离测试得把目录放到仓库外面。
+- 远程模式的目录里跑 `agent-kanban export` 会报 `NOT_INIT 未找到看板数据目录`——**这个提示是误导的**，你的看板在 server 上好好的。备份要去 server 机器跑。
 - `--force` 不是"再试一次"的意思。

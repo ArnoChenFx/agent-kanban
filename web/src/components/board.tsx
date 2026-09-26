@@ -412,7 +412,7 @@ export function Board() {
               </p>
             ))}
             <p className="text-xs">
-              {t("board.zombie.cli")} <code>{`kanban resume <${t("cli.taskIdArg")}>`}</code>
+              {t("board.zombie.cli")} <code>{`agent-kanban resume <${t("cli.taskIdArg")}>`}</code>
               {t("board.zombie.cliNote")}
             </p>
           </AlertDescription>
@@ -562,10 +562,10 @@ export function Board() {
           <section>
             <h2 className="mb-2 text-sm font-semibold">{t("sidebar.cliEquiv")}</h2>
             <ul className="text-muted-foreground space-y-1 font-mono text-[11px]">
-              <li>kanban context</li>
-              <li>{`kanban resume <${t("cli.taskIdArg")}>`}</li>
-              <li>kanban board</li>
-              <li>kanban doctor --deep</li>
+              <li>agent-kanban context</li>
+              <li>{`agent-kanban resume <${t("cli.taskIdArg")}>`}</li>
+              <li>agent-kanban board</li>
+              <li>agent-kanban doctor --deep</li>
             </ul>
           </section>
         </aside>

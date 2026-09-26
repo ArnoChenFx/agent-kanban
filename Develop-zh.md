@@ -1,6 +1,6 @@
 # 开发 agent-kanban
 
-[English](Develop.md) · [中文](Develop_zh.md) · [用户指南](README-zh.md) · [User guide](README.md)
+[English](Develop.md) · [中文](Develop-zh.md) · [用户指南](README-zh.md) · [User guide](README.md)
 
 架构、构建、发布，以及验证工具链。
 
@@ -53,7 +53,7 @@ docs/note/            实施记录与踩坑笔记
 
 这就是本地模式与远程模式行为一致的原因。它是结构性保证，不靠谁来自觉遵守。
 
-**注意：** `src/commands/context.ts` 是连接/会话上下文辅助模块；`src/commands/recovery.ts` 才是实现 `kanban context` 的命令文件。两者无关，命名容易误导。
+**注意：** `src/commands/context.ts` 是连接/会话上下文辅助模块；`src/commands/recovery.ts` 才是实现 `agent-kanban context` 的命令文件。两者无关，命名容易误导。
 
 ### 前端文案约定（i18n）
 
@@ -105,7 +105,7 @@ bun run serve        # 后端 + 已构建前端在 :7788
 
 ```bash
 bun run web:build      # vite build，然后 gen:assets
-bun build --compile src/cli.ts --outfile dist/kanban
+bun build --compile src/cli.ts --outfile dist/agent-kanban
 ```
 
 或者一条命令：
@@ -180,7 +180,7 @@ bun run verify:all    # 全跑一遍，带汇总
 ## 文档约定
 
 - `README.md` / `README-zh.md` 面向**使用者**：功能、解决什么问题、怎么部署和配置。默认展示英文（`README.md`），中文版在 `README-zh.md`。
-- `Develop.md` / `Develop_zh.md` 面向**开发者**：架构、构建、发布、验证工具链。
+- `Develop.md` / `Develop-zh.md` 面向**开发者**：架构、构建、发布、验证工具链。
 - 四份文档顶部互相链，用户可以随时切换语言。
 
 ## 测试与 SQLite
@@ -201,12 +201,12 @@ bun run verify:all    # 全跑一遍，带汇总
 
 ## 部署形态
 
-一个部署一个 `kanban serve` 进程，内部管多个 project，各自用 project key 和受限 token 隔离。
+一个部署一个 `agent-kanban serve` 进程，内部管多个 project，各自用 project key 和受限 token 隔离。
 
 ```bash
 cp .env.example .env      # 填 KANBAN_ADMIN_TOKEN（openssl rand -hex 16）
 docker compose up -d
-docker compose exec kanban kanban admin project add my-app
+docker compose exec kanban agent-kanban admin project add my-app
 ```
 
 - **compose 里没有反向代理，也没有 TLS。** 多数部署背后已经有 HTTPS。为此再加一个要续期证书的容器，等于引入一个新的故障模式（证书过期 → 全面不可用），而多数用户不需要。`KANBAN_BIND` 默认 `127.0.0.1`，暴露要显式决定。

@@ -274,7 +274,7 @@ export function taskNotFound(taskId: string, projectKey?: string): KanbanError {
     {
       task_id: taskId,
       project: projectKey,
-      hint: "用 `kanban task list` 查看现有任务；任务号形如 T-0007，且在每个 project 内**独立编号**",
+      hint: "用 `agent-kanban task list` 查看现有任务；任务号形如 T-0007，且在每个 project 内**独立编号**",
     },
   );
 }

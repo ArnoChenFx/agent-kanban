@@ -110,7 +110,7 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
           : `${orphanTasks.length} 张卡处于进行中但持有者已失联`,
       subjects: orphanTasks.map((t) => t.id),
       fixed: fixedCount > 0,
-      hint: fix ? "" : "运行 `kanban doctor --fix` 回收（进度会保留）或 `kanban resume <任务号>` 接管",
+      hint: fix ? "" : "运行 `agent-kanban doctor --fix` 回收（进度会保留）或 `agent-kanban resume <任务号>` 接管",
       severity: fixedCount > 0 ? "info" : "warning",
     });
   }
@@ -137,7 +137,7 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
           : `${unblockedCandidates.length} 张卡处于阻塞，但依赖已全部完成`,
       subjects: unblockedCandidates.map((t) => t.id),
       fixed: fixedCount > 0,
-      hint: fix ? "" : "运行 `kanban doctor --fix` 自动解除，或 `kanban task unblock <任务号>`",
+      hint: fix ? "" : "运行 `agent-kanban doctor --fix` 自动解除，或 `agent-kanban task unblock <任务号>`",
       severity: fixedCount > 0 ? "info" : "warning",
     });
   }
@@ -153,7 +153,7 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
       message: `${stalled.length} 张卡超过 4 小时没有更新进度`,
       subjects: stalled.map((t) => t.id),
       fixed: false,
-      hint: "确认是否卡住；可 `kanban task note <任务号> \"当前卡在…\"` 说明，或 `kanban task block --reason` 标记阻塞",
+      hint: "确认是否卡住；可 `agent-kanban task note <任务号> \"当前卡在…\"` 说明，或 `agent-kanban task block --reason` 标记阻塞",
       severity: "warning",
     });
   }
@@ -172,7 +172,7 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
       message: `${inconsistent.length} 张卡的 progress 与 checklist 完成比例差距较大`,
       subjects: inconsistent.slice(0, 10).map((t) => t.id),
       fixed: false,
-      hint: "用 `kanban task progress <任务号> --pct <正确值>` 修正，或 `kanban task show <任务号> --timeline` 核对",
+      hint: "用 `agent-kanban task progress <任务号> --pct <正确值>` 修正，或 `agent-kanban task show <任务号> --timeline` 核对",
       severity: "info",
     });
   }
@@ -187,7 +187,7 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
       message: `${doneWithRemaining.length} 张卡已标记完成，但 checklist 还有未勾选项`,
       subjects: doneWithRemaining.map((t) => t.id),
       fixed: false,
-      hint: "如果确实完成，用 `kanban task progress --check \"<项名>\"` 补勾；如果是误标，`kanban task reopen --reason` 重新打开",
+      hint: "如果确实完成，用 `agent-kanban task progress --check \"<项名>\"` 补勾；如果是误标，`agent-kanban task reopen --reason` 重新打开",
       severity: "info",
     });
   }
@@ -239,10 +239,10 @@ function checkProtocol(projectRoot: string | undefined): DoctorIssue | null {
     message:
       insp.status === "outdated"
         ? `AGENTS.md 的协作协议落后于当前 CLI（协议 ${insp.installedVersion}，当前 ${insp.currentVersion}）`
-        : `AGENTS.md 里没有协作协议区块，agent 不知道开工要先跑 kanban context`,
+        : `AGENTS.md 里没有协作协议区块，agent 不知道开工要先跑 agent-kanban context`,
     subjects: [insp.file],
     fixed: false,
-    hint: "运行 `kanban install-protocol` 更新（只改受管区块，文件其余内容不动）",
+    hint: "运行 `agent-kanban install-protocol` 更新（只改受管区块，文件其余内容不动）",
     severity: "warning",
   };
 }
@@ -316,7 +316,7 @@ function checkProjectionConsistency(db: Database, scope: Scope): DoctorIssue | n
     message: `${mismatches.length} 张卡的状态与事件流推导结果不一致（可能有绕过 core 的直接写库）`,
     subjects: mismatches.slice(0, 10),
     fixed: false,
-    hint: "运行 `kanban rebuild` 从事件流重建投影（会覆盖 tasks 表，请先备份）",
+    hint: "运行 `agent-kanban rebuild` 从事件流重建投影（会覆盖 tasks 表，请先备份）",
     severity: "error",
   };
 }

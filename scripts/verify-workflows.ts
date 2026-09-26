@@ -137,7 +137,7 @@ for (const file of FILES) {
       new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`);
     // 注意用 [ \t] 而不是 \s：带 m 标志时 \s 会吃掉换行，跨行误匹配
     const assetNames = [...text.matchAll(/^[ \t]*asset:[ \t]*(\S+)[ \t]*$/gm)].map((m) => m[1]!);
-    // 模式带目录前缀，比对时也要带上，否则 `release-assets/kanban-*` 一个都匹配不上
+    // 模式带目录前缀，比对时也要带上，否则 `release-assets/agent-kanban-*` 一个都匹配不上
     const expectedAssets = assetNames.flatMap((a) => [`release-assets/${a}`, `release-assets/${a}.sha256`]);
     check("矩阵里取到 4 个 asset 名", assetNames.length === 4, assetNames.join(", "));
     const badMatches = expectedAssets.filter(
@@ -165,7 +165,8 @@ for (const file of FILES) {
     check("grep 模式锚定行首", /grep -cE '\^ \*- target: bun-'/.test(codeLines));
     check("release 的 needs 含 verify", /needs: \[verify, binary, docker\]/.test(codeLines));
     // arm64 二进制已移除：Docker 镜像多架构覆盖，且 arm64 独立产物只能用 qemu 冒烟
-    check("不再发布 linux-arm64 二进制", !/bun-linux-arm64/.test(text) && !/kanban-linux-arm64/.test(text));
+    // 资产名已改为 agent-kanban-*，所以用 lookbehind 避免被新名字里的 kanban- 误命中
+    check("不再发布 linux-arm64 二进制", !/bun-linux-arm64/.test(text) && !/(?<![.\w-])kanban-linux-arm64/.test(text));
     // 只要求**冒烟测试里**没有 qemu 分支；setup-qemu-action 本身仍需要，
     // 因为 Docker 镜像本身就是多架构（linux/amd64 + linux/arm64）。
     check("冒烟测试不再有 qemu 分支", !/platform linux\/arm64/.test(text));

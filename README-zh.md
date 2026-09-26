@@ -38,33 +38,33 @@
      │  handoff               │  rebuild
      ▼                        ▼
 ┌──────────┐            ┌──────────┐
-│ handoff  │ ─────────► │ session  │  kanban resume T-0007
+│ handoff  │ ─────────► │ session  │  agent-kanban resume T-0007
 │ 说明     │            │    B     │  → 拿到交接 + 时间线
 └──────────┘            └──────────┘
 ```
 
 **1. 任务归属靠租约。**
-`kanban task claim T-0007` 给当前会话一份有期限的租约（默认 15 分钟）。进度和检查项完整保留。租约到期就回收，不管 agent 是崩溃、被杀还是走人，server 都会**自动**把任务收回去。下次 `context` 调用会告诉新会话"这张卡没人管，可以认领"，不需要跑任何清理脚本。
+`agent-kanban task claim T-0007` 给当前会话一份有期限的租约（默认 15 分钟）。进度和检查项完整保留。租约到期就回收，不管 agent 是崩溃、被杀还是走人，server 都会**自动**把任务收回去。下次 `context` 调用会告诉新会话"这张卡没人管，可以认领"，不需要跑任何清理脚本。
 
 **2. 事件流是事实来源，看板是投影。**
-每一次状态变化都是一个事件：`task_created`、`task_progress`、`handoff_created`、`plan_superseded`。`tasks` 和 `plans` 表是推导出来的。所以 `kanban rebuild` 能从事件流重算出整个看板，再和库里存的逐字段对比：
+每一次状态变化都是一个事件：`task_created`、`task_progress`、`handoff_created`、`plan_superseded`。`tasks` 和 `plans` 表是推导出来的。所以 `agent-kanban rebuild` 能从事件流重算出整个看板，再和库里存的逐字段对比：
 
 ```console
-$ kanban rebuild
+$ agent-kanban rebuild
 重放 412 个事件...
 4 个字段与已存投影不一致。
 
-$ kanban rebuild --write
+$ agent-kanban rebuild --write
 重放 412 个事件... 4 处漂移已在单个事务中修复。
 ```
 
 事件流和投影一旦不一致，你会被告知，不会等到六周后才发现。
 
 **3. 交接由人写。**
-一个会话收工时会写交接：做完了什么、下一步是什么、卡在什么地方、还有什么悬而未决。`kanban resume` 优先展示**这个**。崩溃时系统自动生成的交接只作兜底，它会明确写"原持有者失联"，你不会把一个死掉会话的猜测误当成活人会话的指示。
+一个会话收工时会写交接：做完了什么、下一步是什么、卡在什么地方、还有什么悬而未决。`agent-kanban resume` 优先展示**这个**。崩溃时系统自动生成的交接只作兜底，它会明确写"原持有者失联"，你不会把一个死掉会话的猜测误当成活人会话的指示。
 
 **4. 计划存版本。**
-`kanban plan save` 每次都产生新版本，旧版本标记为 `superseded`。`kanban plan history` 能看版本链，`kanban plan at --ts` 能看任意时刻生效的计划。任务做完、有人问"当初为什么这么做"时，答案还在。
+`agent-kanban plan save` 每次都产生新版本，旧版本标记为 `superseded`。`agent-kanban plan history` 能看版本链，`agent-kanban plan at --ts` 能看任意时刻生效的计划。任务做完、有人问"当初为什么这么做"时，答案还在。
 
 ## 快速开始
 
@@ -73,12 +73,12 @@ $ kanban rebuild --write
 从 [Releases](https://github.com/ArnoChenFx/agent-kanban/releases) 下载对应平台的文件。二进制内嵌了 Bun 运行时、数据库 schema 和整个 Web 界面。
 
 ```bash
-chmod +x kanban-linux-x64        # macOS 用 kanban-darwin-arm64 · Windows 用 kanban-windows-x64.exe
-./kanban-linux-x64 init
-./kanban-linux-x64 install-protocol   # 教会你的 agent 使用看板
-./kanban-linux-x64 session start --agent my-agent
-./kanban-linux-x64 task add "重写鉴权层"
-./kanban-linux-x64 serve         # → http://127.0.0.1:7788/
+chmod +x agent-kanban-linux-x64        # macOS 用 agent-kanban-darwin-arm64 · Windows 用 agent-kanban-windows-x64.exe
+./agent-kanban-linux-x64 init
+./agent-kanban-linux-x64 install-protocol   # 教会你的 agent 使用看板
+./agent-kanban-linux-x64 session start --agent my-agent
+./agent-kanban-linux-x64 task add "重写鉴权层"
+./agent-kanban-linux-x64 serve         # → http://127.0.0.1:7788/
 ```
 
 ### 方式 B —— 从源码运行
@@ -88,8 +88,8 @@ chmod +x kanban-linux-x64        # macOS 用 kanban-darwin-arm64 · Windows 用 
 ```bash
 bun install
 bun run build:binary            # 构建前端 → 内嵌资源 → 编译
-./dist/kanban init
-./dist/kanban serve
+./dist/agent-kanban init
+./dist/agent-kanban serve
 ```
 
 ### 方式 C —— Docker
@@ -108,46 +108,46 @@ docker compose up -d
 
 ```bash
 # 1. 开会话（登记你是谁）
-kanban session start --agent pi-main --harness pi
+agent-kanban session start --agent pi-main --harness pi
 
 # 2. 读现场 —— 这应该是你开工的第一个动作
-kanban context
+agent-kanban context
 #    → 属于你的交接、你正在做的、你可以认领的
 
 # 3. 认领任务（拿到租约）
-kanban task claim T-0007
+agent-kanban task claim T-0007
 
 # 4. 干活，并顺手让看板保持真实
-kanban task progress T-0007 --pct 60 --note "存储层重写完"
-kanban task check T-0007 --item "加迁移测试"
+agent-kanban task progress T-0007 --pct 60 --note "存储层重写完"
+agent-kanban task check T-0007 --item "加迁移测试"
 
 # 5. 卡住了？说清楚，租约会自动释放
-kanban task block T-0007 --reason "等运维给 API key"
+agent-kanban task block T-0007 --reason "等运维给 API key"
 
 # 6. 要离开？留一份真正的交接
-kanban handoff --task T-0007 \
+agent-kanban handoff --task T-0007 \
   --summary "鉴权重写完成，剩 token 刷新" \
   --next "从 refreshToken() 接手，见计划 v2" \
   --blockers "需要 staging API key" \
   --open "每次使用都轮换 refresh token？"
 
 # 7. 收工
-kanban task done T-0007 --note "测试全绿"
-kanban session end
+agent-kanban task done T-0007 --note "测试全绿"
+agent-kanban session end
 ```
 
 ### 崩溃之后回来
 
 ```bash
-kanban context           # 哪些是我的、哪些没人管、谁崩了
-kanban resume T-0007     # 接管：交接 + 完整时间线一并注入
+agent-kanban context           # 哪些是我的、哪些没人管、谁崩了
+agent-kanban resume T-0007     # 接管：交接 + 完整时间线一并注入
 ```
 
 你拿到的是上一个会话的笔记、这次任务所有变更的有序列表、当前的计划版本——而不是一张标题写着"修鉴权"的空白卡。
 
 ## Web 看板
 
-`kanban serve` 会在 7788 端口开一个真正的界面：
+`agent-kanban serve` 会在 7788 端口开一个真正的界面：
 
 - **7 条泳道** —— 想法池 / 待办 / 进行中 / 已阻塞 / 待评审 / 已完成 / 已取消
 - **拖拽**改状态，带状态机前置校验；非法移动会被拒绝并说明原因
@@ -162,13 +162,13 @@ Web 和 CLI 走同一条数据通路。浏览器里能做的，agent 在 shell �
 
 ## 跨机器共享一个看板
 
-一个 `kanban serve` 进程可以管多个 project。每个 project 完全隔离：各自的任务、token、ID 空间（每个 project 的 `T-0001` 都从 1 开始）。
+一个 `agent-kanban serve` 进程可以管多个 project。每个 project 完全隔离：各自的任务、token、ID 空间（每个 project 的 `T-0001` 都从 1 开始）。
 
 ```bash
 # 在 server 机器上
-kanban serve                                  # 管理员 token 只打印一次
-kanban admin project add my-app
-kanban admin token create --project my-app --name "CI runner"
+agent-kanban serve                                  # 管理员 token 只打印一次
+agent-kanban admin project add my-app
+agent-kanban admin token create --project my-app --name "CI runner"
 # → k_a1b2c3...
 
 # 在客户端机器上：写 <项目>/.kanban/config.toml
@@ -186,14 +186,14 @@ key = "my-app"
 ```
 
 ```bash
-kanban config show     # 确认生效配置及其来源
-kanban task list       # 之后不用再带参数
+agent-kanban config show     # 确认生效配置及其来源
+agent-kanban task list       # 之后不用再带参数
 ```
 
 或者一条命令配好：
 
 ```bash
-kanban config init --server https://kanban.example.com --project my-app --key k_a1b2c3
+agent-kanban config init --server https://kanban.example.com --project my-app --key k_a1b2c3
 ```
 
 ## 配置
@@ -238,28 +238,28 @@ Server 端：`KANBAN_HOST`、`KANBAN_PORT`、`KANBAN_WEB_DIR`、`KANBAN_ADMIN_TO
 
 | 命令 | 用途 |
 |---|---|
-| `kanban init` | 创建本地看板（`.kanban/`） |
-| `kanban install-protocol` | 把 agent 协作协议写入项目的 `AGENTS.md` |
-| `kanban mcp` | 启动 MCP server（stdio），让 agent 以 tool call 读写看板 |
-| `kanban session start \| end \| list \| heartbeat` | 会话生命周期 |
-| `kanban task add \| list \| show \| claim \| progress \| block \| done \| …` | 任务操作 |
-| `kanban board` | 终端泳道视图 |
-| `kanban context` | 读现场：看板 + 交接 + 建议动作 |
-| `kanban resume <task>` | 接管任务，注入交接与时间线 |
-| `kanban handoff` | 写交接（summary / next / blockers / open） |
-| `kanban plan save \| show \| list \| history \| at \| attach` | 计划版本化 |
-| `kanban rebuild [--write]` | 重放事件流并校验投影 |
-| `kanban export [--out <目录>]` | 导出事件 journal（按天分文件） |
-| `kanban import <目录> [--dry-run]` | 从 journal 重建库（跨机器迁移用） |
-| `kanban snapshot` | 写看板快照（人可读 JSON） |
-| `kanban compact [--keep-days 30]` | 裁剪旧事件（先自动快照） |
-| `kanban doctor [--deep]` | 一致性自检与修复 |
-| `kanban config show \| init \| set \| use \| path` | 配置管理 |
-| `kanban project list` | 查询 project（本地库） |
-| `kanban admin project … \| token …` | project 与 token 管理 |
-| `kanban serve` | 启动 HTTP + SSE server |
+| `agent-kanban init` | 创建本地看板（`.kanban/`） |
+| `agent-kanban install-protocol` | 把 agent 协作协议写入项目的 `AGENTS.md` |
+| `agent-kanban mcp` | 启动 MCP server（stdio），让 agent 以 tool call 读写看板 |
+| `agent-kanban session start \| end \| list \| heartbeat` | 会话生命周期 |
+| `agent-kanban task add \| list \| show \| claim \| progress \| block \| done \| …` | 任务操作 |
+| `agent-kanban board` | 终端泳道视图 |
+| `agent-kanban context` | 读现场：看板 + 交接 + 建议动作 |
+| `agent-kanban resume <task>` | 接管任务，注入交接与时间线 |
+| `agent-kanban handoff` | 写交接（summary / next / blockers / open） |
+| `agent-kanban plan save \| show \| list \| history \| at \| attach` | 计划版本化 |
+| `agent-kanban rebuild [--write]` | 重放事件流并校验投影 |
+| `agent-kanban export [--out <目录>]` | 导出事件 journal（按天分文件） |
+| `agent-kanban import <目录> [--dry-run]` | 从 journal 重建库（跨机器迁移用） |
+| `agent-kanban snapshot` | 写看板快照（人可读 JSON） |
+| `agent-kanban compact [--keep-days 30]` | 裁剪旧事件（先自动快照） |
+| `agent-kanban doctor [--deep]` | 一致性自检与修复 |
+| `agent-kanban config show \| init \| set \| use \| path` | 配置管理 |
+| `agent-kanban project list` | 查询 project（本地库） |
+| `agent-kanban admin project … \| token …` | project 与 token 管理 |
+| `agent-kanban serve` | 启动 HTTP + SSE server |
 
-完整参数见 `kanban <命令> --help`。
+完整参数见 `agent-kanban <命令> --help`。
 
 ### 退出码
 
@@ -272,7 +272,7 @@ Server 端：`KANBAN_HOST`、`KANBAN_PORT`、`KANBAN_WEB_DIR`、`KANBAN_ADMIN_TO
 | `2` | STATE | 任务不存在、非法状态转移、缺少必填的 `--reason` | 不要原样重试 |
 | `3` | CONFLICT | 任务被他人持有且租约仍有效 | 换做别的，或等租约到期。**不要**用 `--force` |
 | `4` | BUSY | 数据库被锁 | 退避后重试，最多 3 次 |
-| `5` | NOT_INIT | 找不到 `.kanban/`，或 schema 需要迁移 | 跑 `kanban init` |
+| `5` | NOT_INIT | 找不到 `.kanban/`，或 schema 需要迁移 | 跑 `agent-kanban init` |
 | `6` | INTERNAL | 内部错误（视为 bug） | 上报，不要重试 |
 | `7` | AUTH | 缺 key、key 不对、或 project 不存在 | 修凭据 |
 
@@ -283,22 +283,22 @@ agent 应该基于退出码（或 `--json` 输出里的 `error.name` 字符串�
 ### 方式一：协议文件（对任何 agent 有效）
 
 ```bash
-kanban install-protocol      # 往 <项目>/AGENTS.md 写一个受管区块
-kanban install-protocol --check   # CI 门禁：缺失或落后则退出码 2
+agent-kanban install-protocol      # 往 <项目>/AGENTS.md 写一个受管区块
+agent-kanban install-protocol --check   # CI 门禁：缺失或落后则退出码 2
 ```
 
 区块夹在 `<!-- kanban:begin -->` 与 `<!-- kanban:end -->` 之间，命令只碰这一段，
-所以你可以在同一个文件里写自己的规范。`kanban doctor` 会报出区块是否落后于 CLI 版本。
+所以你可以在同一个文件里写自己的规范。`agent-kanban doctor` 会报出区块是否落后于 CLI 版本。
 
 只要 agent 会读 `AGENTS.md`（或 `CLAUDE.md`、或你 harness 认的那个文件名），
-它就知道开工前要先跑 `kanban session start` 和 `kanban context`，而不是直接改代码。
+它就知道开工前要先跑 `agent-kanban session start` 和 `agent-kanban context`，而不是直接改代码。
 也可以用 `--file` 写到别处，比如 `--file .cursor/rules/kanban.mdc`。
 
 ### 方式二：MCP 工具
 
 ```bash
-pi mcp add kanban -- cmd kanban mcp
-claude mcp add kanban -- cmd kanban mcp
+pi mcp add kanban -- cmd agent-kanban mcp
+claude mcp add kanban -- cmd agent-kanban mcp
 ```
 
 本仓库已经自带：根目录的 `.mcp.json` 注册的就是本地构建产物，任何读取标准 MCP 配置的
@@ -348,7 +348,7 @@ npx skills add ArnoChenFx/agent-kanban
 ```
 
 skill 是第三种方式，也是唯一一种教 agent **工作流**而不是接口的方式。协议文件说的是"开工先跑
-`kanban context`"；skill 说的是拿到退出码 3 时该换卡而不是加 `--force`、`task progress` 顺带续租、
+`agent-kanban context`"；skill 说的是拿到退出码 3 时该换卡而不是加 `--force`、`task progress` 顺带续租、
 `doing → done` 会被守卫拦下所以要绕 `review`。agent 容易踩的那些点被拆成了几个 reference：
 完整命令参考、MCP 工具对照、本地与远程的差异，以及一张按退出码索引的排障表。
 
@@ -384,17 +384,17 @@ skill 实体放在本仓库的 `skills/` 下，所以任何项目都能装，不
 
 **入 git 的是 `.kanban/journal/`** —— 只追加的事件流，每次变更一行 JSON，按天分文件。
 既然事件是事实来源、看板只是投影，那么在新机器上重放这个日志就能完整重建：
-任务、检查项、计划、交接、依赖，一个不少。`kanban rebuild --write` 干的正是这件事，
+任务、检查项、计划、交接、依赖，一个不少。`agent-kanban rebuild --write` 干的正是这件事，
 和它用来自证一致的是同一套机制。
 
 ```bash
 # 旧机器上
-kanban export --out .kanban/journal
+agent-kanban export --out .kanban/journal
 
 # 新机器上
-kanban init
-kanban import .kanban/journal
-kanban rebuild --write --force
+agent-kanban init
+agent-kanban import .kanban/journal
+agent-kanban rebuild --write --force
 ```
 
 project key 是由目录名派生的，所以新旧机器不同。`import` 会把事件改写到当前 project
@@ -407,7 +407,7 @@ project key 是由目录名派生的，所以新旧机器不同。`import` 会�
 
 **事件流有缺口怎么办？**
 
-`kanban doctor` 会报出不一致，`kanban rebuild` 能指出到底哪些字段对不上。
+`agent-kanban doctor` 会报出不一致，`agent-kanban rebuild` 能指出到底哪些字段对不上。
 不加 `--write --force` 它不会写入任何东西，所以历史里的缺口不可能静默地抹掉你的看板。
 
 **两个 agent 抢同一张卡会怎样？**
@@ -417,18 +417,18 @@ project key 是由目录名派生的，所以新旧机器不同。`import` 会�
 
 **agent 干活途中死了，怎么接手？**
 
-`kanban context` 会列出持有者已失联的卡，然后 `kanban resume T-0007` 接管。
+`agent-kanban context` 会列出持有者已失联的卡，然后 `agent-kanban resume T-0007` 接管。
 进度和检查项都会保留，上一位持有者的交接会一并注入。
 如果对方留了交接，即使租约还没到期也能接管——写交接就意味着让位。
 
 **怎么把整个看板迁到共享 server？**
 
-在目标机器上跑 `kanban serve`，建一个 project，签一个 token，
+在目标机器上跑 `agent-kanban serve`，建一个 project，签一个 token，
 再用 `.kanban/config.toml` 把客户端指过去。每个 project 隔离，每个 token 只能访问被授权的 project。
 
 **跑了几个月，数据库变大了。**
 
-`kanban compact --keep-days 30`。它会先写快照再删旧事件，
+`agent-kanban compact --keep-days 30`。它会先写快照再删旧事件，
 保留最近 N 天的全部、进行中任务的相关事件，以及无论多旧都保底的 1000 条。
 被裁掉的那段历史只存在于那份快照里。
 

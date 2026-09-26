@@ -54,7 +54,7 @@ export function validateProjectKey(key: string): string {
     throw KanbanError.usage(
       `project key "${key}" 格式非法`,
       "只允许小写字母、数字、连字符，且必须以字母或数字开头，最长 64 字符。\n" +
-        "可用 `kanban project add <key>` 创建，或用 `kanban project list` 查看已有 key",
+        "可用 `agent-kanban project add <key>` 创建，或用 `agent-kanban project list` 查看已有 key",
     );
   }
   return trimmed;
@@ -75,7 +75,7 @@ export function requireProject(db: Database, key: string): Project {
       `project "${key}" 不存在`,
       {
         project: key,
-        hint: "用 `kanban project list` 查看已有 project；新建请在 server 端执行 `kanban project add <key>`",
+        hint: "用 `agent-kanban project list` 查看已有 project；新建请在 server 端执行 `agent-kanban project add <key>`",
       },
     );
   }
@@ -99,7 +99,7 @@ export function createProject(
   if (getProject(db, key)) {
     throw KanbanError.state(`project "${key}" 已存在`, {
       project: key,
-      hint: `如需更换 API key：kanban project key ${key} --rotate`,
+      hint: `如需更换 API key：agent-kanban project key ${key} --rotate`,
     });
   }
   const now = input.now ?? Date.now();
@@ -118,7 +118,7 @@ export function createProject(
  * 2. 库里多个 project → 优先用 key 与目录名 slug 一致的那个
  * 3. 都没有 → 创建一个（name 取 meta.project_name 或目录名，api_key_hash=NULL 即不鉴权）
  *
- * 这是"本地用户零配置"的实现：任何 `kanban task list` 都不需要知道 project 概念。
+ * 这是"本地用户零配置"的实现：任何 `agent-kanban task list` 都不需要知道 project 概念。
  */
 export function resolveLocalProject(
   db: Database,
@@ -280,7 +280,7 @@ export function authError(projectKey: string | undefined): KanbanError {
         "设置方式（三选一，优先级从高到低）：\n" +
         "  1. 命令行：--project <key> --key k_xxx\n" +
         "  2. 环境变量：KANBAN_PROJECT / KANBAN_KEY\n" +
-        "  3. 持久化：kanban remote set <server> --project <key> --key k_xxx",
+        "  3. 持久化：agent-kanban remote set <server> --project <key> --key k_xxx",
     },
   );
 }

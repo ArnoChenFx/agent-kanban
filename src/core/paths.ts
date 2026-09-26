@@ -79,7 +79,7 @@ export function findKanbanDirLoose(startDir: string = process.cwd()): string | n
  *
  * @param opts.db 显式指定的 db 路径（来自 --db 或 KANBAN_DB）
  * @param opts.cwd 查找起点，默认 process.cwd()
- * @param opts.mustExist 为 true 时找不到就抛 NOT_INIT(5)；`kanban init` 传 false
+ * @param opts.mustExist 为 true 时找不到就抛 NOT_INIT(5)；`agent-kanban init` 传 false
  */
 export function resolvePaths(
   opts: { db?: string | undefined; cwd?: string; mustExist?: boolean } = {},
@@ -103,7 +103,7 @@ export function resolvePaths(
     throw KanbanError.notInit(
       `未找到看板数据目录（在 ${cwd} 向上 ${MAX_LOOKUP_DEPTH} 层内没有 ${KANBAN_DIR}/${DB_FILENAME}）`,
       {
-        hint: "在项目根目录运行 `kanban init` 初始化看板；已有 journal 可用 `kanban import` 恢复",
+        hint: "在项目根目录运行 `agent-kanban init` 初始化看板；已有 journal 可用 `agent-kanban import` 恢复",
         cwd: resolve(cwd),
       },
     );

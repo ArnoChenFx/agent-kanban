@@ -1,5 +1,5 @@
 /**
- * `kanban board` —— 终端泳道视图。
+ * `agent-kanban board` —— 终端泳道视图。
  *
  * 与其他命令一致走 Op（ADR-10）：看板数据从 `board.get` 拿，
  * 因此本地与远程渲染出完全一样的画面。
@@ -24,7 +24,7 @@ import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./arg
 import { closeCtx, openCtx } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
-const USAGE = `用法：kanban board [--ready] [--mine] [--all] [--json]
+const USAGE = `用法：agent-kanban board [--ready] [--mine] [--all] [--json]
 
 选项：
   --ready   只看可认领任务（依赖已满足且无人持有）
@@ -33,7 +33,7 @@ const USAGE = `用法：kanban board [--ready] [--mine] [--all] [--json]
   --json    结构化输出（与 /api/board 同一形状）
 
 模式：
-  本地：   kanban board
+  本地：   agent-kanban board
   远程：   kanban --server https://kanban.corp --project app --key k_xxx board`;
 
 /** board 泳道顺序：与人的心智模型一致 */
@@ -131,7 +131,7 @@ function renderBoard(
       out.line(`${style.yellow("⚠ 失联会话")} ${z.id} ${style.gray(`(${z.agent_name}，最后心跳 ${z.fresh})`)}`);
       for (const taskId of (z.tasks as string[]) ?? []) {
         out.line(
-          `    持有 ${style.cyan(taskId)} ${style.gray("→ ")}${style.bold("kanban resume " + taskId)}` +
+          `    持有 ${style.cyan(taskId)} ${style.gray("→ ")}${style.bold("agent-kanban resume " + taskId)}` +
             style.gray("  接管（进度会自动保留）"),
         );
       }
@@ -163,7 +163,7 @@ function renderBoard(
 
   if (active === 0) {
     out.line("");
-    out.line(style.gray('  （看板为空）用 `kanban task add "标题"` 创建第一张卡'));
+    out.line(style.gray('  （看板为空）用 `agent-kanban task add "标题"` 创建第一张卡'));
   } else if (opts.readyOnly && !renderedAny) {
     out.line("");
     out.line(style.gray("  （没有可认领的任务：其余待办都还有未完成的依赖，或已被其他会话持有）"));

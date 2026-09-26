@@ -53,7 +53,7 @@ docs/note/            implementation notes and post-mortems
 
 That is what makes local and remote mode behaviourally identical. It is a structural guarantee, not a convention anyone has to remember.
 
-**Watch out:** `src/commands/context.ts` is the connection/session context helper. `src/commands/recovery.ts` is the command that implements `kanban context`. They are unrelated and the names are misleading.
+**Watch out:** `src/commands/context.ts` is the connection/session context helper. `src/commands/recovery.ts` is the command that implements `agent-kanban context`. They are unrelated and the names are misleading.
 
 ### Frontend copy (i18n)
 
@@ -106,7 +106,7 @@ bun run serve        # backend + built frontend on :7788
 
 ```bash
 bun run web:build      # vite build, then gen:assets
-bun build --compile src/cli.ts --outfile dist/kanban
+bun build --compile src/cli.ts --outfile dist/agent-kanban
 ```
 
 Or both at once:
@@ -202,12 +202,12 @@ Tag-driven. Push `vX.Y.Z` and the workflow:
 
 ## Deployment shape
 
-One `kanban serve` process per deployment, many projects inside it, each isolated by project key and scoped tokens.
+One `agent-kanban serve` process per deployment, many projects inside it, each isolated by project key and scoped tokens.
 
 ```bash
 cp .env.example .env      # set KANBAN_ADMIN_TOKEN (openssl rand -hex 16)
 docker compose up -d
-docker compose exec kanban kanban admin project add my-app
+docker compose exec kanban agent-kanban admin project add my-app
 ```
 
 - **No reverse proxy or TLS in the compose file.** Most deployments already sit behind HTTPS. Shipping a certificate-renewing container adds a failure mode (expired cert means total outage) that most users do not need. `KANBAN_BIND` defaults to `127.0.0.1`; expose deliberately.

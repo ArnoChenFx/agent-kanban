@@ -1,14 +1,14 @@
 /**
- * `kanban context` 与 `kanban resume` —— 恢复工作现场。
+ * `agent-kanban context` 与 `agent-kanban resume` —— 恢复工作现场。
  *
  * 这是 agent 意外停止后（或换会话接手时）要用的两个命令：
  *   context  读：现在有什么、别人留下了什么、我该干什么
  *   resume   写：接管某张卡，并把该卡的交接与时间线一起注入
  *
  * 设计上它们是"读"与"写"的一对，agent 的恢复流程就是：
- *   1. kanban context              了解全局
- *   2. kanban resume T-0007        接管 + 拿到该卡的完整现场
- *   3. kanban plan show PL-...     读计划全文（如果 resume 输出里有提示）
+ *   1. agent-kanban context              了解全局
+ *   2. agent-kanban resume T-0007        接管 + 拿到该卡的完整现场
+ *   3. agent-kanban plan show PL-...     读计划全文（如果 resume 输出里有提示）
  */
 
 import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
@@ -24,20 +24,20 @@ import { assertKnownOptions, getBool, getInt, getString, parseArgs, requirePosit
 import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
-const CONTEXT_USAGE = `用法：kanban context [选项]
+const CONTEXT_USAGE = `用法：agent-kanban context [选项]
 
-  kanban context                      # 读全局现场（推荐每个会话开工第一步）
-  kanban context --task T-0007        # 某张卡的完整档案
-  kanban context --no-consume         # 只读预览，不标记交接已读
-  kanban context --json               # 结构化输出
+  agent-kanban context                      # 读全局现场（推荐每个会话开工第一步）
+  agent-kanban context --task T-0007        # 某张卡的完整档案
+  agent-kanban context --no-consume         # 只读预览，不标记交接已读
+  agent-kanban context --json               # 结构化输出
 
 输出包含：
   看板概览 · 失联会话告警 · 待接手的交接 · 本会话正在做的 · 阻塞 · 可认领 · 建议动作`;
 
-const RESUME_USAGE = `用法：kanban resume <任务号> [--force] [--tail N]
+const RESUME_USAGE = `用法：agent-kanban resume <任务号> [--force] [--tail N]
 
-  kanban resume T-0007                # 接管并注入该卡的交接与时间线
-  kanban resume T-0007 --force        # 抢他人仍在有效租约内的卡（需人工确认）
+  agent-kanban resume T-0007                # 接管并注入该卡的交接与时间线
+  agent-kanban resume T-0007 --force        # 抢他人仍在有效租约内的卡（需人工确认）
 
 接管后输出：
   · 原持有者与是否发生过崩溃回收
@@ -46,11 +46,11 @@ const RESUME_USAGE = `用法：kanban resume <任务号> [--force] [--tail N]
   · 简短时间线
   · 接下来该做什么`;
 
-const DOCTOR_USAGE = `用法：kanban doctor [--deep] [--fix] [--json]
+const DOCTOR_USAGE = `用法：agent-kanban doctor [--deep] [--fix] [--json]
 
-  kanban doctor            # 快速核对（租约/阻塞/progress 一致性）
-  kanban doctor --deep     # 额外校验"投影与事件流是否一致"
-  kanban doctor --fix      # 自动修复可修复项（回收失联任务、解除过期阻塞）
+  agent-kanban doctor            # 快速核对（租约/阻塞/progress 一致性）
+  agent-kanban doctor --deep     # 额外校验"投影与事件流是否一致"
+  agent-kanban doctor --fix      # 自动修复可修复项（回收失联任务、解除过期阻塞）
 
 说明：
   轻量回收（失联任务）其实每次命令调用都会自动执行，doctor 只是显式核对与修复其他问题。`;
@@ -73,7 +73,7 @@ export async function cmdContext(argv: string[]): Promise<ExitCodeValue> {
 }
 
 // =============================================================================
-// kanban context
+// agent-kanban context
 // =============================================================================
 
 async function contextCommand(argv: string[]): Promise<ExitCodeValue> {
@@ -267,7 +267,7 @@ function renderContext(out: Output, context: RecoveryContextShape, projectKey: s
 }
 
 // =============================================================================
-// kanban resume
+// agent-kanban resume
 // =============================================================================
 
 async function resumeCommand(argv: string[]): Promise<ExitCodeValue> {
@@ -342,7 +342,7 @@ async function resumeCommand(argv: string[]): Promise<ExitCodeValue> {
     if (result.plan) {
       out.line("");
       out.line(`  ${style.gray("计划：")}${style.magenta(result.plan.id)} ${result.plan.title}`);
-      out.line(`    ${style.gray(`读全文：kanban plan show ${result.plan.id}`)}`);
+      out.line(`    ${style.gray(`读全文：agent-kanban plan show ${result.plan.id}`)}`);
     }
 
     // ---- 时间线 ----
@@ -387,7 +387,7 @@ interface ResumeShape {
 }
 
 // =============================================================================
-// kanban doctor
+// agent-kanban doctor
 // =============================================================================
 
 async function doctorCommand(argv: string[]): Promise<ExitCodeValue> {

@@ -140,7 +140,7 @@ export function issueToken(
   if (input.role === "project" && projects.length === 0) {
     throw KanbanError.usage(
       "项目级 token 必须至少授权一个 project",
-      '用法：kanban admin token create --project demo-app --project web-app\n管理员 token 用 --role admin',
+      '用法：agent-kanban admin token create --project demo-app --project web-app\n管理员 token 用 --role admin',
     );
   }
   if (input.role === "admin" && projects.length > 0) {
@@ -215,7 +215,7 @@ export function updateTokenProjects(
   if (!token) {
     throw KanbanError.state(`token 不存在：${maskToken(tokenId)}`, {
       token: maskToken(tokenId),
-      hint: "用 `kanban admin token list` 查看现有 token",
+      hint: "用 `agent-kanban admin token list` 查看现有 token",
     });
   }
   if (token.role === "admin") {
@@ -380,7 +380,7 @@ export function authFailure(result: Extract<AuthResult, { ok: false }>, projectK
           "  1. 编辑 .kanban/config.toml 的 server.token\n" +
           "  2. 设置环境变量 KANBAN_KEY\n" +
           "  3. 命令行临时指定 --key k_xxx\n" +
-          "token 由管理员签发：kanban admin token create --project <key>",
+          "token 由管理员签发：agent-kanban admin token create --project <key>",
       });
 
     case "revoked":
@@ -399,8 +399,8 @@ export function authFailure(result: Extract<AuthResult, { ok: false }>, projectK
       return new KanbanError(7, "AUTH", "token 无效", {
         token: tokenLabel,
         hint:
-          "确认 token 是否输错/被截断；用 `kanban config show` 看当前生效的 token 来自哪里" +
-          "（CLI > 环境变量 > .kanban/config.toml）。未配置时用 `kanban config set server.token <token>` 保存。",
+          "确认 token 是否输错/被截断；用 `agent-kanban config show` 看当前生效的 token 来自哪里" +
+          "（CLI > 环境变量 > .kanban/config.toml）。未配置时用 `agent-kanban config set server.token <token>` 保存。",
       });
 
     case "forbidden":
@@ -410,7 +410,7 @@ export function authFailure(result: Extract<AuthResult, { ok: false }>, projectK
         project: projectKey,
         token: tokenLabel,
         hint: "当前 token 的授权范围不包含该项目。请管理员执行：\n" +
-          "  kanban admin token grant <token> --project <key>\n" +
+          "  agent-kanban admin token grant <token> --project <key>\n" +
           "或用管理员 token 操作：\n" +
           "  kanban --key <admin-token> task list",
       });
@@ -469,7 +469,7 @@ export function assertProjectExistsForToken(db: Database, projectKeys: string[])
   if (missing.length > 0) {
     throw KanbanError.state(`project 不存在：${missing.join(", ")}`, {
       missing,
-      hint: `先创建：kanban admin project add ${missing[0]}\n` +
+      hint: `先创建：agent-kanban admin project add ${missing[0]}\n` +
         "（也可以先签发 token 预授权，之后再建 project）",
     });
   }

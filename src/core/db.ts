@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 数据库连接层：打开、PRAGMA、schema 迁移、配置读写。
  *
  * 关键实现约束（ADR-2，探针已实测验证）：
@@ -77,7 +77,7 @@ export function openDb(
   } else {
     if (!createIfMissing) {
       throw KanbanError.notInit(`数据库文件不存在：${dbPath}`, {
-        hint: "先运行 `kanban init`",
+        hint: "先运行 `agent-kanban init`",
       });
     }
     mkdirSync(dir, { recursive: true });
@@ -120,7 +120,7 @@ export function applySchema(db: Db): void {
     db.raw.exec(sql);
   } catch (err) {
     throw KanbanError.notInit(`schema 应用失败：${(err as Error).message}`, {
-      hint: "数据库可能已损坏，可备份后用 `kanban import <journal>` 从事件重建",
+      hint: "数据库可能已损坏，可备份后用 `agent-kanban import <journal>` 从事件重建",
     });
   }
 }
@@ -405,7 +405,7 @@ const MIGRATIONS: Record<number, { up: (db: Db) => void }> = {
           `[kanban] 检测到 ${legacyProjects.length} 个使用旧版 project key 的 project：${keys}\n` +
             `        旧 key 已失效（v2 只存哈希，明文不可恢复）。\n` +
             `        请用管理员 token 运行：\n` +
-            `          kanban admin token create --project ${legacyProjects[0]!.key}`,
+            `          agent-kanban admin token create --project ${legacyProjects[0]!.key}`,
         );
       }
 

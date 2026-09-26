@@ -56,7 +56,7 @@ export function savePlan(ctx: TxContext, input: SavePlanInput): Plan {
   const projectKey = ctx.projectKey;
 
   if (typeof input.title !== "string" || input.title.trim().length === 0) {
-    throw KanbanError.usage("计划标题不能为空", '用法：kanban plan save --title "标题" [--body-file plan.md]');
+    throw KanbanError.usage("计划标题不能为空", '用法：agent-kanban plan save --title "标题" [--body-file plan.md]');
   }
   if (typeof input.body !== "string" || input.body.trim().length === 0) {
     throw KanbanError.usage(
@@ -71,7 +71,7 @@ export function savePlan(ctx: TxContext, input: SavePlanInput): Plan {
   if (input.scope === "task" && !taskId) {
     throw KanbanError.usage(
       "任务级计划需要 --task",
-      '用法：kanban plan save --task T-0007 --title "标题" --body-file plan.md',
+      '用法：agent-kanban plan save --task T-0007 --title "标题" --body-file plan.md',
     );
   }
   // 任务必须存在且属于本 project（防止计划指向别的 project 的卡）
@@ -199,7 +199,7 @@ export function requirePlan(scope: Scope, planId: string): Plan {
   if (!plan) {
     throw KanbanError.state(`计划 ${planId} 不存在`, {
       plan_id: planId,
-      hint: "用 `kanban plan list` 看现有计划",
+      hint: "用 `agent-kanban plan list` 看现有计划",
     });
   }
   return plan;

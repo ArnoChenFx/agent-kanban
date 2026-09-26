@@ -68,14 +68,14 @@ step("3. 模拟会话 A 崩溃（直接改库让心跳过期）");
   console.log(`已把会话 ${sidA} 的心跳改为 30 分钟前（模拟进程被 kill）`);
 }
 
-step("4. 会话 B 开工：kanban context");
+step("4. 会话 B 开工：agent-kanban context");
 const sessB = await run(["session", "start", "--agent", "agent-b", "--harness", "pi"]);
 const sidB = /s-[0-9a-z]{6}/.exec(sessB.out)?.[0] ?? "";
 console.log(`会话 B: ${sidB}\n`);
 const ctx = await run(["context"], { KANBAN_SESSION: sidB });
 console.log(ctx.out);
 
-step("5. 会话 B 接管：kanban resume");
+step("5. 会话 B 接管：agent-kanban resume");
 const res = await run(["resume", tid], { KANBAN_SESSION: sidB });
 console.log(res.out);
 

@@ -5,7 +5,7 @@
   "type": "module",
   "module": "src/cli.ts",
   "bin": {
-    "kanban": "src/cli.ts"
+    "agent-kanban": "src/cli.ts"
   },
   "files": [
     "src",
@@ -13,7 +13,7 @@
     "web/dist"
   ],
   "scripts": {
-    "kanban": "bun run src/cli.ts",
+    "agent-kanban": "bun run src/cli.ts",
     "serve": "bun run --hot src/cli.ts serve",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
@@ -21,7 +21,7 @@
     "web:build": "bun run --cwd web build && bun run gen:assets",
     "web:typecheck": "bun run --cwd web typecheck",
     "gen:assets": "bun run scripts/gen-assets.ts",
-    "build:binary": "bun run web:build && bun build --compile src/cli.ts --outfile dist/kanban",
+    "build:binary": "bun run web:build && bun build --compile src/cli.ts --outfile dist/agent-kanban",
     "verify:web": "bun run scripts/verify-web.ts",
     "verify:web:ui": "bun run scripts/verify-web-ui.ts",
     "verify:deps": "bun run scripts/verify-deps.ts",

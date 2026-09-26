@@ -1,4 +1,4 @@
-﻿/**
+/**
  * HTTP + SSE server（Bun.serve）。
  *
  * 设计要点：
@@ -84,7 +84,7 @@ export function startServer(opts: ServeOptions): {
   // 前端构建产物：找不到时 `/` 会退回内置占位页（里面会提示如何构建）
   const webDir = resolveWebDir(opts.webDir);
   // config.toml 的存放位置：
-  //   1. 优先 db 所在目录的 .kanban/（与 `kanban init` 的默认布局一致）
+  //   1. 优先 db 所在目录的 .kanban/（与 `agent-kanban init` 的默认布局一致）
   //   2. 找不到就用 db 同级目录（`--db /path/to/kanban.db` 的情况）
   const configDir =
     opts.configDir ??
@@ -878,7 +878,7 @@ li{margin:5px 0}</style></head>
 </ul>
 </div></body></html>`;
 
-/** 供 `kanban serve` 使用的入口封装 */
+/** 供 `agent-kanban serve` 使用的入口封装 */
 export function runServe(opts: ServeOptions & { quiet?: boolean }): ExitCodeValue {
   const handle = openDb(opts.dbPath);
   migrate(handle);

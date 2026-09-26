@@ -1,5 +1,5 @@
 /**
- * `kanban config ...` —— 项目配置管理。
+ * `agent-kanban config ...` —— 项目配置管理。
  *
  * 设计目的（用户需求）：单个项目的配置是固定的，应该"配置一次、一直生效"，
  * 而不是每次敲 `kanban --server X --project Y --key Z task list`。
@@ -22,24 +22,24 @@ import { findKanbanDir, findKanbanDirLoose } from "../core/paths.ts";
 import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./args.ts";
 import { createOutput } from "./output.ts";
 
-const USAGE = `用法：kanban config <子命令>
+const USAGE = `用法：agent-kanban config <子命令>
 
   show        显示当前生效的配置及其来源（token 默认脱敏）
   init        生成/更新 .kanban/config.toml
-  set         修改单个字段           kanban config set server.url https://kanban.corp
-  use         切换本地/远程模式      kanban config use remote
+  set         修改单个字段           agent-kanban config set server.url https://kanban.corp
+  use         切换本地/远程模式      agent-kanban config use remote
   path        打印配置文件路径
 
 优先级：命令行选项 > 环境变量 > config.toml
 
 示例：
   # 首次配置远程模式
-  kanban config init --server https://kanban.corp --project agent-kanban --key k_xxx
-  kanban task list                 # 之后不用再带参数
+  agent-kanban config init --server https://kanban.corp --project agent-kanban --key k_xxx
+  agent-kanban task list                 # 之后不用再带参数
 
   # 切回本地
-  kanban config use local
-  kanban task list`;
+  agent-kanban config use local
+  agent-kanban task list`;
 
 export async function cmdConfig(argv: string[]): Promise<ExitCodeValue> {
   const sub = argv[0];
@@ -76,7 +76,7 @@ function requireKanbanDir(cwd = process.cwd()): string {
   if (found) return found;
   const target = join(cwd, ".kanban");
   throw KanbanError.notInit(`未找到 ${CONFIG_FILE}`, {
-    hint: `先初始化：kanban config init\n（会在 ${target} 下创建）`,
+    hint: `先初始化：agent-kanban config init\n（会在 ${target} 下创建）`,
   });
 }
 
@@ -153,7 +153,7 @@ async function configShow(argv: string[]): Promise<ExitCodeValue> {
   if (sources.configFile) {
     out.line(`  配置文件  ${sources.configFile}`);
   } else {
-    out.line(`  配置文件  ${style.yellow("不存在")}  ${style.gray("用 `kanban config init` 生成")}`);
+    out.line(`  配置文件  ${style.yellow("不存在")}  ${style.gray("用 `agent-kanban config init` 生成")}`);
   }
   out.line("");
 
@@ -192,7 +192,7 @@ async function configInit(argv: string[]): Promise<ExitCodeValue> {
   if (existing && !getBool(args, "force")) {
     // 不覆盖已有配置（避免手滑把 server 改错）
     out.line(`${style.yellow("配置已存在")}：${existing.path}`);
-    out.line(style.gray("  如需修改用 `kanban config set <字段> <值>`，或加 --force 覆盖"));
+    out.line(style.gray("  如需修改用 `agent-kanban config set <字段> <值>`，或加 --force 覆盖"));
     if (json) {
       out.data({ ok: true, already_exists: true, path: existing.path, config: existing.config });
       return ExitCode.OK;
@@ -247,11 +247,11 @@ async function configInit(argv: string[]): Promise<ExitCodeValue> {
   out.line("");
   if (mode === "remote" && (!config.server || !config.token)) {
     out.line(style.yellow("  ⚠ 远程模式还需要 server.url 与 server.token："));
-    out.line(style.gray("     kanban config set server.url https://kanban.corp"));
-    out.line(style.gray("     kanban config set server.token k_xxx"));
+    out.line(style.gray("     agent-kanban config set server.url https://kanban.corp"));
+    out.line(style.gray("     agent-kanban config set server.token k_xxx"));
     out.line("");
   }
-  out.line(style.gray("  之后直接运行 `kanban task list` 即可，无需再带参数"));
+  out.line(style.gray("  之后直接运行 `agent-kanban task list` 即可，无需再带参数"));
   out.line("");
   return ExitCode.OK;
 }
@@ -272,7 +272,7 @@ async function configSet(argv: string[]): Promise<ExitCodeValue> {
   if (!field) {
     throw KanbanError.usage(
       "缺少字段名",
-      "用法：kanban config set <字段> <值>\n可用字段：server.url, server.token, project.key, mode, db",
+      "用法：agent-kanban config set <字段> <值>\n可用字段：server.url, server.token, project.key, mode, db",
     );
   }
 
@@ -318,7 +318,7 @@ async function configSet(argv: string[]): Promise<ExitCodeValue> {
     );
   }
   if (value === undefined) {
-    throw KanbanError.usage(`字段 ${field} 需要一个值`, `用法：kanban config set ${field} <值>`);
+    throw KanbanError.usage(`字段 ${field} 需要一个值`, `用法：agent-kanban config set ${field} <值>`);
   }
 
   apply(current, value);
@@ -358,7 +358,7 @@ async function configUse(argv: string[]): Promise<ExitCodeValue> {
   const out = createOutput(json);
 
   if (mode !== "local" && mode !== "remote") {
-    throw KanbanError.usage("用法：kanban config use local | remote", "示例：kanban config use local");
+    throw KanbanError.usage("用法：agent-kanban config use local | remote", "示例：agent-kanban config use local");
   }
 
   const dir = requireKanbanDir();
@@ -371,9 +371,9 @@ async function configUse(argv: string[]): Promise<ExitCodeValue> {
     throw KanbanError.usage(
       "切到远程模式还需要 server.url",
       `补上后即可使用：\n` +
-        `  kanban config set server.url https://kanban.corp\n` +
-        `  kanban config set project.key <项目>\n` +
-        `  kanban config set server.token <token>\n` +
+        `  agent-kanban config set server.url https://kanban.corp\n` +
+        `  agent-kanban config set project.key <项目>\n` +
+        `  agent-kanban config set server.token <token>\n` +
         `（配置已写入 ${path}）`,
     );
   }

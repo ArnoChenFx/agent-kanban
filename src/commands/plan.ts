@@ -1,15 +1,15 @@
 /**
- * `kanban plan` —— 计划版本化。
+ * `agent-kanban plan` —— 计划版本化。
  *
  * 为什么要这么啰嗦：一个 agent 做长任务时计划一定会变。如果只留最新计划，
  * 换个会话就说不清"当时为什么那么决定"。所以这里每次保存都产生一个新版本，
  * 旧版本留在链上可回溯。
  *
  * 典型用法：
- *   kanban plan save --task T-0007 --title "拆成 4 个里程碑" --body-file plan.md
- *   kanban plan show PL-T-0007-01        # 读全文
- *   kanban plan history --task T-0007    # 这个计划改了几次
- *   kanban plan list --all               # 含已被顶替的历史版本
+ *   agent-kanban plan save --task T-0007 --title "拆成 4 个里程碑" --body-file plan.md
+ *   agent-kanban plan show PL-T-0007-01        # 读全文
+ *   agent-kanban plan history --task T-0007    # 这个计划改了几次
+ *   agent-kanban plan list --all               # 含已被顶替的历史版本
  */
 
 import { readFileSync } from "node:fs";
@@ -21,12 +21,12 @@ import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
 const USAGE = `用法：
-  kanban plan save --title "标题" [--task T-0007] [--body-file <路径> | --body "..."]
-  kanban plan show <计划号> [--json]
-  kanban plan list [--task T-0007] [--all] [--json]
-  kanban plan history <计划号> [--json]        # 版本链：这个计划改了几次
-  kanban plan at --task T-0007 --ts <时间戳>   # 那时生效的计划是什么
-  kanban plan attach <计划号> --task T-0007    # 把任务指向某个版本
+  agent-kanban plan save --title "标题" [--task T-0007] [--body-file <路径> | --body "..."]
+  agent-kanban plan show <计划号> [--json]
+  agent-kanban plan list [--task T-0007] [--all] [--json]
+  agent-kanban plan history <计划号> [--json]        # 版本链：这个计划改了几次
+  agent-kanban plan at --task T-0007 --ts <时间戳>   # 那时生效的计划是什么
+  agent-kanban plan attach <计划号> --task T-0007    # 把任务指向某个版本
 
 说明：
   · --body 必填：标题只是一句话，正文才是计划的价值
@@ -34,7 +34,7 @@ const USAGE = `用法：
   · 任务级计划（--task）保存后会自动挂到该任务上，等价于 attach
 
 示例：
-  kanban plan save --task T-0007 \\
+  agent-kanban plan save --task T-0007 \\
     --title "拆成 4 个里程碑" \\
     --body-file .kanban/plans/T-0007.md`;
 
@@ -142,8 +142,8 @@ async function planSave(argv: string[]): Promise<ExitCodeValue> {
       out.line(`  ${style.gray(`已挂到 ${plan.task_id}，agent resume 时会自动读到`)}`);
     }
     out.line("");
-    out.line(style.gray(`  读全文：kanban plan show ${plan.id}`));
-    out.line(style.gray(`  看历史：kanban plan history ${plan.id}`));
+    out.line(style.gray(`  读全文：agent-kanban plan show ${plan.id}`));
+    out.line(style.gray(`  看历史：agent-kanban plan history ${plan.id}`));
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
@@ -164,7 +164,7 @@ async function planShow(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const planId = requirePositional(args, 0, "计划号", "用法：kanban plan show PL-T-0007-01");
+  const planId = requirePositional(args, 0, "计划号", "用法：agent-kanban plan show PL-T-0007-01");
 
   try {
     const { data } = await ctx.backend.executeWithHints({ kind: "plan.show", params: { plan_id: planId } });
@@ -226,7 +226,7 @@ async function planList(argv: string[]): Promise<ExitCodeValue> {
 
     if (json) return (out.data(plans), ExitCode.OK);
     if (plans.length === 0) {
-      out.line("（没有计划。用 `kanban plan save --title \"...\" --body-file <路径>` 创建）");
+      out.line("（没有计划。用 `agent-kanban plan save --title \"...\" --body-file <路径>` 创建）");
       return ExitCode.OK;
     }
 
@@ -262,7 +262,7 @@ async function planHistoryCmd(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const planId = requirePositional(args, 0, "计划号", "用法：kanban plan history PL-T-0007-01");
+  const planId = requirePositional(args, 0, "计划号", "用法：agent-kanban plan history PL-T-0007-01");
 
   try {
     const { data } = await ctx.backend.executeWithHints({
@@ -293,7 +293,7 @@ async function planHistoryCmd(argv: string[]): Promise<ExitCodeValue> {
       if (firstLine) out.line(`      ${style.gray(truncate(firstLine.trim(), 56))}`);
     }
     out.line("");
-    out.line(style.gray(`  读某版全文：kanban plan show ${chain[0]!.id}`));
+    out.line(style.gray(`  读某版全文：agent-kanban plan show ${chain[0]!.id}`));
     out.line("");
     return ExitCode.OK;
   } finally {
@@ -320,7 +320,7 @@ async function planAt(argv: string[]): Promise<ExitCodeValue> {
     const ts = getInt(args, "ts");
     if (ts === undefined) {
       out.line("错误：缺少 --ts <epoch 毫秒>");
-      out.line('提示：用 `kanban plan at --task T-0007 --ts ' + String(ctx.now() - 3600_000) + '` 表示一小时前');
+      out.line('提示：用 `agent-kanban plan at --task T-0007 --ts ' + String(ctx.now() - 3600_000) + '` 表示一小时前');
       return ExitCode.USAGE;
     }
 
@@ -365,7 +365,7 @@ async function planAttach(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
-  const planId = requirePositional(args, 0, "计划号", "用法：kanban plan attach PL-T-0007-01 --task T-0007");
+  const planId = requirePositional(args, 0, "计划号", "用法：agent-kanban plan attach PL-T-0007-01 --task T-0007");
   const taskId = getString(args, "task");
 
   try {

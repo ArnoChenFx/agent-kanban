@@ -8,9 +8,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 // 仓库根目录：从本脚本位置推导，不能写死绝对路径（CI 克隆路径不同）
 const ROOT = resolve(import.meta.dir, "..");
-// 编译产物名按平台推导：CI 在 Linux 上产出 dist-test/kanban（无扩展名），
-// 写死 kanban.exe 会在 Linux 上直接 ENOENT。
-const BIN = join(ROOT, "dist-test", process.platform === "win32" ? "kanban.exe" : "kanban");
+// 编译产物名按平台推导：CI 在 Linux 上产出 dist-test/agent-kanban（无扩展名），
+// 写死 agent-kanban.exe 会在 Linux 上直接 ENOENT。
+const BIN = join(ROOT, "dist-test", process.platform === "win32" ? "agent-kanban.exe" : "agent-kanban");
 const PORT = 7841;
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -22,7 +22,7 @@ const check = (label: string, ok: boolean, detail = "") => {
 
 if (!existsSync(BIN)) {
   console.error(`未找到编译产物 ${BIN}`);
-  console.error("先执行：bun run gen:assets && bun build --compile src/cli.ts --outfile dist-test/kanban");
+  console.error("先执行：bun run gen:assets && bun build --compile src/cli.ts --outfile dist-test/agent-kanban");
   process.exit(1);
 }
 

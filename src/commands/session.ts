@@ -1,5 +1,5 @@
 /**
- * `kanban session ...` —— 会话生命周期命令。
+ * `agent-kanban session ...` —— 会话生命周期命令。
  *
  * 与任务命令一样走 Op（ADR-10），因此本地/远程行为一致。
  * 失联判定与自动回收在 core/sessions.ts 的 reapZombies 中，
@@ -18,10 +18,10 @@ import {
 import { createOutput } from "./output.ts";
 
 const USAGE = `用法：
-  kanban session start --agent <名字> [--harness pi|claude-code|cursor|human] [--id s-xxx]
-  kanban session list [--all] [--json]
-  kanban session heartbeat [--session <id>]
-  kanban session end [--summary "本次做了什么"] [--session <id>]
+  agent-kanban session start --agent <名字> [--harness pi|claude-code|cursor|human] [--id s-xxx]
+  agent-kanban session list [--all] [--json]
+  agent-kanban session heartbeat [--session <id>]
+  agent-kanban session end [--summary "本次做了什么"] [--session <id>]
 
 说明：
   start 会把 session_id 写入 .kanban/session，之后的命令无需再传 --session。
@@ -66,7 +66,7 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
   if (!agentName) {
     throw KanbanError.usage(
       "缺少 --agent <名字>",
-      "用法：kanban session start --agent pi-main --harness pi\n名字会出现在看板与冲突提示里，用能区分用途的名字（如 pi-main / claude-fix）",
+      "用法：agent-kanban session start --agent pi-main --harness pi\n名字会出现在看板与冲突提示里，用能区分用途的名字（如 pi-main / claude-fix）",
     );
   }
 
@@ -92,7 +92,7 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
     out.line(`  agent      : ${session.agent_name}${session.harness ? ` (${session.harness})` : ""}`);
     out.line(`  project    : ${ctx.project.key}`);
     out.line("");
-    out.line(`接着执行 \`kanban context\` 读取当前现场：未消费的交接、正在做的卡、可认领任务。`);
+    out.line(`接着执行 \`agent-kanban context\` 读取当前现场：未消费的交接、正在做的卡、可认领任务。`);
 
     out.data(session);
     return ExitCode.OK;
@@ -125,7 +125,7 @@ async function sessionList(argv: string[]): Promise<ExitCodeValue> {
       return ExitCode.OK;
     }
     if (views.length === 0) {
-      out.line("（暂无会话）用 `kanban session start --agent <名字>` 注册");
+      out.line("（暂无会话）用 `agent-kanban session start --agent <名字>` 注册");
       return ExitCode.OK;
     }
 

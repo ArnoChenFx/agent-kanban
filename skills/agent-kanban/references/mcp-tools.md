@@ -32,8 +32,8 @@
 ## 注册
 
 ```bash
-pi mcp add kanban -- cmd kanban mcp
-claude mcp add kanban -- cmd kanban mcp
+pi mcp add kanban -- cmd agent-kanban mcp
+claude mcp add kanban -- cmd agent-kanban mcp
 ```
 
 或写进项目根目录的标准 MCP 文件（本仓库已有 `.mcp.json`）：
@@ -51,7 +51,7 @@ claude mcp add kanban -- cmd kanban mcp
 
 - `command` 的路径**相对于 harness 的工作目录**，所以要从项目根目录启动 harness。
 - 看板本身是靠**从工作目录向上查找 `.kanban/`** 定位的。
-- `kanban mcp` 的 stdout 是 JSON-RPC 通道，**诊断信息一律走 stderr**。
+- `agent-kanban mcp` 的 stdout 是 JSON-RPC 通道，**诊断信息一律走 stderr**。
 
 ## 每个会话的调用链
 
@@ -65,7 +65,7 @@ kanban_handoff(session_id=..., task_id="T-0007", summary="...", next_step="...")
 kanban_session_end(session_id="s-4k9d2m")
 ```
 
-**`kanban_session_start` 之后必须紧跟 `kanban_bootstrap`**，它对应 CLI 的 `kanban context`。跳过它就是在盲干。
+**`kanban_session_start` 之后必须紧跟 `kanban_bootstrap`**，它对应 CLI 的 `agent-kanban context`。跳过它就是在盲干。
 
 ## 20 个工具
 
@@ -74,7 +74,7 @@ kanban_session_end(session_id="s-4k9d2m")
 | 工具 | 必填 | 可选 | 说明 |
 |---|---|---|---|
 | `kanban_session_start` | `agent_name` | `harness` | 注册会话，返回 `session_id`；顺带触发僵尸回收 |
-| `kanban_bootstrap` | `session_id` | `consume_handoffs`(默认 true) | 对应 CLI `kanban context`。**每个会话第一个调用** |
+| `kanban_bootstrap` | `session_id` | `consume_handoffs`(默认 true) | 对应 CLI `agent-kanban context`。**每个会话第一个调用** |
 | `kanban_session_end` | `session_id` | `summary` | 关闭会话，返回它释放的卡 |
 
 ### 任务
