@@ -321,7 +321,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          find artifacts -type f -name 'kanban-*' -exec cp {} release-assets/ \;
+          # ⚠ **No name filter here, on purpose.** `download-artifact`'s `pattern: bin-*`
+          #   already guarantees only the four platform artifacts were pulled in. Matching
+          #   the binary name a second time duplicates the matrix's `asset:` value into
+          #   this step, and renaming the binary then breaks it *silently*: the copy
+          #   produces 0 files, `ls -lh` prints nothing but `total 0`, and the step dies
+          #   with "expected 4 platform binaries, found 0" (a real v0.1.2 release failure,
+          #   after `kanban-*` was renamed to `agent-kanban-*`).
+          #   A stray file is not a risk: the count check below fails loudly and prints
+          #   exactly what it found.
+          cp -a artifacts/. release-assets/
           ls -lh release-assets/
           # Fail loudly if a platform artifact is missing, rather than publishing a
           # Release that silently offers one fewer download.
@@ -329,7 +338,10 @@ jobs:
           # derived from the matrix itself, so adding or removing a platform later
           # needs no edit here.
           EXPECTED="${{ needs.verify.outputs.platforms }}"
-          COUNT=$(ls -1 release-assets/kanban-* 2>/dev/null | grep -vc '\.sha256$' || true)
+          EXPECTED="${EXPECTED:-0}"
+          # Binaries = every file that is not a checksum. Counting by extension instead of
+          # by platform name keeps this step free of the matrix's `asset:` value.
+          COUNT=$(find release-assets -maxdepth 1 -type f ! -name '*.sha256' | wc -l | tr -d '[:space:]')
           if [ "$COUNT" -ne "$EXPECTED" ]; then
             echo "::error::expected ${EXPECTED} platform binaries, found ${COUNT}:"
             ls -1 release-assets/ || true
@@ -339,8 +351,7 @@ jobs:
           # checksum files travel in the same artifacts as the binaries, so they
           # disappear together. Count them separately to fail here rather than
           # publish a Release that offers unverifiable files.
-          SUMS=$(ls -1 release-assets/*.sha256 2>/dev/null | wc -l || true)
-          SUMS="${SUMS:-0}"
+          SUMS=$(find release-assets -maxdepth 1 -type f -name '*.sha256' | wc -l | tr -d '[:space:]')
           if [ "$SUMS" -ne "$EXPECTED" ]; then
             echo "::error::expected ${EXPECTED} .sha256 files, found ${SUMS}:"
             ls -1 release-assets/ || true
