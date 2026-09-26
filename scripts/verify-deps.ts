@@ -4,10 +4,13 @@
 // node_modules，于是本地永远是绿的。等到 CI 跑 `bun install --frozen-lockfile`
 // （只装 lockfile 里的），这些包就消失了，tsc 报 TS2307、vite 报 Can't resolve。
 //
-// ⚠ 只扫 TS 的 import 是不够的 —— CSS 里的 @import 同样会解析包名。
-//   第一版就漏了 `@import "shadcn/tailwind.css"`，本地靠 auto-install 装上，
-//   删掉 node_modules 才暴露。下面 CSS 段专门补这个。
-import { readFileSync, readdirSync, statSync } from "node:fs";
+// ⚠ 只扫 TS 的 import 是不够的，一共踩过三个盲区：
+//   1. CSS 里的 @import 同样会解析包名。第一版就漏了 `@import "shadcn/tailwind.css"`。
+//   2. `compilerOptions.types` 是类型库引用，不出现在任何 import 语句里。
+//      `web/tsconfig.node.json` 写着 `"types": ["node"]`，可 @types/node 从没被声明过；
+//      本地能从**父目录** node_modules 蹭到，Docker 里没有父目录，立刻 TS2688。
+//   3. vite.config.ts 在 src/ 之外，不走 walk() 就完全扫不到。
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const WEB = resolve(import.meta.dir, "../web");
@@ -49,6 +52,10 @@ const record = (spec: string, file: string) => {
 };
 
 const files = walk(join(WEB, "src"));
+// vite.config.ts 在 src/ 之外，但它同样 import 外部包（tailwindcss、vite、插件）
+const viteConfig = join(WEB, "vite.config.ts");
+if (existsSync(viteConfig)) files.push(viteConfig);
+
 for (const file of files) {
   const src = readFileSync(file, "utf8");
   for (const m of src.matchAll(BARE_IMPORT)) {
@@ -64,18 +71,46 @@ for (const file of files) {
 
 const missing = [...used.keys()].filter((n) => !declared.has(n)).sort();
 
+// ---- compilerOptions.types：类型库也是包依赖 ----
+// tsconfig 允许注释，所以用宽松匹配而不是 JSON.parse。
+// `vite/client` 这种带子路径的归到包名 `vite`；`node` 对应 `@types/node`。
+const missingTypes: string[] = [];
+const missingTypePkgs = new Set<string>();
+for (const name of readdirSync(WEB).filter((n) => /^tsconfig.*\.json$/.test(n))) {
+  const text = readFileSync(join(WEB, name), "utf8");
+  for (const m of text.matchAll(/"types"\s*:\s*\[([^\]]*)\]/g)) {
+    for (const raw of m[1]!.split(",")) {
+      const t = raw.trim().replace(/^["']|["']$/g, "");
+      if (!t) continue;
+      const pkgName = t.startsWith("@") ? t : t.split("/")[0]!;
+      if (declared.has(pkgName) || declared.has(`@types/${pkgName}`)) continue;
+      missingTypes.push(`"${t}"（${name}）`);
+      missingTypePkgs.add(pkgName.startsWith("@") ? pkgName : `@types/${pkgName}`);
+    }
+  }
+}
+
 console.log(`\n扫描 ${files.length} 个源码文件，引用 ${used.size} 个包`);
-if (missing.length === 0) {
-  console.log("✓ 无幽灵依赖：所有 import 都有对应声明");
+
+if (missingTypes.length > 0) {
+  console.log(`\n✗ ${missingTypes.length} 处 types 引用了未声明的类型库（干净环境会报 TS2688）：`);
+  for (const t of missingTypes) console.log(`  ${t}`);
+  console.log(`  修法：cd web && bun add -d ${[...missingTypePkgs].join(" ")}`);
+}
+
+if (missing.length === 0 && missingTypes.length === 0) {
+  console.log("✓ 无幽灵依赖：所有 import 与 types 都有对应声明");
   process.exit(0);
 }
 
-console.log(`\n✗ ${missing.length} 个幽灵依赖（CI 上会报 TS2307）：\n`);
-for (const name of missing) {
-  const files = [...used.get(name)!];
-  console.log(`  ${name}`);
-  for (const f of files.slice(0, 3)) console.log(`      ${f}`);
-  if (files.length > 3) console.log(`      …另有 ${files.length - 3} 处`);
+if (missing.length > 0) {
+  console.log(`\n✗ ${missing.length} 个幽灵依赖（CI 上会报 TS2307）：\n`);
+  for (const name of missing) {
+    const files = [...used.get(name)!];
+    console.log(`  ${name}`);
+    for (const f of files.slice(0, 3)) console.log(`      ${f}`);
+    if (files.length > 3) console.log(`      …另有 ${files.length - 3} 处`);
+  }
+  console.log(`\n修法：cd web && bun add ${missing.join(" ")}`);
 }
-console.log(`\n修法：cd web && bun add ${missing.join(" ")}`);
 process.exit(1);
