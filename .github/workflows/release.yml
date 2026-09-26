@@ -196,6 +196,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      # Feeds the release job so the notes can show a pinnable digest
+      digest: ${{ steps.digest.outputs.digest }}
+      image: ${{ steps.digest.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -246,15 +250,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Record the image digest so the Release can reference it
+      # Record the image digest so the Release can show it, letting users pin an
+      # exact image with `docker pull image@sha256:...`.
+      #
+      # ⚠ Two mistakes this step used to make, both invisible until CI ran:
+      #   1. A byte limit truncated a multi-line JSON manifest mid-object.
+      #   2. Writing that multi-line result to $GITHUB_OUTPUT as `key=value`:
+      #      GitHub parses every line as its own key, so the leftover JSON
+      #      fragment failed with "Invalid format".
+      #   Extracting a single-line digest sidesteps both.
       - name: Record image digest
         id: digest
+        shell: bash
+        env:
+          IMAGE: "${{ steps.meta.outputs.ghcr }}:${{ steps.meta.outputs.version }}"
         run: |
-          DIGEST=$(docker buildx imagetools inspect \
-            ${{ steps.meta.outputs.ghcr }}:${{ steps.meta.outputs.version }} \
-            --format '{{json .Manifest}}' | head -c 200 || echo "unknown")
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "${{ steps.meta.outputs.ghcr }}:${{ steps.meta.outputs.version }}" >> "$GITHUB_OUTPUT"
+          DIGEST="$(docker buildx imagetools inspect "$IMAGE" 2>/dev/null \
+            | grep -o 'sha256:[0-9a-f]\{64\}' | head -1 || true)"
+          DIGEST="${DIGEST:-unknown}"
+          echo "Resolved ${IMAGE} -> ${DIGEST}"
+          {
+            echo "digest=${DIGEST}"
+            echo "image=${IMAGE}"
+          } >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # GitHub Release
@@ -312,6 +330,13 @@ jobs:
           \`\`\`
 
           数据卷 \`/data\` 存放 project、token、任务与交接；换机器时备份这个目录即可迁移。
+
+          镜像 digest（可 pin 到确切版本）：
+
+          \`\`\`
+          ${{ needs.docker.outputs.image }}
+          ${{ needs.docker.outputs.digest }}
+          \`\`\`
 
           常用环境变量：\`KANBAN_PORT\`（默认 7788）、\`KANBAN_HOST\`（默认 0.0.0.0）、\`KANBAN_WEB_DIR\`。
 
