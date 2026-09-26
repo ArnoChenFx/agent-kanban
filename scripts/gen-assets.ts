@@ -17,15 +17,22 @@
  *
  * ## 用法
  *
- *   bun run web:build     # 产出 web/dist
- *   bun run gen:assets    # 扫 dist → 写 src/server/assets.generated.ts
+ *   bun run web:build     # 产出 web/dist，并自动接着跑 gen:assets
  *   bun build --compile src/cli.ts --outfile kanban
+ *
+ * 单独跑 gen:assets 只在“手工确认清单”时需要。
  *
  * ## 仓库里为什么放了一个占位文件
  *
- * 新 clone 还没 build 前就跑 `bun run src/cli.ts` 是常见操作，
- * 那时 dist 不存在。占位文件让 import 不会失败，只是没有任何内嵌资源，
- * server 会退回磁盘查找（找不到就显示带构建指引的占位页）。
+ * 两个原因，缺一不可：
+ *
+ * 1. 新 clone 还没 build 前就跑 `bun run src/cli.ts` 是常见操作，
+ *    那时 dist 不存在，占位让 import 不会失败，只是没有内嵌资源，
+ *    server 退回磁盘查找（找不到就显示带构建指引的占位页）。
+ * 2. **它必须提交到 git**。http.ts 静态 import 这个文件，
+ *    而 CI / 新机器的干净 checkout 里没有 web/dist，也就没人跑过 gen-assets。
+ *    文件不入库 → `tsc --noEmit` 报 TS2307，且报错发生在前端构建**之前**。
+ *    所以本文件不能进 .gitignore。
  */
 
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -59,6 +66,10 @@ const HEADER = `/**
  *
  * 作用：把前端产物声明为 Bun embedded files，
  * 让 \`bun build --compile\` 能把它们打进单文件二进制。
+ *
+ * ⚠ 仓库里提交的是**空表占位**形态，因为 http.ts 静态 import 本文件，
+ *   而干净 checkout（CI、新机器）时还没有 web/dist。少这个文件，
+ *   \`tsc --noEmit\` 会直接报 TS2307。\`bun run web:build\` 会把它覆盖成真实清单。
  */
 
 /**
@@ -71,13 +82,13 @@ const HEADER = `/**
 export type EmbeddedAssetMap = Record<string, () => ReturnType<typeof Bun.file>>
 `
 
-/** 没有前端产物时的占位内容（仍在仓库里，保证新 clone 就能 import） */
+/** 没有前端产物时的占位内容（**提交到 git 的就是这一份**） */
 const PLACEHOLDER = `
 /**
  * 内嵌的前端资源。
  *
- * 空表 = 仓库里还没有构建过前端。
- * 执行 \`bun run web:build && bun run gen:assets\` 后重新生成本文件。
+ * 空表 = 仓库里还没有构建过前端（这是提交到 git 的形态）。
+ * 执行 \`bun run web:build\`（会自动接着跑 gen:assets）后重新生成本文件。
  * 此时 server 会退回磁盘查找（KANBAN_WEB_DIR 或包根下的 web/dist），再退到占位页。
  */
 export const EMBEDDED_ASSETS: EmbeddedAssetMap = {}

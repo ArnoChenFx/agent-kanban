@@ -27,4 +27,11 @@ Thumbs.db
 .tmp/
 *.tmp
 skills-lock.json
-src/server/assets.generated.ts
+
+# 注意：src/server/assets.generated.ts **故意不忽略**。
+# 它是 src/server/http.ts 的静态 import（Bun embedded files 要求路径是字面量），
+# 一旦不入库，干净 checkout 跑 `tsc --noEmit` 会直接报 TS2307。
+#
+# 入库的是「空表占位」形态；`bun run web:build` 会把它覆盖成真实内容
+# （内嵌资源清单）。所以构建后工作区会显示这个文件 modified ——
+# 那是预期的，不必提交。

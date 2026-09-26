@@ -1,9 +1,10 @@
 # =============================================================================
-# 持续集成：push / PR 时跑测试，不发布
+# Continuous integration: run on every push / PR, never publishes anything
 # =============================================================================
-# 与 release.yml 的 verify job 内容一致但独立存在，理由：
-#  - PR 上就应该知道测试是否通过，而不是等合并后打 tag 才发现
-#  - release.yml 的门禁是"最后一道"，不能替代日常 CI
+# Overlaps with the verify job in release.yml, but exists separately on purpose:
+#   - A PR should tell you whether tests pass, instead of finding out after merge
+#     when someone cuts a tag.
+#   - release.yml's gate is the last line of defense; it must not replace day-to-day CI.
 # =============================================================================
 
 name: ci
@@ -23,7 +24,7 @@ env:
 
 jobs:
   test:
-    name: 测试与构建
+    name: Test and typecheck
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -37,24 +38,35 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: 安装依赖
+      - name: Install dependencies
         shell: bash
         run: |
           bun install --frozen-lockfile
           cd web && bun install --frozen-lockfile
 
-      - name: 类型检查（后端）
+      # Catches the classic "green locally, red on CI" failure: bun's auto-install
+      # silently adds undeclared packages to node_modules, but
+      # `bun install --frozen-lockfile` only installs what the lockfile lists.
+      # Scans TS imports plus CSS @import / @plugin / @source.
+      - name: Verify dependency declarations
+        run: bun run verify:deps
+
+      - name: Typecheck (backend)
         run: bun run typecheck
 
-      - name: 类型检查（前端）
+      - name: Typecheck (frontend)
         shell: bash
         run: cd web && bun run typecheck
 
-      - name: 单元测试
+      - name: Unit tests
         run: bun test
 
+      # Keeps workflow scaffolding in English (job/step names, comments, logs)
+      - name: Verify workflow files
+        run: bun run verify:workflows
+
   build:
-    name: 前端构建与二进制冒烟
+    name: Frontend build and binary smoke test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,29 +75,34 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: |
           bun install --frozen-lockfile
           cd web && bun install --frozen-lockfile
 
-      - name: 前端构建
+      - name: Build frontend
         run: bun run build
         working-directory: web
 
-      - name: 前端产物完整性
+      - name: Verify frontend output
         run: |
-          test -f web/dist/index.html || { echo "::error::缺少 web/dist/index.html"; exit 1; }
-          grep -q 'id="root"' web/dist/index.html || { echo "::error::index.html 不是看板入口"; exit 1; }
-          echo "前端产物正常"
+          test -f web/dist/index.html || { echo "::error::web/dist/index.html is missing"; exit 1; }
+          grep -q 'id="root"' web/dist/index.html || { echo "::error::index.html is not the board entry point"; exit 1; }
+          echo "Frontend output looks good"
 
-      # 部署配置的结构校验
-      - name: 部署配置校验
+      # Structural check of the deployment files
+      - name: Verify deployment config
         run: bun run scripts/verify-deploy.ts
 
-      # 这个冒烟挡住的正是两件事：
-      #   1. schema.sql 没内嵌（编译期无感，运行期 ENOENT）
-      #   2. 前端资源没内嵌（二进制里没有 web/dist，`/` 会退回占位页）
-      - name: 编译 Linux 二进制并冒烟
+      # Keeps workflow scaffolding in English (job/step names, comments, logs)
+      - name: Verify workflow files
+        run: bun run verify:workflows
+
+      # This smoke test guards exactly two things:
+      #   1. schema.sql is not embedded (invisible at compile time, ENOENT at runtime)
+      #   2. Frontend assets are not embedded (no web/dist in the binary, so `/`
+      #      silently falls back to the placeholder page)
+      - name: Compile and smoke test Linux binary
         run: |
           set -euo pipefail
           bun run gen:assets
@@ -94,11 +111,11 @@ jobs:
           chmod +x dist/kanban
           dist/kanban --version
           ( cd smoke && ../dist/kanban init >/dev/null && \
-            ../dist/kanban task add "CI 冒烟" >/dev/null && \
+            ../dist/kanban task add "CI smoke task" >/dev/null && \
             ../dist/kanban --json task list | grep -q T-0001 )
-          echo "二进制冒烟通过"
+          echo "Binary smoke test passed"
 
-      - name: Docker 构建（不推送）
+      - name: Build Docker image (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -108,7 +125,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   binary:
-    name: 单文件二进制自包含验证
+    name: Self-contained binary check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -119,23 +136,24 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: 前端构建
+      - name: Build frontend
         run: bun run build
         working-directory: web
 
-      - name: 生成资源清单并编译
+      - name: Generate asset manifest and compile
         run: |
           bun run gen:assets
           mkdir -p dist-test
           bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist-test/kanban
 
-      # 关键：在**没有源码、没有 web/dist** 的目录里验证二进制能独立跑通
-      # （验证 schema.sql 与前端资源确实被内嵌，而不是恰好能找到源码）
-      - name: 二进制自包含验证
+      # The point: run the binary in a directory with **no source and no web/dist**,
+      # which proves schema.sql and the frontend assets are really embedded rather
+      # than merely found next to the sources.
+      - name: Verify binary is self-contained
         run: bun run scripts/verify-binary.ts
 
   e2e:
-    name: 端到端验证
+    name: End-to-end verification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -144,28 +162,29 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: 安装依赖
+      - name: Install dependencies and build frontend
         run: |
           bun install --frozen-lockfile
           cd web && bun install --frozen-lockfile
           cd web && bun run build
 
-      # 这些脚本各自起临时 server、用真实子进程走完整链路，比单测更能抓到
-      # "跨进程/跨环境才暴露"的问题（CLI 参数解析、token 传递、静态资源）
-      - name: 崩溃恢复
+      # These scripts each boot a throwaway server and drive the real thing through
+      # child processes, which catches cross-process / cross-environment failures
+      # (CLI argument parsing, token propagation, static assets) that unit tests miss.
+      - name: Crash recovery
         run: bun run scripts/verify-recovery.ts
 
-      - name: 事件重放与自证
+      - name: Event replay and self-verification
         run: bun run scripts/verify-rebuild.ts
 
-      - name: 配置与权限
+      - name: Configuration and permissions
         run: bun run scripts/verify-auth.ts
 
-      - name: 远程双模式
+      - name: Remote dual-mode backend
         run: bun run scripts/verify-remote.ts
 
-      - name: Web 看板
+      - name: Web board
         run: bun run scripts/verify-web.ts
 
-      - name: 部署配置校验
+      - name: Verify deployment config
         run: bun run scripts/verify-deploy.ts

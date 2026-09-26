@@ -23,6 +23,8 @@
     "gen:assets": "bun run scripts/gen-assets.ts",
     "build:binary": "bun run web:build && bun build --compile src/cli.ts --outfile dist/kanban",
     "verify:web": "bun run scripts/verify-web.ts",
+    "verify:deps": "bun run scripts/verify-deps.ts",
+    "verify:workflows": "bun run scripts/verify-workflows.ts",
     "verify:deploy": "bun run scripts/verify-deploy.ts",
     "snapshot:web": "bun run scripts/snapshot-web.ts"
   },
