@@ -83,13 +83,16 @@ for (const file of FILES) {
     check("版本一致性校验", /GITHUB_REF_NAME#v/.test(text));
     check("不一致时报错退出", /::error::tag version/.test(text));
     check("需要 verify 门禁", /needs: verify/.test(text));
-    check("release 依赖 binary 与 docker", /needs: \[binary, docker\]/.test(text));
-    // 只数 matrix 条目（`- target: bun-`），不能数全文：注释里提到这个字符串会被计入
+
+    // 只数 matrix 条目（行首锚定）。注意不能数全文，也不能用未锚定的 `- target: bun-`：
+    // verify job 里那句 `grep -cE '^ *- target: bun-'` 自身就含该子串。
     const codeLines = text
       .split("\n")
       .filter((l) => !l.trim().startsWith("#"))
       .join("\n");
-    check("4 个平台矩阵", (codeLines.match(/- target: bun-/g) ?? []).length === 4, `${(codeLines.match(/- target: bun-/g) ?? []).length} 个`);
+    const targetCount = (codeLines.match(/^ *- target: bun-/gm) ?? []).length;
+    check("release 依赖 verify / binary / docker", /needs: \[verify, binary, docker\]/.test(codeLines));
+    check("4 个平台矩阵", targetCount === 4, `${targetCount} 个`);
 
     // ---- artifact 下载必须带 pattern ----
     // 踩过的坑：`cache-to: type=gha` 会额外产生 `<owner>~<repo>~<id>.dockerbuild`，
@@ -100,8 +103,21 @@ for (const file of FILES) {
     const dl = dlIdx === -1 ? "" : text.slice(dlIdx, text.indexOf("\n\n", dlIdx));
     check("download-artifact 带 pattern", /pattern:\s*bin-\*/.test(dl), dl.trim().replace(/\s+/g, " ").slice(0, 90));
     check("download-artifact 过滤掉 dockerbuild 缓存", !/dockerbuild/.test(dl));
-    check("产物数量按 matrix 校验", /EXPECTED=\$\(grep -c /.test(codeLines));
+    check("产物数量按 matrix 校验", /needs\.verify\.outputs\.platforms/.test(codeLines));
     check("产物数量不符则报错退出", /::error::expected \$\{EXPECTED\} platform binaries/.test(codeLines));
+
+    // ---- 自引用计数陷阱 ----
+    // 踩过的坑：在 release 里 `grep -c 'target: bun-' .github/workflows/release.yml`，
+    // 那条 grep 命令自己也是一处匹配，计数被抬高 1 → “expected 5, found 4”。
+    // 现在平台数由 verify job 通过 job outputs 传递；且 grep 模式必须锚定行首。
+    check("平台数经 job outputs 传递", /platforms: \$\{\{ steps\.count\.outputs\.platforms \}\}/.test(text));
+    // 「release job 不得自行 grep 计数」：只检查 release job 段，verify job 里
+    // 同一个 grep 是合法的（它就是权威计数点）
+    const relIdx = codeLines.indexOf("\n  release:");
+    const relBody = relIdx === -1 ? "" : codeLines.slice(relIdx);
+    check("release 不自行 grep 计数", !/grep -c/.test(relBody), relBody.match(/grep -c[^\n]*/)?.[0] ?? "");
+    check("grep 模式锚定行首", /grep -cE '\^ \*- target: bun-'/.test(codeLines));
+    check("release 的 needs 含 verify", /needs: \[verify, binary, docker\]/.test(codeLines));
     // arm64 二进制已移除：Docker 镜像多架构覆盖，且 arm64 独立产物只能用 qemu 冒烟
     check("不再发布 linux-arm64 二进制", !/bun-linux-arm64/.test(text) && !/kanban-linux-arm64/.test(text));
     // 只要求**冒烟测试里**没有 qemu 分支；setup-qemu-action 本身仍需要，

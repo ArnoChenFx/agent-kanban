@@ -44,12 +44,30 @@ jobs:
   verify:
     name: Version check and tests
     runs-on: ubuntu-latest
+    outputs:
+      # Counted once here and passed down as a job output.
+      # Do NOT re-derive it in the release job with `grep -c 'target: bun-'` on this
+      # same file: that grep command line matches the pattern too, inflating the count
+      # by one and failing with "expected 5, found 4". The `^ *-` anchor below counts
+      # matrix entries only, so nothing else can match.
+      platforms: ${{ steps.count.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      # `^ *-` anchors to the start of the line, so only matrix entries match.
+      # `[[:space:]]` would work in GNU grep but not in .NET regexes, which makes
+      # the rule awkward to reproduce locally; `^ *` behaves identically in both.
+      - name: Count release targets
+        id: count
+        run: |
+          COUNT=$(grep -cE '^ *- target: bun-' .github/workflows/release.yml || true)
+          COUNT="${COUNT:-0}"
+          echo "platforms=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "release targets: ${COUNT}"
 
       # Single source of truth for the version: tag v1.2.3 must equal package.json 1.2.3
       - name: Verify tag matches package.json version
@@ -279,7 +297,7 @@ jobs:
   # ---------------------------------------------------------------------------
   release:
     name: Create GitHub Release
-    needs: [binary, docker]
+    needs: [verify, binary, docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -307,9 +325,10 @@ jobs:
           ls -lh release-assets/
           # Fail loudly if a platform artifact is missing, rather than publishing a
           # Release that silently offers one fewer download.
-          # The expected count is derived from the binary matrix, so adding or
-          # removing a platform later needs no edit here.
-          EXPECTED=$(grep -c 'target: bun-' "$GITHUB_WORKSPACE/.github/workflows/release.yml")
+          # Expected count comes from the verify job (needs.verify.outputs.platforms),
+          # derived from the matrix itself, so adding or removing a platform later
+          # needs no edit here.
+          EXPECTED="${{ needs.verify.outputs.platforms }}"
           COUNT=$(ls -1 release-assets/kanban-* 2>/dev/null | grep -vc '\.sha256$' || true)
           if [ "$COUNT" -ne "$EXPECTED" ]; then
             echo "::error::expected ${EXPECTED} platform binaries, found ${COUNT}:"
