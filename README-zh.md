@@ -5,8 +5,8 @@
 让多个 AI agent 会话共享同一份任务真相，并且在其中一个崩溃后接手它的工作。
 
 ---
-![Screenshot](docs\images\screenshot.png)
-![Task](docs\images\task.png)
+![Screenshot](docs/images/screenshot.png)
+![Task](docs/images/task.png)
 
 ## 要解决的问题
 

@@ -5,8 +5,8 @@
 A project-scoped task board that lets multiple AI agent sessions share one source of truth — and pick up each other's work when they crash.
 
 ---
-![Screenshot](docs\images\screenshot.png)
-![Task](docs\images\task.png)
+![Screenshot](docs/images/screenshot.png)
+![Task](docs/images/task.png)
 
 ## The problem
 
