@@ -62,6 +62,18 @@ export function setLastProject(project: string): void {
   localStorage.setItem(PROJECT_KEY, project)
 }
 
+/**
+ * 忘掉上次选中的 project。
+ *
+ * 只有一种该用它的场景：登录表单里 project 留空。
+ * 那一栏写的是「留空则自动选第一个有权限的」，所以旧记忆必须清掉，
+ * 否则换个 token 登录时会被上一个 token 留下的 project 截胡。
+ * 具体怎么退回第一个见 `lib/project.ts` 的 resolveProject。
+ */
+export function clearLastProject(): void {
+  localStorage.removeItem(PROJECT_KEY)
+}
+
 /** 统一的错误类型：把后端的退出码语义搬过来 */
 export class ApiError extends Error {
   readonly code: number

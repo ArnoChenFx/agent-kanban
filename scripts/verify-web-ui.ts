@@ -25,6 +25,8 @@ const PORT = 7841;
 const CDP_PORT = 9341;
 const BASE = `http://127.0.0.1:${PORT}`;
 const PROJECT = "web-ui";
+/** 第二个 project：用来验证「记住上次选的那个」记住的确实是**选的那个**，而不是碰巧每次都回第一个 */
+const ALT_PROJECT = "web-ui-alt";
 const CARD_TITLE = "点开我有惊喜";
 
 function run(args: string[], env: Record<string, string> = {}) {
@@ -62,6 +64,7 @@ try {
   // ---- 起 project + server ----
   await run(["init", "--db", dbPath, "--name", "web-ui-check"]);
   await run(["admin", "project", "add", PROJECT, "--name", "Web UI 回归", "--db", dbPath]);
+  await run(["admin", "project", "add", ALT_PROJECT, "--name", "备用看板", "--db", dbPath]);
   server = spawn("bun", ["run", "src/cli.ts", "serve", "--db", dbPath, "--port", String(PORT), "--quiet"], {
     cwd: ROOT,
     stdio: "pipe",
@@ -374,6 +377,66 @@ try {
     check("菜单宽度不是被触发器压窄的", menu.width >= 150, `${menu.width}px`);
     check("菜单项无折行", menu.wrapped.length === 0, menu.wrapped.join("、"));
   }
+
+  // ---- 项目记忆：记住上次选的，记忆失效（或没有）就自动选第一个 ----
+  // 曾经的 bug：下拉框只改了 React state，没写 localStorage，页面上一切正常，
+  // 刷新一下就弹回上一个 project —— “记住最后选择”形同虚设，而且不报任何错。
+  //
+  // 这里不去点 Radix Select（它只在 pointerdown 上展开，模拟不好很容易假绿），
+  // 改成直接改 localStorage 再 reload：能证明「读记忆 + 兜底」这一半。
+  // 「写记忆」那一半由 test/web-contract.test.ts 的静态守卫钉住
+  // （onValueChange 必须是 selectProject，且每个 setProject 都要配一次落盘）。
+  console.log("\n=== 项目记忆（localStorage → 重开页面）===");
+  const projectList = await evaluate<{ key: string; name: string }[]>(`(async () => {
+    const res = await fetch('/api/projects', { headers: { 'X-Kanban-Key': localStorage.getItem('kanban.token') } });
+    return (await res.json()).data;
+  })()`);
+  check("token 能看到两个 project（“第一个”才有意义）", projectList.length >= 2, projectList.map((p) => p.key).join(" / "));
+
+  /** 顶栏 project 下拉框当前显示的名字（project 名是数据，不随界面语言变） */
+  const projectShown = async () => (await evaluate<string>(`(document.querySelector('[role="combobox"]')?.innerText ?? '').trim()`));
+  const cardCount = async () => evaluate<number>(`document.querySelectorAll('[data-slot="task-id"]').length`);
+  /** 改完记忆就重开页面（模拟关掉标签页再打开） */
+  const reopenWith = async (remembered: string) => {
+    await evaluate(`localStorage.setItem('kanban.project', ${JSON.stringify(remembered)})`);
+    await send("Page.reload", {});
+    await sleep(2500);
+  };
+
+  const firstProject = projectList[0];
+  const altProject = projectList.find((p) => p.key === ALT_PROJECT);
+  if (firstProject && altProject) {
+    check("刚打开时用的是分享链接带来的 project", (await projectShown()) === "Web UI 回归", await projectShown());
+
+    await reopenWith(altProject.key);
+    check("记住的 project 重开后仍然生效（不是碰巧每次都回第一个）", (await projectShown()) === altProject.name, `显示 ${await projectShown()}`);
+    check("看板也跟着切到了那个 project（备用 project 里一张卡都没有）", (await cardCount()) === 0, `${await cardCount()} 张`);
+
+    await reopenWith("gone-project");
+    check("记住的 project 已失效 → 自动退回第一个", (await projectShown()) === firstProject.name, `显示 ${await projectShown()}`);
+    check(
+      "自动选中的也写回记忆（下次打开不必再判断一次）",
+      (await evaluate<string>(`localStorage.getItem('kanban.project')`)) === firstProject.key,
+      await evaluate<string>(`localStorage.getItem('kanban.project')`),
+    );
+
+    // 回到有卡的那个 project：后面的断言（点卡片、切页签）都靠它，别把现场留坏
+    await reopenWith(PROJECT);
+    check("切回有卡的 project 后卡片重新出现", (await cardCount()) > 0, `${await cardCount()} 张`);
+  }
+  check("切 project 过程中无未捕获异常", exceptions.length === 0, exceptions[0]?.split("\n")[0] ?? "");
+  // 上面那次“用失效 project 重开页面”必然换来一个 400：看板先拿记忆里的死 key
+  // 乐观地打一次 /api/board（快过列表请求），拿到 400 被 .catch 吃掉，界面随即自愈成
+  // 第一个 project。这条 network error 是浏览器记的，JS 屏蔽不了，所以只允许它出现，
+  // 并在这里把计数清零当基线——后面的断言衡量的是“恢复正常之后还有没有新错”。
+  const newErrors = [...new Set(consoleErrors)];
+  check(
+    "只有那次必然的 400，没有别的报错",
+    newErrors.every((e) => e.includes("400")),
+    newErrors.join(" | ").slice(0, 160),
+  );
+  consoleErrors.length = 0;
+  exceptions.length = 0;
 
   // ---- 双语：看板 + 管理页 ----
   // 这节与上面用中文断言不同：它验证的是**切换本身**，所以两种语言下都跑。

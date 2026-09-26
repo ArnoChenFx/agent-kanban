@@ -73,6 +73,7 @@ import { LoginCard } from "@/components/login"
 import { LanguageToggle } from "@/components/language-toggle"
 import {
   ApiError,
+  clearLastProject,
   executeOp,
   fetchBoard,
   fetchContext,
@@ -88,6 +89,7 @@ import {
   type TaskStatus,
 } from "@/lib/api"
 import { useI18n } from "@/lib/i18n"
+import { resolveProject } from "@/lib/project"
 import { LANE_ORDER, STATUS_META, canMove, relativeTime, statusLabel } from "@/lib/status"
 
 export function Board() {
@@ -114,24 +116,50 @@ export function Board() {
     localStorage.setItem("kanban.theme", dark ? "dark" : "light")
   }, [dark])
 
-  // ---- 拉取 project 列表 ----
+  // ---- 改选 project 的唯一出口 ----
+  // 记忆存在 localStorage，所以每次改选都得同时写 state 和 localStorage：
+  // 少写一次，刷新页面就弹回上一个 project（曾经下拉框直接接 setProject，
+  // 选完刷新就丢，而且不报任何错）。反过来，读的时候只认 localStorage（getLastProject），
+  // 于是「内存里的值」和「下次打开的值」天然一致。
+  const selectProject = useCallback((key: string) => {
+    setProject(key)
+    setLastProject(key)
+  }, [])
+
+  /** 回到「未选」状态：清掉记忆，让下面的列表 effect 按第一个 project 兜底 */
+  const clearProject = useCallback(() => {
+    setProject(null)
+    clearLastProject()
+  }, [])
+
+  // ---- 拉取 project 列表，并定下这次看哪个 ----
+  // 只依赖 token：以前把 project 也列进依赖，用户每切一次就重拉一遍列表（无意义），
+  // 而且那个闭包读到的是**上一次**的 project，逻辑越写越绕。
   useEffect(() => {
     if (!token) return
+    // 组件已卸载就别再 setState（StrictMode 下 effect 会跑两遍）
+    let cancelled = false
     fetchProjects(token)
       .then((list) => {
-        setProjects(list.map((p) => ({ key: p.key, name: p.name })))
-        if (!project && list.length > 0) {
-          setProject(list[0]!.key)
-          setLastProject(list[0]!.key)
-        }
+        if (cancelled) return
+        const items = list.map((p) => ({ key: p.key, name: p.name }))
+        setProjects(items)
+        const next = resolveProject(getLastProject(), items.map((p) => p.key))
+        // 自动兜底选中的那个也记下来，下次打开不必再走一遍判断
+        if (next) setLastProject(next)
+        setProject(next)
       })
       .catch((e) => {
+        if (cancelled) return
         if (e instanceof ApiError && e.isAuth) {
           setToken(null)
           setTokenState(null)
         }
       })
-  }, [token, project])
+    return () => {
+      cancelled = true
+    }
+  }, [token])
 
   // ---- 拉取看板 + 恢复上下文 ----
   const reload = useCallback(async () => {
@@ -155,9 +183,15 @@ export function Board() {
   }, [token, project])
 
   useEffect(() => {
+    // project 还没定下来时（第一次拿列表、或者这个 token 一个项目都没有）
+    // 别发请求：空 project 只会换来一个 400，外加骨架屏白闪一下
+    if (!token || !project) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setBoard(null)
-    fetchContext(token ?? "", project ?? "", null)
+    fetchContext(token, project, null)
       .then(setContext)
       .catch(() => undefined)
       .finally(() => setLoading(false))
@@ -324,10 +358,10 @@ export function Board() {
           onLogin={(t, p) => {
             setToken(t)
             setTokenState(t)
-            if (p) {
-              setProject(p)
-              setLastProject(p)
-            }
+            // 填了 project 就用它；留空 = 登录框上写的「自动选第一个有权限的」，
+            // 所以顺手把旧记忆清掉，别让上一个 token 的 project 截胡
+            if (p) selectProject(p)
+            else clearProject()
           }}
         />
       </div>
@@ -340,7 +374,7 @@ export function Board() {
       <header className="border-border flex items-center gap-3 border-b px-4 py-2.5">
         <h1 className="font-heading text-lg font-semibold">agent-kanban</h1>
 
-        <Select value={project ?? undefined} onValueChange={setProject}>
+        <Select value={project ?? undefined} onValueChange={selectProject}>
           <SelectTrigger size="sm" className="w-44">
             <SelectValue placeholder={t("board.selectProject")} />
           </SelectTrigger>

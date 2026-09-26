@@ -360,4 +360,24 @@ describe("前端源码不得再拆 { task } 包装（本次 bug 的静态守卫�
     }
     expect(offenders).toEqual([]);
   });
+
+  test("改选 project 必须落盘（下拉框不能直接 onValueChange={setProject}）", () => {
+    // 曾经的写法：<Select onValueChange={setProject}>，只改内存里的 state。
+    // 页面里看一切正常，刷新一下就弹回上一个 project——"记住最后选择"完全没生效，
+    // 而且没有任何报错。改选必须走 selectProject（state + localStorage 双写）。
+    const src = readFileSync(join(ROOT, "web", "src", "components", "board.tsx"), "utf8");
+    expect(src).not.toMatch(/onValueChange=\{setProject\}/);
+    expect(src).toMatch(/onValueChange=\{selectProject\}/);
+  });
+
+  test("每个 setProject 调用点都配一次落盘（少一次就等于没记住）", () => {
+    // 不变量：改内存里的 project 有几处，就得有几处写/清 localStorage。
+    // 正则只认 `setProject(`，不会误伤 `setProjects(`（列表）和 `setProjectState`。
+    const src = readFileSync(join(ROOT, "web", "src", "components", "board.tsx"), "utf8");
+    const count = (re: RegExp) => (src.match(re) ?? []).length;
+    expect(count(/\bsetProject\(/g)).toBe(
+      count(/\bsetLastProject\(/g) + count(/\bclearLastProject\(/g),
+    );
+    expect(count(/\bsetProject\(/g)).toBeGreaterThan(0);
+  });
 });
