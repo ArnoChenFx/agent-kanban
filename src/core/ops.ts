@@ -182,6 +182,12 @@ export interface OpContext {
   now: () => number;
   /** 默认租约时长 */
   ttlMs?: number;
+  /**
+   * 项目根目录（.kanban 的父目录）。
+   * 存在时 `doctor.check` 才会检查 AGENTS.md 协作协议是否落后。
+   * 远程模式的 client 本地不该检查别人仓库的文件，所以可以不传。
+   */
+  projectRoot?: string;
 }
 
 /** Op 返回的 next_actions：专门写给 agent 的下一步建议 */
@@ -607,6 +613,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         deep: op.params.deep ?? false,
         fix: op.params.fix ?? false,
         now: ctx.now(),
+        projectRoot: ctx.projectRoot,
       });
       return {
         data: report,

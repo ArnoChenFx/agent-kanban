@@ -12,6 +12,7 @@
 
 import { ExitCode, type ExitCodeValue } from "./core/errors.ts";
 import { cmdInit } from "./commands/init.ts";
+import { cmdInstallProtocol } from "./commands/protocol.ts";
 import { cmdSession } from "./commands/session.ts";
 import { cmdTask } from "./commands/task.ts";
 import { cmdBoard } from "./commands/board.ts";
@@ -36,6 +37,7 @@ const HELP = `agent-kanban —— 多会话 / 多项目 agent 共享的任务看
 
 命令：
   init        初始化本地看板（.kanban/，自动创建唯一 project）
+  install-protocol  把 agent 协作协议写入项目 AGENTS.md
   session     会话生命周期：start / list / heartbeat / end
   task        任务操作：add / list / show / claim / progress / done ...
   board       终端泳道视图
@@ -173,6 +175,9 @@ async function main(): Promise<void> {
       break;
     case "init":
       code = await cmdInit(withGlobals());
+      break;
+    case "install-protocol":
+      code = cmdInstallProtocol(withGlobals());
       break;
     case "session":
       code = await cmdSession(withGlobals());

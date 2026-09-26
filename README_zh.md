@@ -75,6 +75,7 @@ $ kanban rebuild --write
 ```bash
 chmod +x kanban-linux-x64        # macOS 用 kanban-darwin-arm64 · Windows 用 kanban-windows-x64.exe
 ./kanban-linux-x64 init
+./kanban-linux-x64 install-protocol   # 教会你的 agent 使用看板
 ./kanban-linux-x64 session start --agent my-agent
 ./kanban-linux-x64 task add "重写鉴权层"
 ./kanban-linux-x64 serve         # → http://127.0.0.1:7788/
@@ -237,6 +238,7 @@ Server 端：`KANBAN_HOST`、`KANBAN_PORT`、`KANBAN_WEB_DIR`、`KANBAN_ADMIN_TO
 | 命令 | 用途 |
 |---|---|
 | `kanban init` | 创建本地看板（`.kanban/`） |
+| `kanban install-protocol` | 把 agent 协作协议写入项目的 `AGENTS.md` |
 | `kanban session start \| end \| list \| heartbeat` | 会话生命周期 |
 | `kanban task add \| list \| show \| claim \| progress \| block \| done \| …` | 任务操作 |
 | `kanban board` | 终端泳道视图 |

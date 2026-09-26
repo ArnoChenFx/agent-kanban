@@ -195,6 +195,8 @@ function openLocalCtx(input: {
     sessionId,
     now: input.now,
     ttlMs: project.defaultTtlMs ?? config.defaultTtlMs,
+    // doctor 用它检查 AGENTS.md 协作协议是否落后于当前 CLI
+    projectRoot: input.paths.projectRoot,
   });
 
   return {

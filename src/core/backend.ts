@@ -42,6 +42,7 @@ export class LocalBackend implements Backend {
   private readonly sessionId: string | null;
   private readonly nowFn: () => number;
   private readonly ttlMs: number | undefined;
+  private readonly projectRoot: string | undefined;
 
   constructor(opts: {
     db: Database;
@@ -49,12 +50,15 @@ export class LocalBackend implements Backend {
     sessionId?: string | null;
     now?: () => number;
     ttlMs?: number;
+    /** 项目根目录；用于 doctor 检查 AGENTS.md 协作协议 */
+    projectRoot?: string;
   }) {
     this.db = opts.db;
     this.projectKey = opts.projectKey;
     this.sessionId = opts.sessionId ?? null;
     this.nowFn = opts.now ?? Date.now;
     this.ttlMs = opts.ttlMs;
+    this.projectRoot = opts.projectRoot;
   }
 
   async execute<T = unknown>(op: Op): Promise<T> {
@@ -75,6 +79,7 @@ export class LocalBackend implements Backend {
       sessionId: this.sessionId,
       now: this.nowFn,
       ttlMs: this.ttlMs,
+      projectRoot: this.projectRoot,
     };
     return executeOp(op, ctx);
   }

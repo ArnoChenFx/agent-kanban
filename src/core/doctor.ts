@@ -23,6 +23,12 @@ import {
   type Scope,
 } from "./tasks.ts";
 import { countPendingHandoffs } from "./handoff.ts";
+import {
+  inspectProtocol,
+  resolveProtocolFile,
+  PROTOCOL_ISSUE_MISSING,
+  PROTOCOL_ISSUE_OUTDATED,
+} from "./protocol.ts";
 
 /** 单个问题 */
 export interface DoctorIssue {
@@ -64,6 +70,11 @@ export interface DoctorOptions {
   fix?: boolean;
   now?: number;
   graceMs?: number;
+  /**
+   * 项目根目录；存在时才会检查 AGENTS.md 协议区块。
+   * 远程模式下 client 本地没有 .kanban，不该对别人的仓库报“协议缺失”。
+   */
+  projectRoot?: string;
 }
 
 /** 执行自检 */
@@ -187,6 +198,12 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
     if (projIssue) issues.push(projIssue);
   }
 
+  // ---- 7. 协作协议是否落后于当前 CLI ----
+  // agent 靠 AGENTS.md 里的受管区块知道怎么用看板。升级了 kanban 却不更新，
+  // agent 会照着旧协议执行已经不存在的命令。只能提示，不能自动修。
+  const protocolIssue = checkProtocol(opts.projectRoot);
+  if (protocolIssue) issues.push(protocolIssue);
+
   const stats = {
     tasks: countByStatus(scope),
     events: countEvents(db, opts.projectKey),
@@ -203,6 +220,30 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
     ok: issues.every((i) => i.severity !== "error" || i.fixed),
     issues,
     stats,
+  };
+}
+
+/**
+ * 检查 AGENTS.md 里的协作协议区块是否落后于当前 CLI。
+ *
+ * 不自动修：协议内容是给人读的 Markdown，`--fix` 静默改掉它会让人
+ * 不知道自己看过的东西变了。缺失时给出安装命令让人自己决定。
+ */
+function checkProtocol(projectRoot: string | undefined): DoctorIssue | null {
+  if (!projectRoot) return null;
+  const insp = inspectProtocol(resolveProtocolFile(projectRoot));
+  if (insp.status === "up_to_date") return null;
+
+  return {
+    code: insp.status === "outdated" ? PROTOCOL_ISSUE_OUTDATED : PROTOCOL_ISSUE_MISSING,
+    message:
+      insp.status === "outdated"
+        ? `AGENTS.md 的协作协议落后于当前 CLI（协议 ${insp.installedVersion}，当前 ${insp.currentVersion}）`
+        : `AGENTS.md 里没有协作协议区块，agent 不知道开工要先跑 kanban context`,
+    subjects: [insp.file],
+    fixed: false,
+    hint: "运行 `kanban install-protocol` 更新（只改受管区块，文件其余内容不动）",
+    severity: "warning",
   };
 }
 

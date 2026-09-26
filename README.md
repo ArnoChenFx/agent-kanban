@@ -77,6 +77,7 @@ Download the file for your platform from [Releases](https://github.com/your-org/
 ```bash
 chmod +x kanban-linux-x64        # macOS: kanban-darwin-arm64 · Windows: kanban-windows-x64.exe
 ./kanban-linux-x64 init
+./kanban-linux-x64 install-protocol   # teach your agents to use the board
 ./kanban-linux-x64 session start --agent my-agent
 ./kanban-linux-x64 task add "Rewrite the auth layer"
 ./kanban-linux-x64 serve         # → http://127.0.0.1:7788/
@@ -239,6 +240,7 @@ When it comes from the environment, the token is neither written to `config.toml
 | Command | Purpose |
 |---|---|
 | `kanban init` | Create the local board (`.kanban/`) |
+| `kanban install-protocol` | Write the agent collaboration protocol into the project's `AGENTS.md` |
 | `kanban session start \| end \| list \| heartbeat` | Session lifecycle |
 | `kanban task add \| list \| show \| claim \| progress \| block \| done \| …` | Task operations |
 | `kanban board` | Swimlane view in the terminal |
