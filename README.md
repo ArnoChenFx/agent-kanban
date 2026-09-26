@@ -149,7 +149,36 @@ You get the previous session's notes, the ordered list of every change made to t
 
 ## The web board
 
-`agent-kanban serve` hosts a real UI on port 7788:
+`agent-kanban serve` hosts a real UI on port 7788. It serves the board, the admin page, and the
+same API the CLI talks to — one data path, no second source of truth.
+
+```bash
+agent-kanban serve                                  # → http://127.0.0.1:7788/
+agent-kanban serve --port 9000 --host 0.0.0.0       # --host 0.0.0.0 needs the TLS note below
+agent-kanban serve --reap-interval 30               # how often the server reaps dead sessions
+```
+
+### Getting in — every `/api/*` needs a token
+
+The browser has no ambient authority, so the first screen asks for a token. There are exactly
+three ways to get one:
+
+| Where the token comes from | How |
+|---|---|
+| **Admin token, auto-generated** | The first `serve` on a machine prints it once and writes it to `.kanban/config.toml` under `[server] admin_token`. If it came from `KANBAN_ADMIN_TOKEN` it is never printed — read the file. |
+| **Project token, issued** | `agent-kanban admin token create --project my-app --name "CI runner"` — prints the plaintext exactly once. |
+| **A shareable link** | `http://host:7788/?key=k_…&project=my-app` — read from the URL, then stripped from it. |
+
+Paste the token into the login card. The **project** field is optional: leave it blank and the board
+picks the first project the token can reach. A token may be granted several projects, which is what
+the switcher in the header is for.
+
+| Token type | Reaches |
+|---|---|
+| Project token | only the projects it was explicitly granted |
+| Admin token | every project, plus project and token management |
+
+### What the board does
 
 - **7 swimlanes** — Backlog, Todo, Doing, Blocked, In Review, Done, Cancelled
 - **Drag and drop** with state-machine validation; an illegal move is rejected with the reason
@@ -158,9 +187,33 @@ You get the previous session's notes, the ordered list of every change made to t
 - **Multi-project switcher**, light/dark mode
 - **Chinese / English UI** — one click in the header, on both the board and the admin page (`/admin`), sharing a single preference; first visit follows the browser language
 - **Shareable links** — `?key=…&project=…`; parameters are stripped from the URL after reading
-- **Admin page** at `/admin` — manage projects, issue and revoke tokens
 
-The web UI and the CLI operate on the same data through the same code path. Anything you can do in the browser, an agent can do from its shell.
+The web UI and the CLI operate on the same data through the same code path. Anything you can do in
+the browser, an agent can do from its shell.
+
+### The admin page at `/admin`
+
+Create projects, issue tokens, change which projects a token may reach, revoke tokens. Revocation
+takes effect on the next request — there is no session to expire.
+
+`/admin` requires an **admin** token. A project token gets `403` with the reason spelled out, which
+is deliberate: *forbidden* means "valid token, wrong role, go get another one", while *invalid* means
+"go get a fresh token" — different problems, different fixes.
+
+If the frontend was never built, `serve` falls back to a built-in placeholder page that lists the
+API surface instead of pretending to be a board: `GET /api/health` (no auth), `POST /api/op`
+(needs `X-Kanban-Key` or `Authorization: Bearer`), `GET /api/stream`, and `/admin`.
+
+### Before you expose it
+
+`serve` does not terminate TLS and binds `127.0.0.1` by default. Put it behind a TLS terminator
+before binding `0.0.0.0` — **without TLS, tokens travel in plaintext.** See [Security](#security).
+
+In Docker the board is on the same port as the API; `KANBAN_PORT` sets the host port and
+`KANBAN_BIND` the host-side bind address (the container itself always listens on `0.0.0.0`).
+
+The browser keeps your token in `localStorage` so a refresh does not log you out. The price is that
+XSS can read it, which is why this project forbids `innerHTML` outright.
 
 ## Sharing a board across machines
 

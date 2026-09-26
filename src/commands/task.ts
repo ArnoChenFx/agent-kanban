@@ -12,6 +12,8 @@
  */
 
 import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
+import { describeEvent } from "../core/events.ts";
+import type { KanbanEvent } from "../core/types.ts";
 import {
   padEndWidth,
   padStartWidth,
@@ -99,6 +101,7 @@ const TASK_USAGE = `用法：agent-kanban task <子命令> [参数] [选项]
 读：
   list      列出任务          agent-kanban task list --status doing --ready
   show      查看任务详情      agent-kanban task show T-0007 --timeline
+            描述 / 检查项逐项 / 依赖（id+标题+状态）默认全出，末尾附可用操作
   ready     列出可认领任务     agent-kanban task ready
 
 写（需会话上下文）：
@@ -230,14 +233,16 @@ async function taskShow(argv: string[]): Promise<ExitCodeValue> {
   const id = requirePositional(args, 0, "任务号", "用法：agent-kanban task show T-0007 [--timeline]");
 
   try {
-    const { data } = await ctx.backend.executeWithHints({
+    // nextActions 要单独取：executeWithHints 把它放在 data 之外，
+    // 早先这里只解构了 data，于是末尾的“可用操作”永远是空的。
+    const { data, nextActions } = await ctx.backend.executeWithHints({
       kind: "task.get",
       params: { task_id: id, timeline: getBool(args, "timeline"), tail: getInt(args, "tail") ?? 20 },
     });
     const task = data as Record<string, unknown>;
 
     if (json) {
-      out.data(task);
+      out.data({ ...task, next_actions: nextActions });
       return ExitCode.OK;
     }
 
@@ -261,7 +266,10 @@ async function taskShow(argv: string[]): Promise<ExitCodeValue> {
     if (task.status === "blocked" && task.block_reason) {
       out.line(`  ${style.red("⛔ 阻塞原因：")}${task.block_reason}`);
     }
-    if (task.body && getBool(args, "body")) {
+    // 描述默认全文显示（与 Web 详情抽屉一致）：它回答的是“这活儿到底是干什么的”，
+    // 而 `task show` 就是看这个的。`--body` 保留为**兼容参数**（传了不报错、不改变行为），
+    // 免得老的脚本/别名里写了它就直接 usage error。
+    if (task.body) {
       out.line("");
       out.line("  描述：");
       for (const l of String(task.body).split("\n")) out.line(`    ${l}`);
@@ -276,47 +284,39 @@ async function taskShow(argv: string[]): Promise<ExitCodeValue> {
       }
     }
 
-    const deps = task.dependencies as Array<{ depends_on_id: string }>;
-    if (deps && deps.length > 0) {
+    // 依赖：优先读 dependency_details（id + 标题 + 完成状态）。
+    // 退化路径留给老服务端：dependencies 是 TaskDep 对象数组（字段是 dependsOnId，
+    // 不是 depends_on_id —— 早先读错这个名字，输出直接变成 "· undefined"）。
+    const depDetails = task.dependency_details as Array<{ id: string; title?: string; done?: boolean }> | undefined;
+    const deps = depDetails
+      ? depDetails
+      : ((task.dependencies as Array<{ dependsOnId?: string; depends_on_id?: string }> | undefined) ?? []).map((d) => ({
+          id: d.dependsOnId ?? d.depends_on_id ?? "",
+          title: "",
+          done: false,
+        }));
+    if (deps.length > 0) {
       out.line("  依赖");
       for (const d of deps) {
-        out.line(`    ${style.gray("·")} ${d.depends_on_id}`);
+        if (!d.id) continue;
+        const state = d.done ? "已完成" : "未完成";
+        out.line(`    ${style.gray("·")} ${style.cyan(d.id)}${d.title ? ` ${d.title}` : ""}（${d.done ? style.green(state) : style.yellow(state)}）`);
       }
     }
-    const timeline = task.timeline as Array<Record<string, unknown>> | undefined;
+    const timeline = task.timeline as KanbanEvent[] | undefined;
     if (timeline && timeline.length > 0) {
       out.line("  最近");
       for (const e of timeline) {
-        out.line(`    ${style.gray(relativeTime(Number(e.ts), now).padEnd(8))} ${describeEventJson(e)}`);
+        out.line(`    ${style.gray(relativeTime(Number(e.ts), now).padEnd(8))} ${describeEvent(e)}`);
       }
     }
 
     out.line("");
-    out.line("  " + style.gray("可用操作：") + (task.next_actions as string[] | undefined ?? []).map((h) => style.gray(h)).join("  |  "));
+    out.line("  " + style.gray("可用操作：") + nextActions.map((h) => style.gray(h)).join("  |  "));
     out.line("");
     return ExitCode.OK;
   } finally {
     closeCtx(ctx);
-  }
-}
-
-/** 从事件 JSON 生成一行中文描述（不查库，CLI 侧直接渲染） */
-function describeEventJson(e: Record<string, unknown>): string {
-  const d = (e.data ?? {}) as Record<string, unknown>;
-  switch (e.type) {
-    case "task_created": return "创建任务";
-    case "task_claimed": return d.prev_assignee ? `抢占（接手自 ${d.prev_assignee}）` : "抢占认领";
-    case "task_released": return `释放${d.reason ? `：${d.reason}` : ""}`;
-    case "task_reclaimed": return d.holder_crashed ? "持有者失联，已自动回收" : "强制回收";
-    case "task_progress": return `进度 ${d.prev_pct ?? "?"}% → ${d.pct}%${d.note ? ` ${d.note}` : ""}`;
-    case "task_note": return `备注：${d.text ?? ""}`;
-    case "task_blocked": return `阻塞：${d.reason ?? ""}`;
-    case "task_unblocked": return "自动解除阻塞";
-    case "task_review": return "提交评审";
-    case "task_done": return `完成${d.note ? `：${d.note}` : ""}`;
-    case "task_cancelled": return `取消：${d.reason ?? ""}`;
-    case "task_reopened": return `重新打开：${d.reason ?? ""}`;
-    default: return String(e.type);
   }
 }
 
@@ -670,7 +670,7 @@ async function taskDep(argv: string[]): Promise<ExitCodeValue> {
       };
     }
     const { data } = await ctx.backend.executeWithHints(op);
-    const result = data as { dependencies: Array<{ depends_on_id: string }> };
+    const result = data as { dependencies: Array<{ dependsOnId?: string; depends_on_id?: string }> };
     if (json) {
       out.data(data);
       return ExitCode.OK;
@@ -680,7 +680,8 @@ async function taskDep(argv: string[]): Promise<ExitCodeValue> {
         out.line(`${id} 无依赖`);
         return ExitCode.OK;
       }
-      for (const d of result.dependencies) out.line(`  ${d.depends_on_id}`);
+      // TaskDep 的字段是 dependsOnId（不是 depends_on_id）——读错会打印 undefined
+      for (const d of result.dependencies) out.line(`  ${d.dependsOnId ?? d.depends_on_id ?? "(未知)"}`);
       return ExitCode.OK;
     }
     out.line(`${style.green("✓")} ${style.cyan(id)} ${action === "add" ? "新增依赖" : "移除依赖"}（当前 ${result.dependencies.length} 项）`);

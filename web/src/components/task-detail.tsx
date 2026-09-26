@@ -228,19 +228,18 @@ function Overview({
 }) {
   const { t } = useI18n()
   const parentId = typeof detail.task.parent_id === "string" ? detail.task.parent_id : null
-  // 依赖列表优先用 task.get 的 dependencies（全部依赖）；老服务端可能只给未完成的那部分
-  const depIds = detail.dependencies.length > 0 ? detail.dependencies : detail.unfinishedDependencies
-  // 父任务在前、依赖在后；pending 决定标签与配色（一眼分出“还欠着的那条”）
-  const related: Array<{ id: string; label: string; pending: boolean }> = [
-    ...(parentId ? [{ id: parentId, label: t("detail.parent"), pending: false }] : []),
-    ...depIds.map((id) => {
-      const pending = detail.unfinishedDependencies.includes(id)
-      return {
-        id,
-        pending,
-        label: pending ? t("detail.dep.unfinished") : t("detail.dep.done"),
-      }
-    }),
+  // 关联任务：父任务在前、依赖在后（detail.related 已由 api 层归一化，含标题与完成状态）
+  const related: Array<{ id: string; title: string; label: string; pending: boolean }> = [
+    ...(parentId
+      ? [{ id: parentId, title: tasksById?.get(parentId)?.title ?? "", label: t("detail.parent"), pending: false }]
+      : []),
+    ...detail.related.map((r) => ({
+      id: r.id,
+      // 服务端给了标题就用服务端的；没有（老服务端）再退回看板快照里查
+      title: r.title || (tasksById?.get(r.id)?.title ?? ""),
+      label: r.done ? t("detail.dep.done") : t("detail.dep.unfinished"),
+      pending: !r.done,
+    })),
   ]
   if (related.length === 0 && !detail.description && detail.checklist.length === 0) return null
 
@@ -283,7 +282,7 @@ function Overview({
               <li key={`${r.label}-${r.id}`}>
                 <RelatedTask
                   id={r.id}
-                  title={tasksById?.get(r.id)?.title}
+                  title={r.title}
                   onSelect={onSelect}
                   label={r.label}
                   pending={r.pending}

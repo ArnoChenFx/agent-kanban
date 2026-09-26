@@ -265,6 +265,31 @@ describe("描述与检查项：写得进也要读得回（Web 概览区的两端
     expect(Array.isArray(deps)).toBe(true);
     expect(deps.map((d) => d.dependsOnId)).toEqual([upstream.data.id]);
     expect(res.data.unfinished_dependencies).toEqual([upstream.data.id]);
+
+    // dependency_details 是三个接入面（Web 概览 / CLI show / 未来其它客户端）共用的那份：
+    // 带标题与完成状态，省得各自去猜 TaskDep 的字段名（CLI 就猜错过，输出过 undefined）。
+    const details = res.data.dependency_details as Array<{
+      id: string;
+      title: string;
+      status: string | null;
+      done: boolean;
+    }>;
+    expect(details).toEqual([{ id: upstream.data.id, title: "上游", status: "todo", done: false }]);
+  });
+
+  test("上游完成后 dependency_details 的 done 翻成 true", async () => {
+    const list = await callOp<Array<{ id: string; title: string }>>({ kind: "task.list", params: {} });
+    const upstream = list.data.find((t) => t.title === "上游")!;
+    const downstream = list.data.find((t) => t.title === "下游")!;
+    await callOp({ kind: "task.transition", params: { task_id: upstream.id, to: "done", force: true } });
+
+    const res = await callOp<Record<string, unknown>>({
+      kind: "task.get",
+      params: { task_id: downstream.id },
+    });
+    expect(res.data.unfinished_dependencies).toEqual([]);
+    const details = res.data.dependency_details as Array<{ id: string; done: boolean }>;
+    expect(details.map((d) => d.done)).toEqual([true]);
   });
 });
 

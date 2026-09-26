@@ -163,6 +163,8 @@ interface TaskGetData extends Omit<Partial<TaskItem>, "checklist" | "unfinished_
   checklist?: unknown
   /** 依赖列表。注意实际形状是 TaskDep 对象数组（{taskId, dependsOnId, createdAt}），不是 id 数组 */
   dependencies?: unknown
+  /** 带标题与状态的依赖明细（服务端 >= 某版本才有；旧服务端回退到 dependencies + unfinished_dependencies） */
+  dependency_details?: unknown
   /** 未完成的依赖 id 数组 */
   unfinished_dependencies?: unknown
   [key: string]: unknown
@@ -174,6 +176,14 @@ export interface ChecklistItem {
   done: boolean
   done_at?: number | null
   by?: string | null
+}
+
+/** 一条关联任务（依赖 / 父任务），与 CLI `task show` 读的是同一份服务端数据 */
+export interface RelatedTaskItem {
+  id: string
+  title: string
+  /** 依赖是否已完成（不是依赖行——父任务没有这个概念） */
+  done: boolean
 }
 
 /** 详情抽屉消费的、已归一化的任务详情 */
@@ -188,6 +198,8 @@ export interface TaskDetail {
   dependencies: string[]
   /** 尚未完成的依赖 id（用于给依赖行标注“还没做完”） */
   unfinishedDependencies: string[]
+  /** 关联任务明细：优先取服务端的 dependency_details，缺失时由上面两个字段拼出来 */
+  related: RelatedTaskItem[]
   timeline: KanbanEvent[]
   handoffs: HandoffItem[]
   plan: PlanItem | null
@@ -215,21 +227,29 @@ function normalizeChecklist(raw: unknown): ChecklistItem[] {
 }
 
 /**
- * 归一化依赖 id 列表。
+ * 归一化关联任务列表。
  *
- * 服务端 `task.get` 的 `dependencies` 是 **TaskDep 对象数组**（taskId/dependsOnId/createdAt），
- * 不是 id 数组；`unfinished_dependencies` 才是 id 数组。
- * 早先按“数组里都是字符串”来过滤，结果一个依赖都留不下——所以这里两种形状都接。
+ * 优先用服务端的 `dependency_details`（id + title + done，CLI 读的是同一份）；
+ * 旧服务端没有这个字段时，用 `dependencies`（TaskDep 对象）+ `unfinished_dependencies` 拼出来，
+ * 标题留空（界面上就不显示标题，而不是显示 undefined）。
  */
-function normalizeDeps(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return []
-  return raw
-    .map((x) => {
-      if (typeof x === "string") return x
-      const id = (x as { dependsOnId?: unknown } | null)?.dependsOnId
-      return typeof id === "string" ? id : null
-    })
-    .filter((x): x is string => x !== null)
+function normalizeRelated(
+  details: unknown,
+  depIds: string[],
+  unfinishedIds: string[],
+): RelatedTaskItem[] {
+  if (Array.isArray(details)) {
+    const fromDetails = details
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+      .map((x) => ({
+        id: String(x.id ?? ""),
+        title: typeof x.title === "string" ? x.title : "",
+        done: x.done === true,
+      }))
+      .filter((x) => x.id !== "")
+    if (fromDetails.length > 0) return fromDetails
+  }
+  return depIds.map((id) => ({ id, title: "", done: !unfinishedIds.includes(id) }))
 }
 
 /**
@@ -277,16 +297,37 @@ export async function fetchTaskDetail(
       : Promise.resolve(null),
   ])
 
+  const dependencies = normalizeDeps(data.dependencies)
+  const unfinishedDependencies = normalizeDeps(data.unfinished_dependencies)
   return {
     task,
     description: typeof data.body === "string" && data.body.trim() !== "" ? data.body : null,
     checklist: normalizeChecklist(data.checklist),
-    dependencies: normalizeDeps(data.dependencies),
-    unfinishedDependencies: normalizeDeps(data.unfinished_dependencies),
+    dependencies,
+    unfinishedDependencies,
+    related: normalizeRelated(data.dependency_details, dependencies, unfinishedDependencies),
     timeline,
     handoffs,
     plan,
   }
+}
+
+/**
+ * 归一化依赖 id 列表。
+ *
+ * 服务端 `task.get` 的 `dependencies` 是 **TaskDep 对象数组**（taskId/dependsOnId/createdAt），
+ * 不是 id 数组；`unfinished_dependencies` 才是 id 数组。
+ * 早先按“数组里都是字符串”来过滤，结果一个依赖都留不下——所以这里两种形状都接。
+ */
+function normalizeDeps(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((x) => {
+      if (typeof x === "string") return x
+      const id = (x as { dependsOnId?: unknown } | null)?.dependsOnId
+      return typeof id === "string" ? id : null
+    })
+    .filter((x): x is string => x !== null)
 }
 
 /** 恢复上下文：交接 / 失联会话 / 建议动作 */

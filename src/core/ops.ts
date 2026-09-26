@@ -346,12 +346,25 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
     case "task.get": {
       const task = requireTask(scope, op.params.task_id);
       const deps = getDependencies(scope, task.id);
+      const unfinished = getUnfinishedDeps(scope, task.id).map((u) => u.id);
       const data: Record<string, unknown> = {
         ...taskToJson(task),
         body: task.body,
         checklist: task.checklist,
         dependencies: deps,
-        unfinished_dependencies: getUnfinishedDeps(scope, task.id).map((u) => u.id),
+        unfinished_dependencies: unfinished,
+        // 带标题与状态的依赖明细。只给 `dependencies`（TaskDep 对象）的话，
+        // 三个接入面各自去猜字段名——CLI 就猜错过（读 depends_on_id，拿到 undefined），
+        // 而“这条依赖还欠着 / 叫什么”正是看详情的人第一个要确认的事。
+        dependency_details: deps.map((d) => {
+          const dep = getTask(scope, d.dependsOnId);
+          return {
+            id: d.dependsOnId,
+            title: dep?.title ?? "",
+            status: dep?.status ?? null,
+            done: !unfinished.includes(d.dependsOnId),
+          };
+        }),
       };
       if (op.params.timeline) {
         data.timeline = taskRecentEvents(ctx.db, ctx.projectKey, op.params.task_id, op.params.tail ?? 20).map(

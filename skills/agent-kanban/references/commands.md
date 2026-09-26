@@ -83,11 +83,13 @@ agent-kanban task list [--status todo,doing] [--ready] [--mine] [--all]
                  [--label <标签>] [--parent <T-xxxx>] [--sort priority|created|updated|id]
                  [--limit <n，默认200>] [--json]
 agent-kanban task ready                 # 等价于 task list --ready
-agent-kanban task show T-0007 [--timeline] [--body] [--tail <n>] [--json]
+agent-kanban task show T-0007 [--timeline] [--tail <n>] [--json]
 ```
 
 - `--ready` = 依赖已满足**且无人持有**（租约过期的持有者也算无人持有）。
 - `--all` 才包含 `done` / `cancelled`。
+- `task show` 默认输出描述、checklist 逐项、依赖（id + 标题 + 完成状态），末尾附**可用操作**。
+  （`--body` 是遗留的兼容参数：早先描述要靠它才显示，现在默认就显示，传了也不报错。）
 - 短选项：`-j` json、`-a` all、`-m` mine、`-s` status、`-l` label。
 
 ### 写（都需要会话上下文）

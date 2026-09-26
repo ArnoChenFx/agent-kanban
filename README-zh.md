@@ -147,7 +147,34 @@ agent-kanban resume T-0007     # 接管：交接 + 完整时间线一并注入
 
 ## Web 看板
 
-`agent-kanban serve` 会在 7788 端口开一个真正的界面：
+`agent-kanban serve` 会在 7788 端口开一个真正的界面。看板、管理页和 CLI 调的是同一套 API
+——一条数据通路，不存在第二份事实源。
+
+```bash
+agent-kanban serve                                  # → http://127.0.0.1:7788/
+agent-kanban serve --port 9000 --host 0.0.0.0       # --host 0.0.0.0 前先看下面的 TLS 提醒
+agent-kanban serve --reap-interval 30               # server 回收失联会话的间隔
+```
+
+### 怎么进去：所有 `/api/*` 都要 token
+
+浏览器没有环境权限，所以第一屏会问你要 token。拿到 token 只有三条路：
+
+| token 从哪来 | 怎么拿 |
+|---|---|
+| **管理员 token，自动生成** | 机器上第一次 `agent-kanban serve` 会打印一次，并写进 `.kanban/config.toml` 的 `[server] admin_token`。若它来自 `KANBAN_ADMIN_TOKEN` 环境变量则**不打印**，去配置文件里看 |
+| **项目级 token，签发得到** | `agent-kanban admin token create --project my-app --name "CI 专用"` —— 明文只显示这一次 |
+| **分享链接** | `http://host:7788/?key=k_…&project=my-app` —— 参数读取后立即从 URL 移除 |
+
+把 token 粘进登录卡片。**project 栏是选填的**：留空则自动选第一个有权限的 project。
+一个 token 可以同时授权多个 project，顶栏那个切换器就是为这个准备的。
+
+| token 类型 | 能访问 |
+|---|---|
+| 项目级 token | 只有被显式授权的那些 project |
+| 管理员 token | 全部 project，外加 project 与 token 管理 |
+
+### 看板能做什么
 
 - **7 条泳道** —— 想法池 / 待办 / 进行中 / 已阻塞 / 待评审 / 已完成 / 已取消
 - **拖拽**改状态，带状态机前置校验；非法移动会被拒绝并说明原因
@@ -156,9 +183,32 @@ agent-kanban resume T-0007     # 接管：交接 + 完整时间线一并注入
 - **多 project 切换**、亮暗模式
 - **中英文双语** —— 看板与管理页（`/admin`）都能一键切换，共用同一个语言选择；首次打开按浏览器语言自动判定
 - **分享链接** —— `?key=…&project=…`，参数读取后立即从 URL 移除
-- **管理页**在 `/admin` —— 管 project、签发/吊销 token
 
 Web 和 CLI 走同一条数据通路。浏览器里能做的，agent 在 shell 里也能做。
+
+### `/admin` 管理页
+
+建 project、签发 token、改某个 token 能访问哪些 project、吊销 token。吊销在下一个请求就生效
+——没有会话要等过期。
+
+`/admin` 需要**管理员** token。项目级 token 会拿到 `403` 并说明原因，这是刻意区分的：
+*forbidden* 意思是「token 有效但角色不对，换一个」，*invalid* 意思是「去拿个新 token」——
+两种问题、两种修法。
+
+前端没构建过时，`serve` 会退回内置占位页，把 API 面板列出来而不是假装那是个看板：
+`GET /api/health`（免鉴权）、`POST /api/op`（需 `X-Kanban-Key` 或 `Authorization: Bearer`）、
+`GET /api/stream`、`/admin`。
+
+### 暴露出去之前
+
+`serve` 不终结 TLS，默认只绑 `127.0.0.1`。要绑 `0.0.0.0` 先放在 TLS 反向代理后面
+——**没有 TLS，token 就是明文传输的。** 参见[安全](#安全)一节。
+
+Docker 里看板和 API 共用一个端口：`KANBAN_PORT` 控制宿主端口，`KANBAN_BIND` 控制宿主机侧
+绑定地址（容器内永远听 `0.0.0.0`）。
+
+浏览器把 token 存在 `localStorage`，这样刷新不用重新登录。代价是 XSS 能读到它，
+所以本项目**严格禁止 `innerHTML`**。
 
 ## 跨机器共享一个看板
 
