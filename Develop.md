@@ -57,17 +57,23 @@ That is what makes local and remote mode behaviourally identical. It is a struct
 
 ### Frontend copy (i18n)
 
-`web/src/lib/i18n.tsx` is the **only** entry point for UI copy. Three hard rules:
+Both the board (`web/`) and the admin page (`/admin`) speak Chinese and English, and they **share one convention and one `localStorage` key** (`kanban.locale`) — a single origin should not carry two language states.
+
+`web/src/lib/i18n.tsx` is the board side's **only** entry point for UI copy. Three hard rules:
 
 1. **No Chinese string literals in components.** Get `const { t } = useI18n()` and call `t("board.newTask")`. When a pure function needs copy — `web/src/lib/status.ts` and friends — pass `t` itself down: `canMove(from, to, t)`, `relativeTime(ts, t)`.
-2. **`zh` is the single source of keys.** `en` is typed `Record<MessageKey, string>`, so a missing translation is a `tsc` error instead of a raw key surfacing in the English UI.
+2. **`zh` is the single source of keys.** `en` is typed `Record<MessageKey, string>`, so a missing translation is a `tsc` error instead of a raw key surfacing in the English UI. **Do not change it to `satisfies`** — that is not an exhaustiveness check.
 3. **Comments in Chinese, copy in the dictionary.** The only Chinese left in `web/src/**/*.tsx` belongs in comments — a new hit from `rg '[\x{4e00}-\x{9fff}]' web/src` is an untranslated string.
 
-`web/src/lib/status.ts` imports no React; it just receives a locale-bound `t`, so it stays testable outside the UI.
+`web/src/lib/status.ts` imports no React; it just receives a locale-bound `t`, so it stays testable outside the UI. `web/src/lib/api.ts` is a pure request layer too and translates its own error copy through `tActive()` (a module-level translator exported from `i18n.tsx`).
+
+The admin page (`src/server/admin-page.ts`) is a template string with no type-level exhaustiveness check: static copy is marked with `data-i18n` / `data-i18n-ph` and applied in one pass, dynamic copy goes through an inline `t()`.
 
 Copy that arrives as **data** from the backend (task titles, handoff bodies, `next_actions`) is not translated — that is content, not chrome. The one exception is session heartbeat: `sessionToJson` also ships `last_seen_at` (a ms timestamp), and the UI formats that itself rather than displaying the backend's Chinese `fresh` string.
 
-Adding a language: extend `LOCALES`, fill in `HTML_LANG` / `LOCALE_NAME`, and write a dictionary with the same keys — the type will tell you which ones you are missing.
+Adding a language: on the board, extend `LOCALES`, fill in `HTML_LANG` / `LOCALE_NAME`, and write a dictionary with the same keys (the type will tell you which ones you are missing); on the admin page, add one `DICT.<lang>`.
+
+> ⚠ When editing the inline JS inside `src/server/admin-page.ts`, audit backslashes and backticks as if they were escaped one extra time: the template literal consumes a layer first (`\w` → `w` silently breaks a regex; a backtick terminates the template string outright). Interpolation uses `split`/`join` rather than a regex precisely to avoid this.
 
 ## Data model
 

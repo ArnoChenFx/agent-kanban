@@ -72,7 +72,7 @@ When a session stops, it writes a handoff: what's done, what's next, what's bloc
 
 ### Option A — single binary (no runtime required)
 
-Download the file for your platform from [Releases](https://github.com/your-org/agent-kanban/releases). The binary embeds the Bun runtime, the database schema, and the entire web UI.
+Download the file for your platform from [Releases](https://github.com/ArnoChenFx/agent-kanban/releases). The binary embeds the Bun runtime, the database schema, and the entire web UI.
 
 ```bash
 chmod +x kanban-linux-x64        # macOS: kanban-darwin-arm64 · Windows: kanban-windows-x64.exe
@@ -153,7 +153,7 @@ You get the previous session's notes, the ordered list of every change made to t
 
 - **7 swimlanes** — Backlog, Todo, Doing, Blocked, In Review, Done, Cancelled
 - **Drag and drop** with state-machine validation; an illegal move is rejected with the reason
-- **Task drawer** — timeline, handoffs, plan version history
+- **Task drawer** — overview (description, checklist item by item with who ticked it, dependencies/parent), timeline, handoffs, plan version history
 - **Live updates** via SSE, with cursor resume after a reconnect
 - **Multi-project switcher**, light/dark mode
 - **Chinese / English UI** — one click in the header, on both the board and the admin page (`/admin`), sharing a single preference; first visit follows the browser language
@@ -344,6 +344,29 @@ kanban_session_end(session_id="s-4k9d2m")
 
 Every tool returns `{ ok, data, next_actions }`; failures return `{ ok: false, error }` with
 the same code and `name` the CLI would exit with, so an agent can branch on them the same way.
+
+### Option 3 — the agent skill
+
+```bash
+npx skills add ArnoChenFx/agent-kanban
+```
+
+A skill is the third option, and it is the one that teaches an agent the *workflow* rather than
+the interface. The protocol file says "run `kanban context` first"; the skill says what to do when
+`task claim` returns exit code 3, that `task progress` doubles as lease renewal, and that
+`doing → done` needs `--force` so you go through `review` instead. It ships the parts an agent
+keeps getting wrong as reference files: the full command reference, the MCP tool mapping, the
+local-versus-remote differences, and a troubleshooting table keyed by exit code.
+
+```bash
+npx skills add ArnoChenFx/agent-kanban            # install
+npx skills add ArnoChenFx/agent-kanban --list     # what would be installed
+```
+
+Skills live in this repo under `skills/`, so the install works on any project, not just this one.
+Install it into a project that already has a board, then pair it with whichever of the two options
+above your agent uses. The three are complementary: the skill teaches, the protocol file enforces,
+the MCP tools give it hands.
 
 ## When to reach for this
 

@@ -70,7 +70,7 @@ $ kanban rebuild --write
 
 ### 方式 A —— 单文件二进制（无需运行时）
 
-从 [Releases](https://github.com/your-org/agent-kanban/releases) 下载对应平台的文件。二进制内嵌了 Bun 运行时、数据库 schema 和整个 Web 界面。
+从 [Releases](https://github.com/ArnoChenFx/agent-kanban/releases) 下载对应平台的文件。二进制内嵌了 Bun 运行时、数据库 schema 和整个 Web 界面。
 
 ```bash
 chmod +x kanban-linux-x64        # macOS 用 kanban-darwin-arm64 · Windows 用 kanban-windows-x64.exe
@@ -151,7 +151,7 @@ kanban resume T-0007     # 接管：交接 + 完整时间线一并注入
 
 - **7 条泳道** —— 想法池 / 待办 / 进行中 / 已阻塞 / 待评审 / 已完成 / 已取消
 - **拖拽**改状态，带状态机前置校验；非法移动会被拒绝并说明原因
-- **任务详情抽屉** —— 时间线、交接记录、计划版本历史
+- **任务详情抽屉** —— 概览（描述、检查项逐项 + 谁勾的、依赖/父任务）、时间线、交接记录、计划版本历史
 - **实时刷新**（SSE），断线重连后按游标续传
 - **多 project 切换**、亮暗模式
 - **中英文双语** —— 看板与管理页（`/admin`）都能一键切换，共用同一个语言选择；首次打开按浏览器语言自动判定
@@ -340,6 +340,25 @@ kanban_session_end(session_id="s-4k9d2m")
 
 每个工具返回 `{ ok, data, next_actions }`；失败时返回 `{ ok: false, error }`，
 其中的 `code` 与 `name` 与 CLI 的退出码一一对应，agent 可以用同一套逻辑分支。
+
+### 方式三：agent skill
+
+```bash
+npx skills add ArnoChenFx/agent-kanban
+```
+
+skill 是第三种方式，也是唯一一种教 agent **工作流**而不是接口的方式。协议文件说的是"开工先跑
+`kanban context`"；skill 说的是拿到退出码 3 时该换卡而不是加 `--force`、`task progress` 顺带续租、
+`doing → done` 会被守卫拦下所以要绕 `review`。agent 容易踩的那些点被拆成了几个 reference：
+完整命令参考、MCP 工具对照、本地与远程的差异，以及一张按退出码索引的排障表。
+
+```bash
+npx skills add ArnoChenFx/agent-kanban            # 安装
+npx skills add ArnoChenFx/agent-kanban --list     # 看会装些什么
+```
+
+skill 实体放在本仓库的 `skills/` 下，所以任何项目都能装，不只是本仓库。装到已经建好看板的项目里，
+再和上面两种方式之一搭配使用——三者互补：skill 负责讲清楚，协议文件负责强制，MCP 工具负责动手。
 
 ## 什么时候该用它
 
