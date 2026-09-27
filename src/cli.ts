@@ -99,8 +99,7 @@ Crash recovery:
   agent-kanban context                # a new session starts here: read the situation first
   agent-kanban resume T-0007          # take over that card, handoff and timeline included
 
-More: agent-kanban task --help · agent-kanban config --help · agent-kanban admin --help
-Docs: docs/plan/001-总体设计.md · docs/plan/002-接口契约.md`;
+More: agent-kanban task --help · agent-kanban config --help · agent-kanban admin --help`;
 
 /** `agent-kanban mcp` 的用法（它是给 harness 看的，不是给人天天敲的，所以与主帮助分开） */
 const MCP_USAGE = `Usage: agent-kanban mcp [--server <url>] [--project <key>] [--key <k_xxx>]
