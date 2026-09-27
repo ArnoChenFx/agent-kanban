@@ -112,6 +112,18 @@ const HARNESS_SESSION_ENV: readonly HarnessSessionEnv[] = [
   // 看板标签上，而 `deepseek` 在 agent 生态里更常指模型/provider（pi 的 auth.json 里
   // deepseek 就是一个 provider 键），用全名可以避免被读成“用的哪个模型”。
   { harness: "deepseek-harness", envVar: "DSH_SESSION_ID", kind: "id" },
+  // Qoder（QoderCN 桌面端 / @qoder-ai/qoder-cn-agent-sdk）。两个名字是**同一个配置**在
+  // 国内版与国际版的两种前缀：SDK 源码里 `ENV_QODER_SESSION_ID` 常量按产品翻成
+  // `QODER_SESSION_ID` 或 `QODERCN_SESSION_ID`（`km = Gs ? "QODERCN_" : "QODER_"`）。
+  // ⚠ 与表里其它条目性质不同：**截至 2026-09-27 Qoder 尚不注入这两个变量**（本机 shell
+  // 的真实 env、app.asar 与 worker runtime 全文扫描都没有）。它把 session id 只给到三处：
+  //   1. skill/command/plugin 内容里的 `${QODER_SESSION_ID}` 模板替换（运行时替换成真 id）
+  //   2. hook 子进程的 stdin JSON（`createCoreBaseInput`，字段名 `session_id`，CC 兼容格式）
+  //   3. 这两个 env 名本身——SDK 的 loadCliConfig 会读它们作为 session 配置覆盖
+  // 进表的意义：将来一旦注入（或用户手动设了）立即生效，且统一前缀 `qoder`
+  // （自动发现也能收编这两个名字，但 QODERCN_ 的前缀会变成 `qodercn`）。
+  { harness: "qoder", envVar: "QODER_SESSION_ID", kind: "id" },
+  { harness: "qoder", envVar: "QODERCN_SESSION_ID", kind: "id" },
 ];
 
 /**
@@ -462,6 +474,22 @@ function buildPaths(dir: string, dbPath: string): KanbanPaths {
 // | grok          | `scoop/apps/grok-cli/grok.exe`               | `GROK_SESSION_ID` |
 // | codex         | `scoop/apps/codex/bin/codex.exe` (0.157.1)    | `CODEX_SESSION_ID` ✅（另有 `CODEX_THREAD_ID`，仅新版） |
 // | DeepSeek Harness | 本地 checkout（npm/TS，非编译二进制）        | `DSH_SESSION_ID` ✅（读源码；**仅 agent 调用**注入） |
+// | Qoder            | 本地 checkout（obf.mjs，可读字符串）         | `QODER_SESSION_ID` / `QODERCN_SESSION_ID` ⚠（名字真实存在，读源码核实；
+// |                  |                                              |   但**截至 2026-09-27 不注入**——见表上方注释的三条通道） |
+//
+// Qoder 核实过程补记（2026-09-27，QoderCN 1.0.72 / SDK 1.0.50，为什么敢断言"不注入"）：
+//   - 最硬的证据是**本机真实 env**：Qoder 的 Bash 工具子进程里只有
+//     `QODER_*/QODERCN_*` 的产品与配置类变量（SESSION_TYPE=app 是常量类型、无区分度），
+//     没有任何会话 id。子进程 env 由 worker 继承而来，worker 里没有就是没有。
+//   - app.asar 全文搜 `QODER_SESSION_ID|QODERCN_SESSION_ID` 零命中——桌面端没在
+//     任何地方拼这个名字。
+//   - obf.mjs 里 `ENV_QODER_SESSION_ID`/`ENV_QODER_SESSION_NAME` 是**导出的配置常量**
+//     （loadCliConfig 用 `${km}SESSION_ID` 读 env 覆盖 session 配置），是输入不是注入。
+//   - 顺带查过并排除的旁路：shell-snapshots（纯 PATH 快照）、`~/.qoder-cn/session-env/`
+//     （每会话目录里只有空的 hook 快照脚本）、MCP stdio 配置的 env 展开
+//     （`expandMcpEnvVars` 只对 process.env 展开，拿不到 session id）。
+//   - 若将来想接上：hook stdin JSON 里有 `session_id`（CC 兼容），skill 文本可用
+//     `${QODER_SESSION_ID}` 替换——这两条是 Qoder 官方留给外部进程拿会话 id 的口子。
 // | cursor-agent  | `%LOCALAPPDATA%/cursor-agent`                 | ❌ 只有 `CURSOR_AGENT_SOCKET` 这类进程级变量 |
 //
 // ⚠ **扫描方法本身也有坑**：`rg '\bCODEX_[A-Z_]+\b'` 这种带 `\b` 的正则会**漏**。

@@ -128,6 +128,23 @@ describe("其它 harness 的身份变量", () => {
     expect(resolveSessionKey({ DSH_SESSION_ID: KEY_B })).toBe(`deepseek-harness-${KEY_B}`);
   });
 
+  test("qoder：QODER_SESSION_ID / QODERCN_SESSION_ID（同一配置的两种产品前缀）", () => {
+    // 名字核实自 SDK 源码（ENV_QODER_SESSION_ID 常量按产品翻成 QODER_/QODERCN_）。
+    // 截至 2026-09-27 Qoder 尚不注入，进表是让"一旦注入/手动设置"立即生效且前缀统一。
+    expect(resolveSessionKey({ QODER_SESSION_ID: KEY_A })).toBe(`qoder-${KEY_A}`);
+    expect(resolveSessionKey({ QODERCN_SESSION_ID: KEY_B })).toBe(`qoder-${KEY_B}`);
+  });
+
+  test("qoder：两个前缀同时出现时按表内顺序，结果必须确定", () => {
+    const key = resolveSessionKey({ QODER_SESSION_ID: KEY_A, QODERCN_SESSION_ID: KEY_B });
+    expect(key).toBe(`qoder-${KEY_A}`);
+  });
+
+  test("qoder：SESSION_TYPE 这类非 id 变量不算身份", () => {
+    // Qoder 真实注入的只有 QODERCN_SESSION_TYPE=app（常量类型，所有会话都一样）
+    expect(resolveSessionKey({ QODERCN_SESSION_TYPE: "app" })).toBeNull();
+  });
+
   test("codex：thread 与 session 同时存在时取 session（更粗的粒度才对）", () => {
     // 规则 4：一个 codex agent 内部的并行 thread 是**同一个 agent**，应该共用一个看板身份。
     // 按 thread 分片会把它们变成 N 个"不同 agent"互相抢同一批卡。
@@ -275,6 +292,8 @@ describe("身份文件的读写与隔离", () => {
       GROK_SESSION_ID: "",
       CODEX_SESSION_ID: "",
       DSH_SESSION_ID: "",
+      QODER_SESSION_ID: "",
+      QODERCN_SESSION_ID: "",
       [SESSION_KEY_ENV]: "",
     };
   }
@@ -462,6 +481,8 @@ describe("同目录两个 agent 的真实行为（spawn CLI）", () => {
         GROK_SESSION_ID: "",
         CODEX_SESSION_ID: "",
         DSH_SESSION_ID: "",
+        QODER_SESSION_ID: "",
+        QODERCN_SESSION_ID: "",
         [SESSION_KEY_ENV]: "",
         // 父进程（跑测试的这台机器）自己可能就在某个 harness 里，别让它泄进来
         KANBAN_SESSION: "",
