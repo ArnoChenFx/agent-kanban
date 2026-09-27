@@ -22,7 +22,9 @@ import {
 import type { Op } from "../core/ops.ts";
 import { resolveSessionKey } from "../core/paths.ts";
 import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals, requirePositional } from "./args.ts";
-import { closeCtx, currentSessionId, openCtx, resolveSessionId } from "./context.ts";
+import { closeCtx, currentSessionId, openCtx, resolveSessionId,
+  ctxOptionsFromArgs,
+} from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
 const CONTEXT_USAGE = `Usage: agent-kanban context [options]
@@ -86,7 +88,7 @@ async function contextCommand(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 0, "Usage: agent-kanban context [--no-consume]");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     if (getBool(args, "help")) {
@@ -306,7 +308,7 @@ async function resumeCommand(argv: string[]): Promise<ExitCodeValue> {
     return ExitCode.OK;
   }
   rejectExtraPositionals(args, 1, "Usage: agent-kanban resume <task-id> [--force]");
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const taskId = requirePositional(args, 0, "task id", RESUME_USAGE);
 
   try {
@@ -425,7 +427,7 @@ async function doctorCommand(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 0, "Usage: agent-kanban doctor [--deep] [--fix]");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     if (getBool(args, "help")) {
@@ -490,14 +492,4 @@ async function doctorCommand(argv: string[]): Promise<ExitCodeValue> {
   }
 }
 
-function ctxOptions(args: { options: Record<string, string | boolean> }, json: boolean) {
-  return {
-    json,
-    dbPath: getString(args as never, "db"),
-    sessionId: getString(args as never, "session"),
-    server: getString(args as never, "server"),
-    project: getString(args as never, "project"),
-    key: getString(args as never, "key"),
-  };
-}
 

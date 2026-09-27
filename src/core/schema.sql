@@ -132,8 +132,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at          INTEGER NOT NULL,
   started_at          INTEGER,
   finished_at         INTEGER,
-  estimate_ms         INTEGER,
-  spent_ms            INTEGER
+  estimate_ms         INTEGER
 );
 -- 看板主查询路径：按 project + 状态过滤 + 优先级排序
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_key, id);

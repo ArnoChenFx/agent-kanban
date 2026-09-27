@@ -101,7 +101,6 @@ interface TaskProjection {
   started_at: number | null;
   finished_at: number | null;
   estimate_ms: number | null;
-  spent_ms: number | null;
 }
 
 /** 重建上下文：内存中的全部投影 */
@@ -236,7 +235,6 @@ function applyEvent(p: Projection, event: KanbanEvent): void {
         started_at: null,
         finished_at: null,
         estimate_ms: nullableNum(d.estimate_ms),
-        spent_ms: null,
       });
       return;
     }
@@ -686,8 +684,8 @@ function writeProjection(db: Database, projectKey: string, proj: Projection): vo
     `INSERT INTO tasks
        (seq, id, project_key, title, body, status, priority, assignee_session_id,
         lease_expires_at, progress, checklist, labels, parent_id, plan_id, block_reason,
-        created_by, created_at, updated_at, started_at, finished_at, estimate_ms, spent_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        created_by, created_at, updated_at, started_at, finished_at, estimate_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   let seq = 0;
   for (const t of proj.tasks.values()) {
@@ -714,7 +712,6 @@ function writeProjection(db: Database, projectKey: string, proj: Projection): vo
       t.started_at,
       t.finished_at,
       t.estimate_ms,
-      t.spent_ms,
     );
   }
 

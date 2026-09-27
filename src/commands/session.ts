@@ -7,6 +7,7 @@
  */
 
 import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
+import { padEndWidth, style } from "../core/format.ts";
 import { resolveSessionKey } from "../core/paths.ts";
 import { assertKnownOptions, getBool, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import {
@@ -14,7 +15,7 @@ import {
   openCtx,
   resolveSessionId,
   writeSessionFile,
-  type CtxOptions,
+  ctxOptionsFromArgs,
 } from "./context.ts";
 import { createOutput } from "./output.ts";
 
@@ -104,7 +105,7 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
     );
   }
 
-  const ctx = openCtx(ctxOpts(args));
+  const ctx = openCtx(ctxOptionsFromArgs(args, getBool(args, "json")));
   try {
     const { data } = await ctx.backend.executeWithHints({
       kind: "session.start",
@@ -136,7 +137,7 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
     // 反映实际结果（ops.ts 里曾硬编码 false —— 本地模式下明明写了却说没写）
     session.written_session_file = wroteFile;
 
-    out.line(`${styleGreen("✓")} Session registered`);
+    out.line(`${style.green("✓")} Session registered`);
     out.line(`  session_id : ${session.id}`);
     out.line(`  agent      : ${session.agent_name}${session.harness ? ` (${session.harness})` : ""}`);
     out.line(`  project    : ${ctx.project.key}`);
@@ -170,7 +171,7 @@ async function sessionList(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 0, "Usage: agent-kanban session list [--all]");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOpts(args));
+  const ctx = openCtx(ctxOptionsFromArgs(args, getBool(args, "json")));
 
   try {
     const { data } = await ctx.backend.executeWithHints({
@@ -199,7 +200,7 @@ async function sessionList(argv: string[]): Promise<ExitCodeValue> {
       out.line(
         "  ".padEnd(4) +
           String(v.id).padEnd(12) +
-          padEnd(String(v.agent_name), 13) +
+          padEndWidth(String(v.agent_name), 13) +
           status.padEnd(12) +
           String(v.fresh ?? "?").padEnd(10) +
           (tasks.length > 0 ? tasks.join(", ") : "-"),
@@ -223,7 +224,7 @@ async function sessionHeartbeat(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", ...COMMON_STRINGS]);
   rejectExtraPositionals(args, 0, "Usage: agent-kanban session heartbeat");
   const out = createOutput(getBool(args, "json"));
-  const ctx = openCtx(ctxOpts(args));
+  const ctx = openCtx(ctxOptionsFromArgs(args, getBool(args, "json")));
 
   try {
     // 心跳需要明确的 session 身份
@@ -233,7 +234,7 @@ async function sessionHeartbeat(argv: string[]): Promise<ExitCodeValue> {
       params: {},
     });
     const result = data as { renewed_tasks: string[] };
-    out.line(`${styleGreen("✓")} Session heartbeat refreshed (leases renewed: ${result.renewed_tasks.length})`);
+    out.line(`${style.green("✓")} Session heartbeat refreshed (leases renewed: ${result.renewed_tasks.length})`);
     out.data(data);
     return ExitCode.OK;
   } finally {
@@ -251,7 +252,7 @@ async function sessionEnd(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", ...COMMON_STRINGS, "summary"]);
   rejectExtraPositionals(args, 0, 'Usage: agent-kanban session end [--summary "..."]');
   const out = createOutput(getBool(args, "json"));
-  const ctx = openCtx(ctxOpts(args));
+  const ctx = openCtx(ctxOptionsFromArgs(args, getBool(args, "json")));
 
   try {
     const { data } = await ctx.backend.executeWithHints({
@@ -259,7 +260,7 @@ async function sessionEnd(argv: string[]): Promise<ExitCodeValue> {
       params: { summary: getString(args, "summary") },
     });
     const result = data as { session_id: string; released: string[] };
-    out.line(`${styleGreen("✓")} Session ${result.session_id} closed`);
+    out.line(`${style.green("✓")} Session ${result.session_id} closed`);
     if (result.released.length > 0) {
       out.line(`  released tasks (progress preserved): ${result.released.join(", ")}`);
     }
@@ -268,24 +269,6 @@ async function sessionEnd(argv: string[]): Promise<ExitCodeValue> {
   } finally {
     closeCtx(ctx);
   }
-}
-
-// ---- 本地小工具 ----
-
-/** 绿色勾选标记（避免为一个字符引入整个 format 模块） */
-function styleGreen(text: string): string {
-  return process.env.NO_COLOR ? text : `\x1b[32m${text}\x1b[0m`;
-}
-
-/** 简单左对齐补空格（会话列表内容都是 ASCII/中文混排，够用） */
-function padEnd(text: string, width: number): string {
-  let w = 0;
-  let out = "";
-  for (const ch of text) {
-    w += /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch) ? 2 : 1;
-    out += ch;
-  }
-  return out + " ".repeat(Math.max(0, width - w));
 }
 
 function sessionStatusLabel(status: string): string {
@@ -303,13 +286,3 @@ function sessionStatusLabel(status: string): string {
   }
 }
 
-function ctxOpts(args: { options: Record<string, string | boolean> }): CtxOptions {
-  return {
-    json: getBool(args as never, "json"),
-    dbPath: getString(args as never, "db"),
-    sessionId: getString(args as never, "session"),
-    server: getString(args as never, "server"),
-    project: getString(args as never, "project"),
-    key: getString(args as never, "key"),
-  };
-}

@@ -19,6 +19,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { slugifyProjectKey } from "./ids.ts";
 import { KanbanError } from "./errors.ts";
 import type { KanbanConfig } from "./types.ts";
 
@@ -35,7 +36,7 @@ import type { KanbanConfig } from "./types.ts";
 import SCHEMA_FILE from "./schema.sql" with { type: "file" };
 
 /** 当前 schema 版本；新增表/列/索引时 +1 并在 MIGRATIONS 里补一条 */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** 默认配置：租约 15 分钟、失联宽限 10 分钟 */
 export const DEFAULT_TTL_MS = 15 * 60 * 1000;
@@ -597,6 +598,27 @@ const MIGRATIONS: Record<number, { up: (db: Db) => void }> = {
       raw.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_key_hash ON tokens(key_hash)");
     },
   },
+
+  /**
+   * v6 → v7：删掉 tasks.spent_ms 死列。
+   *
+   * 这列从第一天起就没有任何写入路径（task_done 的耗时记在事件 payload 的
+   * spent_ms 字段里，不是这列）——留着只会让读代码的人以为"耗时落在库里"。
+   * 新库（schema.sql）已经不建它，这里只处理存量库。
+   */
+  6: {
+    up(db: Db) {
+      const raw = db.raw;
+      // 幂等：列已不存在（新库或重跑）就不动
+      const cols = raw
+        .query<{ name: string }, []>("PRAGMA table_info(tasks)")
+        .all()
+        .map((c) => c.name);
+      if (!cols.includes("spent_ms")) return;
+      // 该列没有索引/约束引用，DROP COLUMN 安全
+      raw.exec("ALTER TABLE tasks DROP COLUMN spent_ms");
+    },
+  },
 };
 
 /**
@@ -643,18 +665,19 @@ function rebuildTasksTableForProject(raw: import("bun:sqlite").Database, project
       updated_at          INTEGER NOT NULL,
       started_at          INTEGER,
       finished_at         INTEGER,
-      estimate_ms         INTEGER,
-      spent_ms            INTEGER
+      estimate_ms         INTEGER
     )`);
 
     // 拷贝存量行：project_key 直接填最终的默认 key
+    // spent_ms 从未有任何写入路径（task_done 事件里记的是 payload，不是这列），
+    // v7 迁移把它删掉；换表路径（老库升级）同样不再带上它
     raw.exec(`INSERT INTO tasks_v2
       (seq, id, project_key, title, body, status, priority, assignee_session_id,
        lease_expires_at, progress, checklist, labels, parent_id, plan_id${hasBlockReason ? ", block_reason" : ""},
-       created_by, created_at, updated_at, started_at, finished_at, estimate_ms, spent_ms)
+       created_by, created_at, updated_at, started_at, finished_at, estimate_ms)
       SELECT seq, id, '${defaultKeySql(projectKey)}', title, body, status, priority, assignee_session_id,
              lease_expires_at, progress, checklist, labels, parent_id, plan_id${hasBlockReason ? ", block_reason" : ""},
-             created_by, created_at, updated_at, started_at, finished_at, estimate_ms, spent_ms
+             created_by, created_at, updated_at, started_at, finished_at, estimate_ms
         FROM tasks`);
 
     raw.exec("DROP TABLE tasks");
@@ -692,19 +715,6 @@ function addColumnIfMissing(
     // 注意：SQLite 不允许 ADD COLUMN NOT NULL 无默认值，所以列可空，由回填步骤补齐
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
-}
-
-/**
- * 从任意字符串派生合法的 project key（小写字母/数字/连字符）。
- * 例："agent-kanban" → "agent-kanban"；"我的项目" → "my-project"（非 ASCII 被丢弃）
- */
-function slugifyProjectKey(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-  return slug.length > 0 ? slug : "default";
 }
 
 /** 写入 meta 键值 */

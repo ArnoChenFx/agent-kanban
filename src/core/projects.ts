@@ -11,6 +11,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { KanbanError } from "./errors.ts";
+import { slugifyProjectKey } from "./ids.ts";
 import { getMeta } from "./db.ts";
 import { withTx } from "./tx.ts";
 
@@ -24,24 +25,6 @@ export interface Project {
   createdAt: number;
   defaultTtlMs: number | null;
   graceMs: number | null;
-}
-
-/**
- * 从任意字符串派生合法的 project key。
- * 规则：转小写 → 非字母数字替换为连字符 → 去除首尾连字符 → 最长 64 字符 → 空则 "default"。
- *
- * 例：
- *   "agent-kanban"  → "agent-kanban"
- *   "Agent Kanban!" → "agent-kanban"
- *   "我的项目"       → "default"（非 ASCII 全部被替换，剩下空串）
- */
-export function slugifyProjectKey(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-  return slug.length > 0 ? slug : "default";
 }
 
 /** 校验 project key 格式，给出可操作的报错 */

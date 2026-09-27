@@ -12,8 +12,10 @@
 import { ExitCode, type ExitCodeValue } from "../core/errors.ts";
 import { style } from "../core/format.ts";
 import type { FieldDrift } from "../core/rebuild.ts";
-import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
-import { closeCtx, openCtx } from "./context.ts";
+import { assertKnownOptions, getBool, getInt, parseArgs, rejectExtraPositionals } from "./args.ts";
+import { closeCtx, openCtx,
+  ctxOptionsFromArgs,
+} from "./context.ts";
 import { createOutput } from "./output.ts";
 
 const USAGE = `Usage:
@@ -41,7 +43,7 @@ export async function cmdRebuild(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 0, "Usage: agent-kanban rebuild [--write] [--force] [--from-seq N]");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     if (getBool(args, "help")) {
@@ -149,20 +151,3 @@ function formatValue(v: unknown): string {
   return JSON.stringify(v);
 }
 
-function ctxOptions(args: { options: Record<string, string | boolean> }, json: boolean): {
-  json: boolean;
-  dbPath: string | undefined;
-  sessionId: string | undefined;
-  server: string | undefined;
-  project: string | undefined;
-  key: string | undefined;
-} {
-  return {
-    json,
-    dbPath: getString(args as never, "db"),
-    sessionId: getString(args as never, "session"),
-    server: getString(args as never, "server"),
-    project: getString(args as never, "project"),
-    key: getString(args as never, "key"),
-  };
-}

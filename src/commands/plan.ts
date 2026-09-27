@@ -17,7 +17,9 @@ import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
 import { padEndWidth, relativeTime, style, truncate } from "../core/format.ts";
 import type { Op } from "../core/ops.ts";
 import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals, requirePositional } from "./args.ts";
-import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
+import { closeCtx, openCtx, resolveSessionId,
+  ctxOptionsFromArgs,
+} from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
 const USAGE = `Usage:
@@ -85,7 +87,7 @@ async function planSave(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 2, 'Usage: agent-kanban plan save --title "title" --body-file <path>');
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     if (getBool(args, "help")) {
@@ -171,7 +173,7 @@ async function planShow(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 1, "Usage: agent-kanban plan show <plan id>");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const planId = requirePositional(args, 0, "plan id", "Usage: agent-kanban plan show PL-T-0007-01");
 
   try {
@@ -216,7 +218,7 @@ async function planList(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 0, "Usage: agent-kanban plan list [--task T-0007] [--all]");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     const { data } = await ctx.backend.executeWithHints({
@@ -271,7 +273,7 @@ async function planHistoryCmd(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 1, "Usage: agent-kanban plan history <plan id>");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const planId = requirePositional(args, 0, "plan id", "Usage: agent-kanban plan history PL-T-0007-01");
 
   try {
@@ -325,7 +327,7 @@ async function planAt(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 0, "Usage: agent-kanban plan at --task T-0007 --ts <timestamp>");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     const ts = getInt(args, "ts");
@@ -378,7 +380,7 @@ async function planAttach(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 1, "Usage: agent-kanban plan attach <plan id> --task T-0007");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const planId = requirePositional(args, 0, "plan id", "Usage: agent-kanban plan attach PL-T-0007-01 --task T-0007");
   const taskId = getString(args, "task");
 
@@ -404,20 +406,3 @@ async function planAttach(argv: string[]): Promise<ExitCodeValue> {
   }
 }
 
-function ctxOptions(args: { options: Record<string, string | boolean> }, json: boolean): {
-  json: boolean;
-  dbPath: string | undefined;
-  sessionId: string | undefined;
-  server: string | undefined;
-  project: string | undefined;
-  key: string | undefined;
-} {
-  return {
-    json,
-    dbPath: getString(args as never, "db"),
-    sessionId: getString(args as never, "session"),
-    server: getString(args as never, "server"),
-    project: getString(args as never, "project"),
-    key: getString(args as never, "key"),
-  };
-}

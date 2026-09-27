@@ -17,7 +17,7 @@ import {
   type KanbanConfigFile,
   type KanbanMode,
 } from "../core/config.ts";
-import { slugifyProjectKey } from "../core/projects.ts";
+import { slugifyProjectKey } from "../core/ids.ts";
 import { maskToken as maskSecret } from "../core/tokens.ts";
 import { findKanbanDir, findKanbanDirLoose } from "../core/paths.ts";
 import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
@@ -101,11 +101,11 @@ function maskToken(token: string | undefined): string {
 /** config show：显示生效配置与来源 */
 async function configShow(argv: string[]): Promise<ExitCodeValue> {
   const args = parseArgs(argv, {
-    booleans: ["json", "help", "reveal", "raw"],
+    booleans: ["json", "help", "reveal"],
     strings: ["db", "server", "project", "key"],
     short: { j: "json", h: "help" },
   });
-  assertKnownOptions(args, ["json", "help", "reveal", "raw", "db", "server", "project", "key"]);
+  assertKnownOptions(args, ["json", "help", "reveal", "db", "server", "project", "key"]);
   rejectExtraPositionals(args, 0, "Usage: agent-kanban config show [--reveal]");
   const json = getBool(args, "json");
   const out = createOutput(json);

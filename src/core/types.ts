@@ -143,7 +143,6 @@ export interface Task {
   startedAt: number | null;
   finishedAt: number | null;
   estimateMs: number | null;
-  spentMs: number | null;
   /** 阻塞原因（block 时写入 note 旁的结构化字段，从事件投影得到） */
   blockReason?: string | null;
 }

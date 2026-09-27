@@ -13,7 +13,9 @@ import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
 import { padEndWidth, style } from "../core/format.ts";
 import type { Op } from "../core/ops.ts";
 import { assertKnownOptions, getBool, getList, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
-import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
+import { closeCtx, openCtx, resolveSessionId,
+  ctxOptionsFromArgs,
+} from "./context.ts";
 import { createOutput } from "./output.ts";
 
 const USAGE = `Usage:
@@ -57,7 +59,7 @@ export async function cmdHandoff(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 3, 'Usage: agent-kanban handoff --task T-0007 --summary "..." --next "..."');
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     // 任务号：--task 优先，位置参数作为写法宽容
@@ -117,7 +119,7 @@ async function handoffQuery(sub: string, argv: string[]): Promise<ExitCodeValue>
   rejectExtraPositionals(args, 0, "Usage: agent-kanban handoff list|pending [--task T-0007]");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     // 复用 context.get 的交接数据，避免重复实现查询
@@ -164,13 +166,3 @@ async function handoffQuery(sub: string, argv: string[]): Promise<ExitCodeValue>
   }
 }
 
-function ctxOptions(args: { options: Record<string, string | boolean> }, json: boolean) {
-  return {
-    json,
-    dbPath: getString(args as never, "db"),
-    sessionId: getString(args as never, "session"),
-    server: getString(args as never, "server"),
-    project: getString(args as never, "project"),
-    key: getString(args as never, "key"),
-  };
-}

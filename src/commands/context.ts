@@ -40,6 +40,8 @@ import {
   type KanbanConfigFile,
 } from "../core/config.ts";
 import type { KanbanConfig } from "../core/types.ts";
+import { getString } from "./args.ts";
+
 
 /** 命令上下文 */
 export interface Ctx {
@@ -482,4 +484,23 @@ export function closeCtx(ctx: Ctx): void {
       // 已关闭则忽略
     }
   }
+}
+
+/**
+ * 从解析好的 CLI 参数构造 CtxOptions —— 六个命令文件曾经的本地复制品，
+ * 收在这里之后"全局选项怎么进 ctx"只有一个出处。
+ * 入参用结构类型而不是 ParsedArgs，避免 commands 层的循环依赖表象。
+ */
+export function ctxOptionsFromArgs(
+  args: { options: Record<string, string | boolean> },
+  json = false,
+): CtxOptions {
+  return {
+    json,
+    dbPath: getString(args as never, "db"),
+    sessionId: getString(args as never, "session"),
+    server: getString(args as never, "server"),
+    project: getString(args as never, "project"),
+    key: getString(args as never, "key"),
+  };
 }

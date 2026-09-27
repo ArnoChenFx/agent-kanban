@@ -31,7 +31,8 @@ import { CONFIG_FILE, writeConfigFile } from "../src/core/config.ts";
 import { getMeta, migrate, openDb, setInitialConfig, setMeta } from "../src/core/db.ts";
 import { consumeHandoff, writeHandoff } from "../src/core/handoff.ts";
 import { savePlan } from "../src/core/plans.ts";
-import { createProject, slugifyProjectKey } from "../src/core/projects.ts";
+import { createProject } from "../src/core/projects.ts";
+import { slugifyProjectKey } from "../src/core/ids.ts";
 import { createSession, closeSession, touchSession } from "../src/core/sessions.ts";
 import {
   addDependency,

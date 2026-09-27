@@ -39,7 +39,9 @@ import {
   rejectExtraPositionals,
   requirePositional,
 } from "./args.ts";
-import { closeCtx, openCtx, resolveSessionId, type Ctx } from "./context.ts";
+import { closeCtx, openCtx, resolveSessionId, type Ctx,
+  ctxOptionsFromArgs,
+} from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
 export async function cmdTask(argv: string[]): Promise<ExitCodeValue> {
@@ -142,7 +144,7 @@ async function taskList(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 0, "Usage: agent-kanban task list [--status doing] [--ready]");
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     const statusArg = getString(args, "status");
@@ -235,7 +237,7 @@ async function taskShow(argv: string[]): Promise<ExitCodeValue> {
     out.line("Usage: agent-kanban task show <task-id> [--timeline] [--body] [--tail N]");
     return ExitCode.OK;
   }
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   rejectExtraPositionals(args, 1, "Usage: agent-kanban task show T-0007 [--timeline]");
   const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task show T-0007 [--timeline]");
 
@@ -349,7 +351,7 @@ async function taskAdd(argv: string[]): Promise<ExitCodeValue> {
   rejectExtraPositionals(args, 1, 'Usage: agent-kanban task add "title" -d "description"');
   const json = getBool(args, "json");
   const out = createOutput(json);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
 
   try {
     const title = getString(args, "title") ?? args.positionals[0];
@@ -409,7 +411,7 @@ async function taskClaim(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   rejectExtraPositionals(args, 1, "Usage: agent-kanban task claim T-0007 [--ttl 2h]");
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task claim T-0007 [--ttl 2h]");
 
   try {
@@ -448,7 +450,7 @@ async function taskProgress(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   rejectExtraPositionals(args, 2, 'Usage: agent-kanban task progress T-0007 --pct 60 --note "..."');
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task progress T-0007 --pct 60 --note "..."');
 
   try {
@@ -498,7 +500,7 @@ async function taskNote(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   rejectExtraPositionals(args, 2, 'Usage: agent-kanban task note T-0007 "note text"');
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task note T-0007 "note text"');
   const text = args.positionals[1];
   if (!text) throw KanbanError.usage("missing note text", 'Usage: agent-kanban task note T-0007 "note text"');
@@ -531,7 +533,7 @@ async function taskTransition(
   const json = getBool(args, "json");
   const out = createOutput(json);
   rejectExtraPositionals(args, 2, opts.usage);
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const id = requirePositional(args, 0, "task id", opts.usage);
 
   try {
@@ -598,7 +600,7 @@ async function taskRelease(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   rejectExtraPositionals(args, 1, 'Usage: agent-kanban task release T-0007 [--reason "..."]');
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task release T-0007 [--reason "..."]');
 
   try {
@@ -627,7 +629,7 @@ async function taskEdit(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   rejectExtraPositionals(args, 1, 'Usage: agent-kanban task edit T-0007 --title "new title"');
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task edit T-0007 --title "new title"');
 
   try {
@@ -673,7 +675,7 @@ async function taskDep(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   rejectExtraPositionals(args, 2, "Usage: agent-kanban task dep add T-0007 T-0003");
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task dep add T-0007 T-0003");
 
   try {
@@ -721,7 +723,7 @@ async function taskRemove(argv: string[]): Promise<ExitCodeValue> {
   const json = getBool(args, "json");
   const out = createOutput(json);
   rejectExtraPositionals(args, 1, "Usage: agent-kanban task rm T-0007 [--force]");
-  const ctx = openCtx(ctxOptions(args, json));
+  const ctx = openCtx(ctxOptionsFromArgs(args, json));
   const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task rm T-0007 [--force]");
 
   try {
@@ -740,18 +742,6 @@ async function taskRemove(argv: string[]): Promise<ExitCodeValue> {
 // =============================================================================
 // 共享工具
 // =============================================================================
-
-/** 从解析好的参数构造 CtxOptions（把 CLI 层的 --server/--project/--key 传下去） */
-function ctxOptions(args: { options: Record<string, string | boolean> }, json: boolean) {
-  return {
-    json,
-    dbPath: getString(args as never, "db"),
-    sessionId: getString(args as never, "session"),
-    server: getString(args as never, "server"),
-    project: getString(args as never, "project"),
-    key: getString(args as never, "key"),
-  };
-}
 
 /** 需要会话的命令：校验会话标识存在（本地读文件/环境变量，远程靠 --session 头） */
 function requireSession(ctx: Ctx, explicit?: string): string {

@@ -203,13 +203,13 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * 解析时长字符串 → 毫秒。支持 "2h"、"30m"、"90s"、"1d"、"1h30m"。
+ * 解析时长字符串 → 毫秒。支持 "2h"、"30m"、"90s"、"1d"、"1h30m"、"4w"。
  * 纯数字按分钟处理（agent 常写 "30" 意图是 30 分钟）。
  */
 export function parseDuration(input: string): number | null {
   const text = input.trim().toLowerCase();
   if (/^\d+$/.test(text)) return Number(text) * 60_000;
-  const re = /(\d+)\s*([dhms])/g;
+  const re = /(\d+)\s*([dhmsw])/g;
   let total = 0;
   let matched = false;
   let m: RegExpExecArray | null;
@@ -217,6 +217,9 @@ export function parseDuration(input: string): number | null {
     matched = true;
     const value = Number(m[1]);
     switch (m[2]) {
+      case "w":
+        total += value * 7 * 86_400_000;
+        break;
       case "d":
         total += value * 86_400_000;
         break;

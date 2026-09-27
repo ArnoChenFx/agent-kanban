@@ -40,7 +40,6 @@ export interface TaskRow {
   started_at: number | null;
   finished_at: number | null;
   estimate_ms: number | null;
-  spent_ms: number | null;
 }
 
 export interface SessionRow {
@@ -135,7 +134,6 @@ export function toTask(row: TaskRow): Task {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     estimateMs: row.estimate_ms,
-    spentMs: row.spent_ms,
     blockReason: row.block_reason,
   };
 }

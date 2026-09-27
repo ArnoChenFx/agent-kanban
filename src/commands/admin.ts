@@ -9,7 +9,7 @@
  */
 
 import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
-import { padEndWidth, relativeTime, style } from "../core/format.ts";
+import { padEndWidth, parseDuration, relativeTime, style } from "../core/format.ts";
 import { migrate, openDb, type Db } from "../core/db.ts";
 import {
   createProject,
@@ -123,14 +123,6 @@ class RemoteAdmin {
       );
     }
     return body.data;
-  }
-
-  private get server(): string {
-    return (this.ctx.backend as unknown as { server: string }).server;
-  }
-
-  token(): string {
-    return this.ctx.effectiveConfig.token ?? "";
   }
 }
 
@@ -465,21 +457,19 @@ async function tokenList(argv: string[]): Promise<ExitCodeValue> {
   return ExitCode.OK;
 }
 
-/** 解析 --expires-in（如 30d / 12h / 7d）→ 毫秒 */
+/**
+ * 解析 --expires-in（如 30d / 12h / 4w）→ 毫秒。
+ * 单位换算走 format.parseDuration（曾经这里另抄一份单位表）；这里只负责
+ * 到期时长自己的约束：单个单位、必须显式带单位（"30" 是 30 分钟还是 30 天？模糊的
+ * 过期时间宁可拒绝）。
+ */
 function parseExpiresIn(value: string | undefined): number | null {
   if (!value) return null;
   const m = /^(\d+)\s*([dhmsw])$/.exec(value.trim().toLowerCase());
   if (!m) {
     throw KanbanError.usage(`cannot parse expiry "${value}"`, "Supported: 30d (days) / 12h / 7d / 4w (weeks)");
   }
-  const n = Number(m[1]);
-  switch (m[2]) {
-    case "d": return n * 86_400_000;
-    case "w": return n * 7 * 86_400_000;
-    case "h": return n * 3_600_000;
-    case "m": return n * 60_000;
-    default: return n * 1000;
-  }
+  return parseDuration(value);
 }
 
 async function tokenCreate(argv: string[]): Promise<ExitCodeValue> {

@@ -14,6 +14,20 @@
 import type { Database } from "bun:sqlite";
 import { KanbanError } from "./errors.ts";
 
+/**
+ * 目录名 / 用户输入 → 合法 project key（小写字母数字连字符）。
+ * 全部被替换掉时退回 "default"（如 "我的项目"）。
+ * 曾经 db.ts 与 projects.ts 各有一份，收敛到这里（ids.ts 是叶子模块，两边都能引）。
+ */
+export function slugifyProjectKey(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return slug.length > 0 ? slug : "default";
+}
+
 /** 任务 ID 序号部分的位数（支持 1..99999，超出后自然变宽：T-10000） */
 const TASK_SEQ_WIDTH = 4;
 
