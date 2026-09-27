@@ -224,15 +224,27 @@ export function Board() {
 
   // ---- SSE：收到事件就防抖重拉 ----
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 重连要从「最后一次看到的 seq」续传，但不把 head_seq 放进依赖：
+  // 否则每条事件 → 防抖重拉 → head_seq 变化 → 拆连接换票重连，
+  // 事件风暴时等于每条事件都断开重连一次。ref 只喂给重连时的 after 参数。
+  const headSeqRef = useRef(0)
   useEffect(() => {
-    if (!token || !project) return
+    if (board?.head_seq) headSeqRef.current = board.head_seq
+  }, [board])
+  // 门要做成布尔：直接把 board 放进依赖会在每次重拉后重订阅，
+  // 等于回到「每条事件断开重连」的老毛病
+  const boardLoaded = board !== null
+  useEffect(() => {
+    if (!token || !project || !boardLoaded) return
     // 用带票据的版本：token 不进 URL（见 lib/api.ts 的说明），
     // 且服务端会在凭据失效时主动推 auth_expired —— 那时要把登录态清掉，
     // 否则界面会一直显示「在线」却收不到任何事件。
+    // board 在依赖里是作为「首板已加载」的门（null→快照只翻一次）：
+    // 没加载完就订阅会从 after=0 重放全部历史，平白多一轮重拉风暴。
     const handle = subscribeEventsWithTicket(
       token,
       project,
-      board?.head_seq ?? 0,
+      headSeqRef.current,
       () => {
         if (reloadTimer.current) clearTimeout(reloadTimer.current)
         // agent 批量写时会连发很多事件，防抖避免请求风暴
@@ -248,7 +260,7 @@ export function Board() {
       handle.close()
       if (reloadTimer.current) clearTimeout(reloadTimer.current)
     }
-  }, [token, project, board?.head_seq, reload])
+  }, [token, project, boardLoaded, reload])
 
   // ---- 派生数据 ----
   const sessionById = useMemo(() => {

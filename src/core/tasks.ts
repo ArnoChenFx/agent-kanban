@@ -198,9 +198,11 @@ export function listTasks(scope: Scope, filter: ListFilter = {}): Task[] {
     params.push(filter.sessionId);
   }
   if (filter.label) {
-    // labels 存 JSON 数组，用带引号的精确匹配避免 "a" 命中 "ab"
-    where.push("labels LIKE ?");
-    params.push(`%"${filter.label}"%`);
+    // labels 存 JSON 数组，用带引号的精确匹配避免 "a" 命中 "ab"。
+    // LIKE 通配符要转义，否则 label "a_b" / "50%" 会按模式匹配而不是字面值
+    const escaped = filter.label.replace(/[\\%_]/g, (c) => `\\${c}`);
+    where.push(`labels LIKE ? ESCAPE '\\'`);
+    params.push(`%"${escaped}"%`);
   }
   if (filter.parentId) {
     where.push("parent_id = ?");
@@ -940,6 +942,11 @@ export function transition(
   actor: Actor,
   input: TransitionInput = {},
 ): { task: Task; unblocked: string[] } {
+  // 设计取舍（有意不做持有者校验）：任何会话都可以移动这张卡。协作里大量
+  // 合法动作是跨会话的——解阻别人的卡（上游修完了）、人工取消失联者的卡、
+  // doctor/管理路径的修复；而"抢活"的正确姿势是 claim 的 CONFLICT + force
+  // （claimTask 已保证原子性与痕迹）。在这里校验持有者会把前者一起拦掉，
+  // 得不偿失。若未来要收紧，记得同步豁免 doctor 与 autoUnblock 路径。
   const db = ctx.db;
   const id = normalizeTaskId(taskId);
   const before = requireTask(scopeOf(ctx), id);

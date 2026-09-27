@@ -684,6 +684,8 @@ function describeEventBrief(event: KanbanEvent): string {
     case "session_crashed": return "session lost contact";
     case "board_exported": return "board exported";
     case "board_imported": return "board imported";
+    case "project_deleted": return `project ${d.key ?? ""} deleted`;
+    case "system_notice": return d.action ? `system: ${String(d.action)}` : "system notice";
     case "snapshot_written": return "snapshot written";
     case "protocol_installed": return "collaboration protocol installed";
     default: return event.type;

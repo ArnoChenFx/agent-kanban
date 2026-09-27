@@ -12,7 +12,7 @@
 import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
 import { padEndWidth, style } from "../core/format.ts";
 import type { Op } from "../core/ops.ts";
-import { assertKnownOptions, getBool, getList, getString, parseArgs } from "./args.ts";
+import { assertKnownOptions, getBool, getList, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput } from "./output.ts";
 
@@ -53,6 +53,8 @@ export async function cmdHandoff(argv: string[]): Promise<ExitCodeValue> {
     "json", "help", "task", "summary", "next", "blockers", "open",
     "db", "session", "server", "project", "key",
   ]);
+  // task/summary/next 可用位置参数给，最多三个
+  rejectExtraPositionals(args, 3, 'Usage: agent-kanban handoff --task T-0007 --summary "..." --next "..."');
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -112,6 +114,7 @@ async function handoffQuery(sub: string, argv: string[]): Promise<ExitCodeValue>
     short: { j: "json", h: "help", t: "task" },
   });
   assertKnownOptions(args, ["json", "help", "task", "db", "session", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban handoff list|pending [--task T-0007]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));

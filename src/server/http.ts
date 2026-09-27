@@ -398,8 +398,9 @@ async function handleRequest(
   }
 
   if (path === "/api/events") {
-    const after = Number(url.searchParams.get("after") ?? "0");
-    const limit = Number(url.searchParams.get("limit") ?? "200");
+    // 与 /api/board 同一条钳制规矩：这里曾经直接 Number() 透传，limit=1e9 可一次拖全表
+    const after = clampInt(url.searchParams.get("after"), 0, Number.MAX_SAFE_INTEGER, 0);
+    const limit = clampInt(url.searchParams.get("limit"), 1, PAGE_LIMIT_MAX, 200);
     const rows = queryEvents(db, { projectKey: targetProject, sinceSeq: after, order: "asc", limit });
     // eventToJson：与 Op 路径同源，保证 /api/events 和 /api/op 返回的事件形状一致
     return json({ ok: true, data: rows.map((r) => eventToJson(toEvent(r))) });
@@ -619,8 +620,10 @@ async function handleAdminApi(
   // ——两边对不上，且**没有任何测试能发现**（文档类事实没有硬覆盖）。
   // 现在按契约实现 DELETE；POST /revoke 保留为别名（见下），两者共用同一段实现，
   // 并有测试断言它们行为一致，所以不会各自漂移。
+  // 只认 DELETE 与 POST /revoke：曾经条件是 `DELETE || endsWith("/revoke")`，
+  // 于是 GET /tokens/:id/revoke 也会吊销——读方法带副作用是明确的 HTTP 语义违例
   const isTokenTarget = sub.startsWith("/tokens/");
-  if (isTokenTarget && (method === "DELETE" || sub.endsWith("/revoke"))) {
+  if (isTokenTarget && (method === "DELETE" || (method === "POST" && sub.endsWith("/revoke")))) {
     const tokenId = decodeURIComponent(
       sub.replace("/revoke", "").slice("/tokens/".length),
     );
@@ -905,7 +908,9 @@ function handleSse(
         } catch {
           send(`event: error\ndata: ${JSON.stringify({ message: "event polling failed" })}\n\n`);
         }
-        // 15s 一次 keepalive 注释帧，防中间设备断连
+        // 15s 一次 keepalive 注释帧，防中间设备断连。
+        // （曾经 pump 之外还有个独立的 15s 定时器发同样的帧——pump 每秒跑，
+        //   空闲流量平白 ×15。留一个来源就够了。）
         send(`: keepalive ${Date.now()}\n\n`);
       };
 
@@ -913,7 +918,6 @@ function handleSse(
         if (closed) return;
         closed = true;
         clearInterval(timer);
-        clearInterval(keepaliveTimer);
         try {
           controller.close();
         } catch {
@@ -923,8 +927,6 @@ function handleSse(
 
       pump();
       const timer = setInterval(pump, 1000);
-      // 心跳注释帧单独发（15s）
-      const keepaliveTimer = setInterval(() => send(`: keepalive ${Date.now()}\n\n`), 15_000);
 
       req.signal.addEventListener("abort", cleanup);
     },

@@ -83,8 +83,10 @@ export function buildBoard(
 
   // 截断信息：**必须报出去**，否则「计数 620 / 只显示 500」看着像卡丢了。
   // total 是所有非终态泳道卡的总数（不含 cancelled，与 lanes 的口径一致）。
+  // showing 口径必须与 total 一致：cancelled 不进泳道，也不该算进"已显示"，
+  // 否则带 cancelled 的看板永远凑不满差值，truncated 恒为 false
   const totalInLanes = LANE_ORDER.reduce((sum, s) => sum + counts[s], 0);
-  const showing = tasks.length;
+  const showing = tasks.filter((t) => LANE_ORDER.includes(t.status)).length;
   const truncated = offset === 0 && showing < totalInLanes;
 
   // 会话视图：会话跳 project，所以这里不做 project 过滤——

@@ -95,7 +95,24 @@ export async function runMcpServer(
       },
       // MCP SDK 的 handler 是 async；工具层是同步的（本地直调 Op），
       // 这里包一层 Promise 即可，不必把整个工具层改成异步。
-      async (args: Record<string, unknown>) => toMcpResult(await runOne(tool.name, args, runner)),
+      async (args: Record<string, unknown>) => {
+        // zod 会把未声明的键**静默剥离**，模型拼错参数名时调用照常成功、
+        // 参数却被丢掉——CLI 端的规矩是“拼错参数必须被告知”，这里对齐：
+        // 先对照契约 schema 把陌生键显式拒掉。
+        const declared = new Set(Object.keys(tool.inputSchema.properties));
+        const stray = Object.keys(args ?? {}).filter((k) => !declared.has(k));
+        if (stray.length > 0) {
+          return toMcpResult({
+            ok: false,
+            error: {
+              code: 1,
+              name: "USAGE",
+              message: `unknown argument(s) for ${tool.name}: ${stray.map((s) => JSON.stringify(s)).join(", ")}`,
+            },
+          });
+        }
+        return toMcpResult(await runOne(tool.name, args, runner));
+      },
     );
   }
 
@@ -159,7 +176,10 @@ function toMcpResult(envelope: ToolEnvelope) {
  * 为什么要转：契约 §3.2 写的是 JSON Schema（人类可读、跨语言），
  * SDK 要 zod。两份手写必然漂，所以从 JSON Schema 单向生成。
  *
- * 只处理契约实际用到的关键字：properties / type / items / description。
+ * 只处理契约实际用到的关键字：properties / type / items / description / enum。
+ * enum 不转的话（曾经漏了）`plan.list` 的 scope/status 降级成任意 string，
+ * 非法值被 tools.ts 静默归为 undefined 而不是报错——正是 CLI 端
+ * “拼错参数必须被告知”规矩在 MCP 面的缺口。
  */
 function zodFromJsonSchema(schema: {
   properties: Record<string, unknown>;
@@ -169,20 +189,26 @@ function zodFromJsonSchema(schema: {
   const shape: Record<string, z.ZodTypeAny> = {};
   const required = new Set(schema.required ?? []);
   for (const [key, raw] of Object.entries(schema.properties)) {
-    const prop = raw as { type?: string; items?: { type?: string }; description?: string };
+    const prop = raw as {
+      type?: string; items?: { type?: string }; description?: string; enum?: string[];
+    };
     let zodType: z.ZodTypeAny;
-    switch (prop.type) {
-      case "number":
-        zodType = z.number();
-        break;
-      case "boolean":
-        zodType = z.boolean();
-        break;
-      case "array":
-        zodType = z.array(prop.items?.type === "number" ? z.number() : z.string());
-        break;
-      default:
-        zodType = z.string();
+    if (prop.enum && prop.enum.length > 0) {
+      zodType = z.enum(prop.enum as [string, ...string[]]);
+    } else {
+      switch (prop.type) {
+        case "number":
+          zodType = z.number();
+          break;
+        case "boolean":
+          zodType = z.boolean();
+          break;
+        case "array":
+          zodType = z.array(prop.items?.type === "number" ? z.number() : z.string());
+          break;
+        default:
+          zodType = z.string();
+      }
     }
     if (prop.description) zodType = zodType.describe(prop.description);
 

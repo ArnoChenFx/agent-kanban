@@ -440,12 +440,10 @@ describe("静态守卫：project 作用域业务表的 SQL 必须带 project_key
       why: "importEvents 的幂等去重集合：seq 全局唯一，跨 project 重叠才是真正要拦的重复",
     },
 
-    // ---- 刻意保留的保底阈值：用全局值是有意为之 ----
-    {
-      id: "backup.ts/compactEvents 保底 1000 条",
-      match: /SELECT seq FROM events ORDER BY seq DESC LIMIT 1 OFFSET 999/,
-      why: "compactEvents 的「至少留 1000 条」保底，取全局值只会多留不会少留，偏保守",
-    },
+    // 注：曾经还有一条「compactEvents 保底 1000 条」的例外（floorSeq 故意取全局值，
+    //   理由是"多留不少留"），后来改为按本 project 计 OFFSET（保留量不再随别的
+    //   project 的事件量漂移），该例外随之删除。删除后「白名单不得腐化」那条断言
+    //   立刻报它未使用——这正是那条断言的用途。
     // 注：曾经还有一条「http.ts/health 探活」的例外（回全局 head_seq），
     //   已随 /api/health 只回 liveness 一起删掉。删除后「白名单不得腐化」那条断言
     //   立刻报它未使用——这正是那条断言的用途。

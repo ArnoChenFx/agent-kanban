@@ -68,11 +68,11 @@ export function getProject(db: Database, key: string): Project | null {  const r
   return row ? toProject(row) : null;
 }
 
-/** 按 key 取 project；不存在抛 AUTH(7)（远端视角：project 不存在与 key 错误都无法区分语义） */
+/** 按 key 取 project；不存在抛 STATE(2)（"project 缺失"是状态错误，与"未初始化"是两回事） */
 export function requireProject(db: Database, key: string): Project {
   const project = getProject(db, key);
   if (!project) {
-    throw KanbanError.notInit(
+    throw KanbanError.state(
       `project "${key}" not found`,
       {
         reason: "project_not_found",
@@ -202,22 +202,17 @@ export function deleteProject(db: Database, key: string, force = false): { key: 
   return withTx(
     db,
     (tx) => {
-      // 依赖表没有 project_key 列，需按任务反查
-      tx.db
-        .query(
-          `DELETE FROM task_deps
-            WHERE task_id IN (SELECT id FROM tasks WHERE project_key = ?)
-               OR depends_on_id IN (SELECT id FROM tasks WHERE project_key = ?)`,
-        )
-        .run(key, key);
+      // task_deps 自 v4 起就带 project_key（老注释说没有是错的——按编号反查
+      // 反而会误删别的 project 里同号卡的边，T 编号是 per-project 的）
+      tx.db.query("DELETE FROM task_deps WHERE project_key = ?").run(key);
       for (const table of ["tasks", "events", "plans", "handoffs", "project_counters"]) {
         tx.db.query(`DELETE FROM ${table} WHERE project_key = ?`).run(key);
       }
       tx.db.query("DELETE FROM projects WHERE key = ?").run(key);
       tx.emit({
-        type: "board_exported",
+        type: "project_deleted",
         projectKey: "system",
-        data: { action: "project_deleted", key, task_count: taskCount },
+        data: { key, task_count: taskCount },
         sessionId: "system",
       });
       return { key, taskCount };

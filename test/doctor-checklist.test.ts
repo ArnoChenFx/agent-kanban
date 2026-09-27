@@ -19,7 +19,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { runDoctor } from "../src/core/doctor.ts";
-import { claimTask, createTask, transition, updateProgress } from "../src/core/tasks.ts";
+import { rebuild } from "../src/core/rebuild.ts";
+import { claimTask, createTask, getTask, transition, updateProgress } from "../src/core/tasks.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
 
 const PROJECT = "test";
@@ -102,5 +103,59 @@ describe("doctor 抓「done 但 checklist 未勾完」", () => {
     t.tx((c) => { id = createTask(c, { title: "没有清单" }).id; });
     finish(id, []);
     expect(undoneCodes()).toEqual([]);
+  });
+});
+
+/**
+ * doctor --fix 不得绕过事件溯源（ADR-1）。
+ *
+ * 曾经的写法：stale_block 修复直接 UPDATE 成 todo、不写 task_unblocked 事件，
+ * releaseOrphans 的 UPDATE 与事件 INSERT 各自 autocommit。后果有两个：
+ *   - rebuild --write 会把修好的卡**打回** blocked（事件流是唯一事实源）；
+ *   - 中断会留下「状态变了没日志」的半成品。
+ * 守卫：修完之后跑 rebuild 只重放校验，drift 必须为空——这正是
+ * "修复走了事件路径" 的可观测判据，比逐条查 events 表更贴近事故本身。
+ */
+describe("doctor --fix 走事件溯源", () => {
+  test("stale_block 修复后 rebuild 无漂移", () => {
+    let id = "";
+    t.tx((c) => {
+      id = createTask(c, { title: "被忘掉的阻塞" }).id;
+      claimTask(c, id, { sessionId: "s1", now: clock });
+      // 依赖本来就不存在（全部"已完成"）→ block 后立即成为 stale_block 候选
+      transition(c, id, "blocked", { sessionId: "s1", now: clock }, { reason: "等一个不存在的上游" });
+    });
+
+    const report = runDoctor(t.db, { projectKey: PROJECT, now: clock, fix: true });
+    const issue = report.issues.find((i) => i.code === "stale_block");
+    expect(issue).toBeDefined();
+    expect(issue!.fixed).toBe(true);
+    expect(getTask(t.scope, id)!.status).toBe("todo");
+
+    // 关键断言：投影与事件流一致。若修复没写 task_unblocked 事件，
+    // rebuild 会期望 blocked，这里就会报 drift
+    const rb = rebuild(t.db, { projectKey: PROJECT });
+    expect(rb.drift).toEqual([]);
+    expect(rb.ok).toBe(true);
+  });
+
+  test("stale_lease 回收后 rebuild 无漂移", () => {
+    let id = "";
+    t.tx((c) => {
+      id = createTask(c, { title: "持有者失联" }).id;
+      claimTask(c, id, { sessionId: "ghost", now: clock, ttlMs: 60_000 });
+    }, { sessionId: "ghost" });
+
+    // 持有者再无心跳，租约到期 → doctor 视为失联
+    clock += 10 * 60 * 1000;
+    const report = runDoctor(t.db, { projectKey: PROJECT, now: clock, fix: true });
+    const issue = report.issues.find((i) => i.code === "stale_lease");
+    expect(issue).toBeDefined();
+    expect(issue!.fixed).toBe(true);
+    expect(getTask(t.scope, id)!.status).toBe("todo");
+
+    const rb = rebuild(t.db, { projectKey: PROJECT });
+    expect(rb.drift).toEqual([]);
+    expect(rb.ok).toBe(true);
   });
 });

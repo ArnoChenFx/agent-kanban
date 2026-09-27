@@ -13,10 +13,10 @@
  */
 
 import { readFileSync } from "node:fs";
-import { ExitCode, type ExitCodeValue } from "../core/errors.ts";
+import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
 import { padEndWidth, relativeTime, style, truncate } from "../core/format.ts";
 import type { Op } from "../core/ops.ts";
-import { assertKnownOptions, getBool, getInt, getString, parseArgs, requirePositional } from "./args.ts";
+import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals, requirePositional } from "./args.ts";
 import { closeCtx, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
@@ -81,6 +81,8 @@ async function planSave(argv: string[]): Promise<ExitCodeValue> {
     "json", "help", "no-attach", "title", "body", "body-file",
     "task", "session", "db", "server", "project", "key",
   ]);
+  // 正文/标题可用位置参数给，最多两个
+  rejectExtraPositionals(args, 2, 'Usage: agent-kanban plan save --title "title" --body-file <path>');
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -98,18 +100,23 @@ async function planSave(argv: string[]): Promise<ExitCodeValue> {
     const taskId = getString(args, "task");
 
     if (!body) {
-      out.line("Error: missing plan body");
-      out.line("");
-      out.line("The body is where the plan's value is. Provide it in one of these ways:");
-      out.line('  --body-file <path>    read from a file (recommended, long text avoids shell quoting hell)');
-      out.line('  --body "..."          inline markdown');
-      out.line("");
-      out.line("A template to start from:");
-      out.line("  ## Goal");
-      out.line("  ## Steps");
-      out.line("  1. ");
-      out.line("  ## Risks / open questions");
-      return ExitCode.USAGE;
+      // 必须抛 KanbanError.usage 而不是 out.line：--json 模式下 out.line 是空操作，
+      // 曾经的结果是退出码 2 但 stdout/stderr 双空，agent 拿到码却无任何可读信息
+      throw KanbanError.usage(
+        "missing plan body",
+        `Usage: agent-kanban plan save --title "title" [--task T-0007] [--body-file <path> | --body "..."]
+
+The body is where the plan's value is. Provide it in one of these ways:
+  --body-file <path>    read from a file (recommended, long text avoids shell quoting hell)
+  --body "..."          inline markdown
+
+A template to start from:
+  ## Goal
+  ## Steps
+  1.
+  ## Risks / open questions`,
+        { reason: "body_required" },
+      );
     }
 
     const { data } = await ctx.backend.executeWithHints({
@@ -161,6 +168,7 @@ async function planShow(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "raw", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban plan show <plan id>");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -205,6 +213,7 @@ async function planList(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", t: "task" },
   });
   assertKnownOptions(args, ["json", "help", "all", "task", "scope", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban plan list [--task T-0007] [--all]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -259,6 +268,7 @@ async function planHistoryCmd(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban plan history <plan id>");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -312,6 +322,7 @@ async function planAt(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", t: "task" },
   });
   assertKnownOptions(args, ["json", "help", "task", "ts", "scope", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban plan at --task T-0007 --ts <timestamp>");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -319,9 +330,11 @@ async function planAt(argv: string[]): Promise<ExitCodeValue> {
   try {
     const ts = getInt(args, "ts");
     if (ts === undefined) {
-      out.line("Error: missing --ts <epoch milliseconds>");
-      out.line('Hint: use `agent-kanban plan at --task T-0007 --ts ' + String(ctx.now() - 3600_000) + '` for one hour ago');
-      return ExitCode.USAGE;
+      throw KanbanError.usage(
+        "missing --ts <epoch milliseconds>",
+        `Usage: agent-kanban plan at --task T-0007 --ts <epoch milliseconds>\n` +
+          `Hint: use --ts ${ctx.now() - 3600_000} for one hour ago`,
+      );
     }
 
     const { data } = await ctx.backend.executeWithHints({
@@ -362,6 +375,7 @@ async function planAttach(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", t: "task" },
   });
   assertKnownOptions(args, ["json", "help", "task", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban plan attach <plan id> --task T-0007");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -370,8 +384,10 @@ async function planAttach(argv: string[]): Promise<ExitCodeValue> {
 
   try {
     if (!taskId) {
-      out.line("Error: missing --task");
-      return ExitCode.USAGE;
+      throw KanbanError.usage(
+        "missing --task",
+        "Usage: agent-kanban plan attach <plan id> --task T-0007",
+      );
     }
 
     const { data } = await ctx.backend.executeWithHints({

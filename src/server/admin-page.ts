@@ -81,7 +81,7 @@ export function renderAdminPage(): string {
   .muted { color: var(--dim); }
   .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
   #login { max-width: 420px; margin: 80px auto; }
-  #error {
+  #loginError, #appError {
     background: rgba(248,81,73,.12); border: 1px solid var(--red);
     color: var(--red); padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;
     display: none; white-space: pre-wrap;
@@ -104,7 +104,7 @@ export function renderAdminPage(): string {
       <button data-locale-btn class="ghost" type="button"></button>
     </div>
     <p class="muted" data-i18n="admin.login.hint"></p>
-    <div id="error"></div>
+    <div id="loginError"></div>
     <div class="row">
       <input id="tokenInput" type="password" placeholder="k_admin_..." autocomplete="off" style="flex:1">
       <button class="primary" id="loginBtn" data-i18n="admin.login.btn"></button>
@@ -125,7 +125,7 @@ export function renderAdminPage(): string {
   </header>
 
   <main>
-    <div id="error" style="margin-bottom:16px"></div>
+    <div id="appError" style="margin-bottom:16px"></div>
     <div id="secret" class="secret" hidden>
       <strong data-i18n="admin.secret.title"></strong>
       <div class="value mono" id="secretValue"></div>
@@ -354,8 +354,11 @@ let adminToken = localStorage.getItem(TOKEN_STORAGE_KEY) || "";
 let lastOverview = null;
 
 const $ = (id) => document.getElementById(id);
+// 错误框有两处（登录页 / 主界面），曾经共用同一个 id —— getElementById 恒命中文档序
+// 靠前的那个，登录成功后的所有操作失败都写进了隐藏的登录页节点，用户什么都看不到。
+// 按当前可见区域路由：app 在 hidden 说明用户停留在登录页。
 const showError = (msg) => {
-  const el = $("error");
+  const el = $("app").hidden ? $("loginError") : $("appError");
   el.textContent = msg;
   el.style.display = msg ? "block" : "none";
 };

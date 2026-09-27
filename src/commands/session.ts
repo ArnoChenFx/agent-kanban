@@ -8,7 +8,7 @@
 
 import { ExitCode, KanbanError, type ExitCodeValue } from "../core/errors.ts";
 import { resolveSessionKey } from "../core/paths.ts";
-import { assertKnownOptions, getBool, getString, parseArgs } from "./args.ts";
+import { assertKnownOptions, getBool, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import {
   closeCtx,
   openCtx,
@@ -92,6 +92,7 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", a: "agent" },
   });
   assertKnownOptions(args, ["json", "help", "no-write", "agent", "harness", "id", ...COMMON_STRINGS]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban session start --agent <name> --harness <harness>");
   const out = createOutput(getBool(args, "json"));
 
   const agentName = getString(args, "agent");
@@ -166,6 +167,7 @@ async function sessionList(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", a: "all", h: "help" },
   });
   assertKnownOptions(args, ["json", "all", "help", ...COMMON_STRINGS]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban session list [--all]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOpts(args));
@@ -219,6 +221,7 @@ async function sessionHeartbeat(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", ...COMMON_STRINGS]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban session heartbeat");
   const out = createOutput(getBool(args, "json"));
   const ctx = openCtx(ctxOpts(args));
 
@@ -246,6 +249,7 @@ async function sessionEnd(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", s: "summary" },
   });
   assertKnownOptions(args, ["json", "help", ...COMMON_STRINGS, "summary"]);
+  rejectExtraPositionals(args, 0, 'Usage: agent-kanban session end [--summary "..."]');
   const out = createOutput(getBool(args, "json"));
   const ctx = openCtx(ctxOpts(args));
 

@@ -19,7 +19,7 @@ import {
 import { resolvePaths } from "../core/paths.ts";
 import { createProject, resolveLocalProject } from "../core/projects.ts";
 import { withTx } from "../core/tx.ts";
-import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./args.ts";
+import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import { createOutput } from "./output.ts";
 import { style } from "../core/format.ts";
 import { CONFIG_FILE, readConfigFile, writeConfigFile } from "../core/config.ts";
@@ -45,6 +45,7 @@ export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", n: "name" },
   });
   assertKnownOptions(args, ["json", "force", "help", "name", "project", "ttl", "grace", "db"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban init [--name <name>] [--force]");
   const out = createOutput(getBool(args, "json"));
 
   if (getBool(args, "help")) {
@@ -133,7 +134,7 @@ export async function cmdInit(argv: string[]): Promise<ExitCodeValue> {
         })
       : resolveLocalProject(handle.raw, { rootPath: paths.projectRoot });
     tx.emit({
-      type: "board_exported",
+      type: "system_notice",
       projectKey: project.key,
       data: { action: "init", project: project.key, db: paths.db },
       sessionId: "system",

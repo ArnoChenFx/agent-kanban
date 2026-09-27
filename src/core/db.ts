@@ -12,7 +12,8 @@
  *    详见 docs/note/2026-02-19-bun-sqlite-并发探针.md
  *
  * 3. foreign_keys=ON
- *    让 task_deps 的悬空引用在写入时就暴露，而不是等到查询时才发现。
+ *    目前 schema.sql 没有声明 FOREIGN KEY，这条 pragma 暂时没有可管的东西；
+ *    打开它是为了将来加约束时不用再动连接代码，而不是现状有保护。
  */
 
 import { Database } from "bun:sqlite";
@@ -166,17 +167,31 @@ export function migrate(db: Db): { from: number; to: number } {
   }
 
   // 逐步执行迁移（v1 → v2 → …）
-  for (let v = from; v < SCHEMA_VERSION; v++) {
-    const step = MIGRATIONS[v];
-    if (!step) {
-      throw KanbanError.notInit(`missing migration script from schema v${v} to v${v + 1}`, {
-        reason: "migration_script_missing",
-        from: v,
-        to: v + 1,
-      });
+  // 整个升级链包在一个事务里：SQLite 的 DDL（ALTER/CREATE/DROP）同样支持回滚，
+  // 不包事务的话，v1→v2 这种换表迁移若在 DROP 之后、RENAME 之前崩溃，
+  // 库会卡死在"tasks 表不存在"的中间态（版本号还没写，重跑也无法自愈）
+  db.raw.exec("BEGIN IMMEDIATE");
+  try {
+    for (let v = from; v < SCHEMA_VERSION; v++) {
+      const step = MIGRATIONS[v];
+      if (!step) {
+        throw KanbanError.notInit(`missing migration script from schema v${v} to v${v + 1}`, {
+          reason: "migration_script_missing",
+          from: v,
+          to: v + 1,
+        });
+      }
+      step.up(db);
+      setMeta(db.raw, "schema_version", String(v + 1));
     }
-    step.up(db);
-    setMeta(db.raw, "schema_version", String(v + 1));
+    db.raw.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.raw.exec("ROLLBACK");
+    } catch {
+      // 连接已不可用时保留原始异常
+    }
+    throw err;
   }
   return { from, to: SCHEMA_VERSION };
 }
@@ -395,7 +410,7 @@ const MIGRATIONS: Record<number, { up: (db: Db) => void }> = {
         raw
           .query(
             `INSERT INTO events (ts, session_id, type, task_id, plan_id, project_key, data)
-             VALUES (?, 'system', 'board_exported', NULL, NULL, 'system', ?)`,
+             VALUES (?, 'system', 'system_notice', NULL, NULL, 'system', ?)`,
           )
           .run(
             Date.now(),

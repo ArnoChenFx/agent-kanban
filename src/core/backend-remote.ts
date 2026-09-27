@@ -205,17 +205,6 @@ export class RemoteBackend implements Backend {
     }
   }
 
-  private async fetchStream(url: string, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
-    const response = await fetch(url, { signal, headers: { "X-Kanban-Key": this.apiKey } });
-    if (!response.ok || !response.body) {
-      throw KanbanError.state(`the SSE connection failed (HTTP ${response.status})`, {
-        reason: "remote_sse_failed",
-        server: this.server,
-        status: response.status,
-      });
-    }
-    return response.body;
-  }
 }
 
 /**

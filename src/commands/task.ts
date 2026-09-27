@@ -36,6 +36,7 @@ import {
   getList,
   getString,
   parseArgs,
+  rejectExtraPositionals,
   requirePositional,
 } from "./args.ts";
 import { closeCtx, openCtx, resolveSessionId, type Ctx } from "./context.ts";
@@ -135,10 +136,10 @@ async function taskList(argv: string[]): Promise<ExitCodeValue> {
     strings: ["status", "label", "parent", "sort", "limit", "db", "session", "server", "project", "key"],
     short: { j: "json", a: "all", m: "mine", s: "status", l: "label", h: "help" },
   });
-  assertKnownOptions(args, [
-    "json", "all", "mine", "ready", "help", "status", "label", "parent", "sort", "limit",
+  assertKnownOptions(args, ["json", "all", "mine", "ready", "help", "status", "label", "parent", "sort", "limit",
     "db", "session", "server", "project", "key",
   ]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban task list [--status doing] [--ready]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -229,7 +230,13 @@ async function taskShow(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "timeline", "body", "help", "tail", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  // help 必须先于 requirePositional：否则 `task show --help` 报的是"缺 task id"
+  if (getBool(args, "help")) {
+    out.line("Usage: agent-kanban task show <task-id> [--timeline] [--body] [--tail N]");
+    return ExitCode.OK;
+  }
   const ctx = openCtx(ctxOptions(args, json));
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban task show T-0007 [--timeline]");
   const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task show T-0007 [--timeline]");
 
   try {
@@ -338,6 +345,8 @@ async function taskAdd(argv: string[]): Promise<ExitCodeValue> {
     "json", "backlog", "help", "desc", "priority", "parent", "label", "blocked-by",
     "check", "estimate", "db", "session", "title", "server", "project", "key",
   ]);
+  // 标题可以用位置参数给，但只允许一个
+  rejectExtraPositionals(args, 1, 'Usage: agent-kanban task add "title" -d "description"');
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -399,6 +408,7 @@ async function taskClaim(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "force", "help", "ttl", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban task claim T-0007 [--ttl 2h]");
   const ctx = openCtx(ctxOptions(args, json));
   const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task claim T-0007 [--ttl 2h]");
 
@@ -437,6 +447,7 @@ async function taskProgress(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "pct", "note", "check", "uncheck", "add-check", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  rejectExtraPositionals(args, 2, 'Usage: agent-kanban task progress T-0007 --pct 60 --note "..."');
   const ctx = openCtx(ctxOptions(args, json));
   const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task progress T-0007 --pct 60 --note "..."');
 
@@ -486,6 +497,7 @@ async function taskNote(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  rejectExtraPositionals(args, 2, 'Usage: agent-kanban task note T-0007 "note text"');
   const ctx = openCtx(ctxOptions(args, json));
   const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task note T-0007 "note text"');
   const text = args.positionals[1];
@@ -518,6 +530,7 @@ async function taskTransition(
   assertKnownOptions(args, ["json", "force", "help", "reason", "note", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  rejectExtraPositionals(args, 2, opts.usage);
   const ctx = openCtx(ctxOptions(args, json));
   const id = requirePositional(args, 0, "task id", opts.usage);
 
@@ -584,6 +597,7 @@ async function taskRelease(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "reason", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  rejectExtraPositionals(args, 1, 'Usage: agent-kanban task release T-0007 [--reason "..."]');
   const ctx = openCtx(ctxOptions(args, json));
   const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task release T-0007 [--reason "..."]');
 
@@ -612,6 +626,7 @@ async function taskEdit(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "title", "desc", "priority", "label", "estimate", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  rejectExtraPositionals(args, 1, 'Usage: agent-kanban task edit T-0007 --title "new title"');
   const ctx = openCtx(ctxOptions(args, json));
   const id = requirePositional(args, 0, "task id", 'Usage: agent-kanban task edit T-0007 --title "new title"');
 
@@ -657,6 +672,7 @@ async function taskDep(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  rejectExtraPositionals(args, 2, "Usage: agent-kanban task dep add T-0007 T-0003");
   const ctx = openCtx(ctxOptions(args, json));
   const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task dep add T-0007 T-0003");
 
@@ -704,6 +720,7 @@ async function taskRemove(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "force", "help", "db", "session", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban task rm T-0007 [--force]");
   const ctx = openCtx(ctxOptions(args, json));
   const id = requirePositional(args, 0, "task id", "Usage: agent-kanban task rm T-0007 [--force]");
 

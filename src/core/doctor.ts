@@ -14,6 +14,7 @@
 
 import type { Database } from "bun:sqlite";
 import { getConfig } from "./db.ts";
+import { withTx } from "./tx.ts";
 import { isStale, listSessions } from "./sessions.ts";
 import { countEvents } from "./events.ts";
 import {
@@ -120,14 +121,37 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
     (t) => getUnfinishedDeps(scope, t.id).length === 0,
   );
   if (unblockedCandidates.length > 0) {
+    // 修复必须走 withTx + emit：直接 UPDATE 不写事件会造成投影与事件流漂移
+    // （rebuild --write 会把卡打回 blocked），doctor 自己的深度检查也会报假 drift
     const fixedCount = fix
-      ? db
-          .query(
-            `UPDATE tasks SET status = 'todo', block_reason = NULL, updated_at = ?
-              WHERE project_key = ? AND status = 'blocked'
-                AND id IN (${unblockedCandidates.map(() => "?").join(",")})`,
-          )
-          .run(now, opts.projectKey, ...unblockedCandidates.map((t) => t.id)).changes
+      ? withTx(
+          db,
+          (ctx) => {
+            let n = 0;
+            for (const t of unblockedCandidates) {
+              // WHERE 带 status 再查一遍：候选列表是在事务外算的，
+              // 并发下状态可能已经变了
+              const res = ctx.db
+                .query(
+                  `UPDATE tasks SET status = 'todo', assignee_session_id = NULL,
+                                  lease_expires_at = NULL, block_reason = NULL, updated_at = ?
+                    WHERE project_key = ? AND id = ? AND status = 'blocked'`,
+                )
+                .run(ctx.now(), opts.projectKey, t.id);
+              if (res.changes > 0) {
+                n++;
+                ctx.emit({
+                  type: "task_unblocked",
+                  taskId: t.id,
+                  sessionId: "system",
+                  data: { unblocked_by: "doctor", status_changed: true },
+                });
+              }
+            }
+            return n;
+          },
+          { now: () => now, projectKey: opts.projectKey },
+        )
       : 0;
     issues.push({
       code: "stale_block",
@@ -279,31 +303,36 @@ function releaseOrphans(
   projectKey: string,
   now: number,
 ): number {
-  let fixed = 0;
-  for (const task of tasks) {
-    // ⚠ WHERE 必须带 project_key：id 是 per-project 的（ADR-9），不带就会
-    //   连带释放别的 project 里同号的卡（而那可能正被一个健康会话拿着）。
-    const result = db
-      .query(
-        `UPDATE tasks
-            SET status = 'todo', assignee_session_id = NULL, lease_expires_at = NULL, updated_at = ?
-          WHERE project_key = ? AND id = ? AND status = 'doing'`,
-      )
-      .run(now, projectKey, task.id);
-    if (result.changes > 0) {
-      fixed++;
-      db.query(
-        `INSERT INTO events (ts, session_id, type, task_id, plan_id, project_key, data)
-         VALUES (?, 'system', 'task_reclaimed', ?, NULL, ?, ?)`,
-      ).run(
-        now,
-        task.id,
-        projectKey,
-        JSON.stringify({ holder_crashed: true, fixed_by: "doctor" }),
-      );
-    }
-  }
-  return fixed;
+  // 单个事务里完成全部回收：UPDATE 与 task_reclaimed 事件同生共死，
+  // 中断不会留下"状态变了没日志"的半成品
+  return withTx(
+    db,
+    (ctx) => {
+      let fixed = 0;
+      for (const task of tasks) {
+        // ⚠ WHERE 必须带 project_key：id 是 per-project 的（ADR-9），不带就会
+        //   连带释放别的 project 里同号的卡（而那可能正被一个健康会话拿着）。
+        const result = ctx.db
+          .query(
+            `UPDATE tasks
+                SET status = 'todo', assignee_session_id = NULL, lease_expires_at = NULL, updated_at = ?
+              WHERE project_key = ? AND id = ? AND status = 'doing'`,
+          )
+          .run(now, projectKey, task.id);
+        if (result.changes > 0) {
+          fixed++;
+          ctx.emit({
+            type: "task_reclaimed",
+            taskId: task.id,
+            sessionId: "system",
+            data: { holder_crashed: true, fixed_by: "doctor" },
+          });
+        }
+      }
+      return fixed;
+    },
+    { now: () => now, projectKey },
+  );
 }
 
 /**

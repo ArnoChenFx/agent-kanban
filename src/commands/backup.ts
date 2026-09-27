@@ -21,7 +21,7 @@ import {
 import { resolvePaths } from "../core/paths.ts";
 import { closeDb, openDb, type Db } from "../core/db.ts";
 import { resolveLocalProject } from "../core/projects.ts";
-import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./args.ts";
+import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import { createOutput } from "./output.ts";
 import type { Scope } from "../core/tasks.ts";
 
@@ -92,6 +92,7 @@ function doExport(argv: string[]): ExitCodeValue {
     short: { h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "out", "since", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban export --out <dir> [--since <seq>]");
   const out = createOutput(getBool(args, "json"));
 
   const local = openLocal();
@@ -132,6 +133,7 @@ function doImport(argv: string[]): ExitCodeValue {
     short: { h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "dry-run", "keep-project", "dir", "project", "session", "db", "server", "key"]);
+  // import 收文件/目录路径作为位置参数（可多个），不设上限
 
   const json = getBool(args, "json");
   const dryRun = getBool(args, "dry-run", false);
@@ -216,6 +218,7 @@ function doSnapshot(argv: string[]): ExitCodeValue {
     short: { h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "out", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban snapshot --out <file>");
 
   const out = createOutput(getBool(args, "json"));
   const local = openLocal();
@@ -241,6 +244,7 @@ function doCompact(argv: string[]): ExitCodeValue {
     short: { h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "keep-days", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban compact [--keep-days N]");
 
   const out = createOutput(getBool(args, "json"));
   const local = openLocal();

@@ -15,7 +15,7 @@ import {
   inspectProtocol,
   resolveProtocolFile,
 } from "../core/protocol.ts";
-import { assertKnownOptions, getBool, getString, parseArgs } from "./args.ts";
+import { assertKnownOptions, getBool, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import { createOutput } from "./output.ts";
 
 const USAGE = `Usage: agent-kanban install-protocol [options]
@@ -46,6 +46,7 @@ export function cmdInstallProtocol(argv: string[]): ExitCodeValue {
     short: { h: "help" },
   });
   assertKnownOptions(args, ["json", "check", "help", "file"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban install-protocol [--check] [--file <path>]");
 
   if (getBool(args, "help")) {
     process.stdout.write(USAGE + "\n");

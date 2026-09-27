@@ -17,11 +17,12 @@ import {
   generateApiKey,
   hashApiKey,
   listProjects,
+  renameProject,
   rotateApiKey,
   validateProjectKey,
 } from "../core/projects.ts";
 import { findKanbanDir, resolvePaths } from "../core/paths.ts";
-import { assertKnownOptions, getBool, getString, parseArgs, requirePositional } from "./args.ts";
+import { assertKnownOptions, getBool, getString, parseArgs, rejectExtraPositionals, requirePositional } from "./args.ts";
 import { closeCtx, openCtx } from "./context.ts";
 import { createOutput } from "./output.ts";
 
@@ -102,6 +103,7 @@ async function projectList(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban project list");
   const json = getBool(args, "json");
   const out = createOutput(json);
 
@@ -182,6 +184,8 @@ async function projectShow(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "db", "server", "project", "key"]);
+  // project key 可以用位置参数给
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban project show [key]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx({
@@ -225,6 +229,7 @@ async function projectAdd(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", n: "name", r: "root" },
   });
   assertKnownOptions(args, ["json", "help", "no-key", "name", "root", "db"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban project add <key> [--name <name>] [--root <path>]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const key = requirePositional(args, 0, "project key", "Usage: agent-kanban project add <key> [--name <name>] [--root <path>]");
@@ -271,6 +276,7 @@ async function projectRename(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", n: "name" },
   });
   assertKnownOptions(args, ["json", "help", "name", "db"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban project rename <key> --name <new-name>");
   const out = createOutput(getBool(args, "json"));
   const key = requirePositional(args, 0, "project key", "Usage: agent-kanban project rename <key> --name <new-name>");
   const name = getString(args, "name");
@@ -278,9 +284,10 @@ async function projectRename(argv: string[]): Promise<ExitCodeValue> {
 
   const handle = openLocalDb(process.cwd(), getString(args, "db"));
   try {
-    handle.raw.query("UPDATE projects SET name = ? WHERE key = ?").run(name, key);
-    out.line(`${style.green("✓")} ${style.cyan(key)} renamed to ${name}`);
-    out.data({ key, name });
+    // 走 core 而不是裸 UPDATE：不存在的 key 要报错，曾经不存在的 key 也报"renamed"
+    const project = renameProject(handle.raw, key, name);
+    out.line(`${style.green("✓")} ${style.cyan(key)} renamed to ${project.name}`);
+    out.data({ key: project.key, name: project.name });
     return ExitCode.OK;
   } finally {
     handle.raw.close();
@@ -295,6 +302,7 @@ async function projectKey(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "rotate", "db"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban project key <key>");
   const out = createOutput(getBool(args, "json"));
   const key = requirePositional(args, 0, "project key", "Usage: agent-kanban project key <key>");
 

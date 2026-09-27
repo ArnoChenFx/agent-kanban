@@ -118,42 +118,50 @@ export function rebuild(db: Database, opts: RebuildOptions): RebuildReport {
   const startedAt = opts.now ?? Date.now();
   const projectKey = opts.projectKey;
 
-  // ---- 1. 读事件流（只读本 project）----
-  const rows = db
-    .query<{
-      seq: number;
-      ts: number;
-      session_id: string | null;
-      type: string;
-      task_id: string | null;
-      plan_id: string | null;
-      project_key: string | null;
-      data: string | null;
-    }, [string, number]>(
-      `SELECT seq, ts, session_id, type, task_id, plan_id, project_key, data
-         FROM events
-        WHERE project_key = ? AND seq >= ?
-        ORDER BY seq ASC`,
-    )
-    .all(projectKey, opts.fromSeq ?? 0);
-
-  // ---- 2. 内存重放 ----
+  // ---- 1+2. 读事件流（只读本 project）→ 内存重放 ----
   const proj: Projection = { tasks: new Map(), deps: new Map(), plans: new Map(), handoffs: new Map() };
   let replayed = 0;
-  for (const row of rows) {
-    // 只认属于本 project 的事件（sessions 表是全局的，但事件流按 project 隔离）
-    if (row.project_key !== projectKey) continue;
-    applyEvent(proj, toEvent(row));
-    replayed++;
-  }
+  const readAndReplay = (): void => {
+    proj.tasks.clear(); proj.deps.clear(); proj.plans.clear(); proj.handoffs.clear();
+    replayed = 0;
+    const rows = db
+      .query<{
+        seq: number;
+        ts: number;
+        session_id: string | null;
+        type: string;
+        task_id: string | null;
+        plan_id: string | null;
+        project_key: string | null;
+        data: string | null;
+      }, [string, number]>(
+        `SELECT seq, ts, session_id, type, task_id, plan_id, project_key, data
+           FROM events
+          WHERE project_key = ? AND seq >= ?
+          ORDER BY seq ASC`,
+      )
+      .all(projectKey, opts.fromSeq ?? 0);
+    for (const row of rows) {
+      // 只认属于本 project 的事件（sessions 表是全局的，但事件流按 project 隔离）
+      if (row.project_key !== projectKey) continue;
+      applyEvent(proj, toEvent(row));
+      replayed++;
+    }
+  };
+  readAndReplay();
 
   // ---- 3. 逐字段比对 ----
   const drift: FieldDrift[] = [];
   const incomplete: RebuildReport["incomplete"] = [];
-  compareTasks(db, projectKey, proj, drift, incomplete);
-  compareDeps(db, projectKey, proj, drift);
-  comparePlans(db, projectKey, proj, drift, incomplete);
-  compareHandoffs(db, projectKey, proj, drift, incomplete);
+  const compareAll = (): void => {
+    drift.length = 0;
+    incomplete.length = 0;
+    compareTasks(db, projectKey, proj, drift, incomplete);
+    compareDeps(db, projectKey, proj, drift);
+    comparePlans(db, projectKey, proj, drift, incomplete);
+    compareHandoffs(db, projectKey, proj, drift, incomplete);
+  };
+  compareAll();
 
   // ---- 4. 可选写回 ----
   let written = false;
@@ -161,7 +169,19 @@ export function rebuild(db: Database, opts: RebuildOptions): RebuildReport {
     // 整个写回在一个事务里：DELETE 4 张表再逐行 INSERT，
     // 中途出错（约束、磁盘满）必须整体回滚，否则会留下"表被清空但没填回"的半写状态。
     // 那种状态比漂移严重得多——漂移只是数据不对，半写是数据没了。
-    withTx(db, () => writeProjection(db, projectKey, proj), { now: () => Date.now() });
+    //
+    // 事务内还要**重读重放**一遍：上面的读发生在事务外，若这期间另一个 agent
+    // 提交了新事件，用陈旧快照覆盖投影会丢更新。重放是纯内存操作，代价可忽略。
+    withTx(
+      db,
+      () => {
+        readAndReplay();
+        compareAll();
+        if (drift.length === 0 || opts.force) writeProjection(db, projectKey, proj);
+        return true;
+      },
+      { now: () => Date.now() },
+    );
     written = true;
   }
 

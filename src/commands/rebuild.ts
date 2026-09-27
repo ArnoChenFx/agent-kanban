@@ -12,7 +12,7 @@
 import { ExitCode, type ExitCodeValue } from "../core/errors.ts";
 import { style } from "../core/format.ts";
 import type { FieldDrift } from "../core/rebuild.ts";
-import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./args.ts";
+import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import { closeCtx, openCtx } from "./context.ts";
 import { createOutput } from "./output.ts";
 
@@ -38,6 +38,7 @@ export async function cmdRebuild(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", w: "write", f: "force" },
   });
   assertKnownOptions(args, ["json", "help", "write", "force", "from-seq", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban rebuild [--write] [--force] [--from-seq N]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));

@@ -83,6 +83,9 @@ export const EVENT_TYPES = [
   "board_imported",
   "snapshot_written",
   "protocol_installed",
+  // 审计（与 token_*/project_* 同类：rebuild 刻意不消费）
+  "project_deleted",
+  "system_notice",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

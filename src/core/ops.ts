@@ -704,7 +704,8 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         projectKey: ctx.projectKey,
         sinceSeq: op.params.after_seq,
         order: "asc",
-        limit: op.params.limit ?? 200,
+        // 不钳制的话 limit: 1e9 会把整张 events 表塞进一个响应
+        limit: clampInt(op.params.limit, 1, PAGE_LIMIT_MAX, 200),
       });
       // 同样必须过 eventToJson：SSE 收到的每条事件都靠它把 session_id 送到前端
       return { data: rows.map((r) => eventToJson(toEvent(r))), nextActions: [] };
@@ -755,7 +756,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
     case "handoff.list": {
       requireTask(scope, op.params.task_id);
       const now = ctx.now();
-      const items = taskHandoffs(scope, op.params.task_id, op.params.limit ?? 50).map((h) => {
+      const items = taskHandoffs(scope, op.params.task_id, clampInt(op.params.limit, 1, PAGE_LIMIT_MAX, 50)).map((h) => {
         const t = getTask(scope, h.taskId);
         return {
           id: h.id,
@@ -970,7 +971,12 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
           project: ctx.projectKey,
         });
       }
-      const counts = listTasks(scope, { includeTerminal: true, limit: 1000 });
+      // 直接 COUNT(*)：曾经用 listTasks(limit:1000).length 数数——
+      // 超过 1000 张卡时报错数，还平白拉全量行
+      const taskCount =
+        ctx.db
+          .query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM tasks WHERE project_key = ?")
+          .get(ctx.projectKey)?.c ?? 0;
       return {
         data: {
           key: project.key,
@@ -978,7 +984,7 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
           root_path: project.rootPath,
           requires_key: project.apiKeyHash !== null,
           created_at: project.createdAt,
-          task_count: counts.length,
+          task_count: taskCount,
           event_count: countEvents(ctx.db, ctx.projectKey),
         },
         nextActions: [],

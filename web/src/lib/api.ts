@@ -565,6 +565,9 @@ export function subscribeEventsWithTicket(
       onStateChange?.(false)
       return
     }
+    // 旧连接必须先关：EventSource 在 onerror 后会自带重连循环，而票是一次性的，
+    // 旧对象拿核销的票只会反复 401——不 close 就会随着每次重连积累僵尸连接
+    source?.close()
     source = new EventSource(`${makeStreamUrl(project, afterSeq)}&ticket=${encodeURIComponent(ticket)}`)
     source.onopen = () => onStateChange?.(true)
     source.onerror = () => {

@@ -22,7 +22,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { getSchemaVersion, migrate, openDb, setInitialConfig, SCHEMA_VERSION, type Db } from "../src/core/db.ts";
-import { createProject } from "../src/core/projects.ts";
+import { createProject, deleteProject } from "../src/core/projects.ts";
 import {
   addDependency,
   createTask,
@@ -175,6 +175,28 @@ describe("task_deps 跨 project 隔离（v3→v4 补的那一刀）", () => {
       .all()
       .map((r) => r.project_key);
     expect(remaining).toEqual([P2]);
+  });
+
+  test("删 project 只清本 project 的依赖边（IN 子查询按编号匹配会误伤同号边）", () => {
+    const p1a = makeTask(P1, "p1 的下游");
+    const p1b = makeTask(P1, "p1 的上游");
+    const p2a = makeTask(P2, "p2 的下游");
+    const p2b = makeTask(P2, "p2 的上游");
+    linkDep(P1, p1a, p1b);
+    linkDep(P2, p2a, p2b);
+
+    // 曾经的写法：task_id IN (SELECT id FROM tasks WHERE project_key = ?) ——
+    // 两个 project 都有 T-0001/T-0002，删 p1 会把 p2 的边一并带走
+    deleteProject(t.db, P1, true);
+
+    const remaining = t.db
+      .query<{ project_key: string; task_id: string }, []>(
+        "SELECT project_key, task_id FROM task_deps",
+      )
+      .all();
+    expect(remaining).toEqual([{ project_key: P2, task_id: p2a }]);
+    // p2 的读路径不受影响
+    expect(getDependencies(t.scopeOf(P2), p2a).map((d) => d.dependsOnId)).toEqual([p2b]);
   });
 });
 

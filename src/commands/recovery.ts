@@ -21,7 +21,7 @@ import {
 } from "../core/format.ts";
 import type { Op } from "../core/ops.ts";
 import { resolveSessionKey } from "../core/paths.ts";
-import { assertKnownOptions, getBool, getInt, getString, parseArgs, requirePositional } from "./args.ts";
+import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals, requirePositional } from "./args.ts";
 import { closeCtx, currentSessionId, openCtx, resolveSessionId } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
@@ -65,12 +65,10 @@ export async function cmdContext(argv: string[]): Promise<ExitCodeValue> {
       return resumeCommand(argv.slice(1));
     case "doctor":
       return doctorCommand(argv.slice(1));
-    case undefined:
-    case "help":
-    case "--help":
-      return contextCommand(argv);
     default:
-      return contextCommand(argv);
+      // cli.ts 把命令名自己塞在 argv[0]（`[command!, ...withGlobals()]`），
+      // 这里必须剥掉，否则 "context" 会被当成位置参数
+      return contextCommand(sub === undefined ? argv : argv.slice(1));
   }
 }
 
@@ -85,6 +83,7 @@ async function contextCommand(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", t: "task" },
   });
   assertKnownOptions(args, ["json", "help", "no-consume", "task", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban context [--no-consume]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -301,14 +300,16 @@ async function resumeCommand(argv: string[]): Promise<ExitCodeValue> {
   assertKnownOptions(args, ["json", "help", "force", "tail", "session", "db", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
+  // help 必须先于 requirePositional：否则 `resume --help` 报的是"缺 task id"
+  if (getBool(args, "help")) {
+    out.line(RESUME_USAGE);
+    return ExitCode.OK;
+  }
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban resume <task-id> [--force]");
   const ctx = openCtx(ctxOptions(args, json));
   const taskId = requirePositional(args, 0, "task id", RESUME_USAGE);
 
   try {
-    if (getBool(args, "help")) {
-      out.line(RESUME_USAGE);
-      return ExitCode.OK;
-    }
 
     // resume 需要明确的会话身份（否则无法记录是谁接手的）
     resolveSessionId(ctx, getString(args, "session"));
@@ -421,6 +422,7 @@ async function doctorCommand(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", d: "deep", f: "fix" },
   });
   assertKnownOptions(args, ["json", "help", "deep", "fix", "session", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban doctor [--deep] [--fix]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));

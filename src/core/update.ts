@@ -142,15 +142,21 @@ export async function fetchLatestRelease(
 ): Promise<LatestRelease> {
   const res = await apiGet(`https://api.github.com/repos/${repo}/releases/latest`, fetchImpl);
   if (res.status === 404) {
-    throw new Error(`no published release found in ${repo}`);
+    // 这些都是环境问题（仓库没发版 / 限流 / 网络故障），可重试可配置，
+    // 不是"该上报的缺陷"——归类 STATE(2) 而不是裸 Error 兜底的 INTERNAL(6)
+    throw KanbanError.state(`no published release found in ${repo}`, { reason: "release_not_found", repo });
   }
   if (res.status === 403) {
-    throw new Error(
+    throw KanbanError.state(
       "GitHub API request was rejected (rate limit is 60 requests/hour without a token); set GITHUB_TOKEN or retry later",
+      { reason: "github_rate_limited", repo },
     );
   }
   if (!res.ok) {
-    throw new Error(`GitHub API request failed: HTTP ${res.status}`);
+    throw KanbanError.state(`GitHub API request failed: HTTP ${res.status}`, {
+      reason: "github_http_error",
+      status: res.status,
+    });
   }
   const body = (await res.json()) as {
     tag_name?: unknown;
@@ -273,7 +279,10 @@ export function applyUpdate(opts: { exePath: string; binary: Uint8Array }): { ex
     renameSync(exePath, oldFile);
   } catch (err) {
     rmSync(newFile, { force: true });
-    throw new Error(`cannot rename the running binary: ${err instanceof Error ? err.message : String(err)}`);
+    throw KanbanError.state(
+      `cannot rename the running binary: ${err instanceof Error ? err.message : String(err)}`,
+      { reason: "binary_rename_failed" },
+    );
   }
 
   try {
@@ -284,9 +293,10 @@ export function applyUpdate(opts: { exePath: string; binary: Uint8Array }): { ex
     } catch {
       // 回滚也失败时,原文件仍在 <exe>.old,提示手动还原
     }
-    throw new Error(
+    throw KanbanError.state(
       `failed to move the new binary into place: ${err instanceof Error ? err.message : String(err)}` +
         (existsSync(oldFile) ? `; the original binary was restored, or is kept at ${oldFile}` : ""),
+      { reason: "binary_move_failed" },
     );
   }
   return { exePath, backupPath: oldFile };

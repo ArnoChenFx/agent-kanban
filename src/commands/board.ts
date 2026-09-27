@@ -20,7 +20,7 @@ import {
   truncate,
 } from "../core/format.ts";
 import type { TaskStatus } from "../core/types.ts";
-import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./args.ts";
+import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import { closeCtx, openCtx } from "./context.ts";
 import { createOutput, type Output } from "./output.ts";
 
@@ -52,6 +52,7 @@ export async function cmdBoard(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", r: "ready", m: "mine", a: "all", h: "help" },
   });
   assertKnownOptions(args, ["json", "ready", "mine", "all", "help", "db", "session", "server", "project", "key", "limit"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban board [--ready] [--mine] [--limit N]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx({

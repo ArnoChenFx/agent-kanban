@@ -18,8 +18,9 @@ import {
   type KanbanMode,
 } from "../core/config.ts";
 import { slugifyProjectKey } from "../core/projects.ts";
+import { maskToken as maskSecret } from "../core/tokens.ts";
 import { findKanbanDir, findKanbanDirLoose } from "../core/paths.ts";
-import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./args.ts";
+import { assertKnownOptions, getBool, getInt, getString, parseArgs, rejectExtraPositionals } from "./args.ts";
 import { createOutput } from "./output.ts";
 
 const USAGE = `Usage: agent-kanban config <subcommand>
@@ -88,11 +89,13 @@ function ensureKanbanDir(cwd = process.cwd()): string {
   return dir;
 }
 
-/** 掩码 token：只显示前后几位 */
+/**
+ * 掩码 token：看着像密钥（k_ 开头）就走 core 的统一规则，否则原样显示。
+ * 曾经这里对 ≤12 字符的 token 不加 --reveal 也全文显示——短密钥也是密钥。
+ */
 function maskToken(token: string | undefined): string {
   if (!token) return style.yellow("not set");
-  if (token.length <= 12) return token;
-  return `${token.slice(0, 8)}…${token.slice(-4)} (${token.length} chars)`;
+  return maskSecret(token);
 }
 
 /** config show：显示生效配置与来源 */
@@ -103,6 +106,7 @@ async function configShow(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "reveal", "raw", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban config show [--reveal]");
   const json = getBool(args, "json");
   const out = createOutput(json);
 
@@ -183,6 +187,7 @@ async function configInit(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "force", "local", "remote", "server", "project", "key", "name", "host", "port", "db"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban config init --server <url> --project <key> --key <token>");
   const json = getBool(args, "json");
   const out = createOutput(json);
 
@@ -266,6 +271,7 @@ async function configSet(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban config set <field> <value>");
   const json = getBool(args, "json");
   const out = createOutput(json);
 
@@ -354,6 +360,7 @@ async function configUse(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban config use local | remote");
   const json = getBool(args, "json");
   const out = createOutput(json);
 
@@ -396,6 +403,7 @@ async function configPath(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "db"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban config path");
   const json = getBool(args, "json");
   const out = createOutput(json);
 

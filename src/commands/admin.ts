@@ -32,7 +32,7 @@ import {
   type TokenRole,
 } from "../core/tokens.ts";
 import { projectInfoForCli } from "./project.ts";
-import { assertKnownOptions, getBool, getList, getString, parseArgs, requirePositional } from "./args.ts";
+import { assertKnownOptions, getBool, getList, getString, parseArgs, rejectExtraPositionals, requirePositional } from "./args.ts";
 import { closeCtx, openCtx, type Ctx } from "./context.ts";
 import { createOutput } from "./output.ts";
 import { RemoteBackend } from "../core/backend-remote.ts";
@@ -167,6 +167,7 @@ async function projectList(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban admin project list");
   const json = getBool(args, "json");
   const out = createOutput(json);
 
@@ -224,6 +225,7 @@ async function projectAdd(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", n: "name", r: "root" },
   });
   assertKnownOptions(args, ["json", "help", "name", "root", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban admin project add <key> [--name <name>]");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const key = requirePositional(args, 0, "project key", "Usage: agent-kanban admin project add <key> [--name <name>]");
@@ -275,6 +277,7 @@ async function projectDelete(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", f: "force" },
   });
   assertKnownOptions(args, ["json", "help", "force", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban admin project delete <key> --force");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const key = requirePositional(args, 0, "project key", "Usage: agent-kanban admin project delete <key> --force");
@@ -326,6 +329,7 @@ async function projectRename(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", n: "name" },
   });
   assertKnownOptions(args, ["json", "help", "name", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban admin project rename <key> --name <new name>");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const key = requirePositional(args, 0, "project key", "Usage: agent-kanban admin project rename <key> --name <new name>");
@@ -398,6 +402,7 @@ async function tokenList(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", a: "all" },
   });
   assertKnownOptions(args, ["json", "help", "all", "role", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 0, "Usage: agent-kanban admin token list [--all] [--role project|admin]");
   const json = getBool(args, "json");
   const out = createOutput(json);
 
@@ -484,6 +489,7 @@ async function tokenCreate(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", p: "project", n: "name", r: "role" },
   });
   assertKnownOptions(args, ["json", "help", "project", "name", "note", "role", "expires-in", "db", "server", "key"]);
+  rejectExtraPositionals(args, 0, 'Usage: agent-kanban admin token create --project <key> --name "CI runner"');
   const json = getBool(args, "json");
   const out = createOutput(json);
 
@@ -559,6 +565,7 @@ async function tokenGrant(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", p: "project" },
   });
   assertKnownOptions(args, ["json", "help", "replace", "project", "db", "server", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban admin token grant <token> --project <key>");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const tokenId = requirePositional(args, 0, "token", "Usage: agent-kanban admin token grant <token> --project <key>");
@@ -617,6 +624,7 @@ async function tokenRevoke(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help" },
   });
   assertKnownOptions(args, ["json", "help", "yes", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban admin token revoke <token>");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const tokenId = requirePositional(args, 0, "token", "Usage: agent-kanban admin token revoke <token>");
@@ -653,6 +661,7 @@ async function tokenRename(argv: string[]): Promise<ExitCodeValue> {
     short: { j: "json", h: "help", n: "name" },
   });
   assertKnownOptions(args, ["json", "help", "name", "note", "db", "server", "project", "key"]);
+  rejectExtraPositionals(args, 1, "Usage: agent-kanban admin token rename <token> --name <new name>");
   const json = getBool(args, "json");
   const out = createOutput(json);
   const tokenId = requirePositional(args, 0, "token", "Usage: agent-kanban admin token rename <token> --name <new name>");

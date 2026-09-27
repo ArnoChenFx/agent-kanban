@@ -378,12 +378,14 @@ export function compactEvents(
       .get(opts.projectKey)?.n ?? 0;
   const cutoff = opts.now - opts.keepDays * 86_400_000;
 
-  // 保底：至少留下最近 1000 条（无论多旧）
+  // 保底：至少留下最近 1000 条（无论多旧）。
+  // 只在本 project 内数 OFFSET：seq 是全局的，跨 project 排序会让保留量随
+  // 别的 project 的事件量漂移
   const floorSeq = db
-    .query<{ seq: number | null }, []>(
-      "SELECT seq FROM events ORDER BY seq DESC LIMIT 1 OFFSET 999",
+    .query<{ seq: number | null }, [string]>(
+      "SELECT seq FROM events WHERE project_key = ? ORDER BY seq DESC LIMIT 1 OFFSET 999",
     )
-    .get()?.seq;
+    .get(opts.projectKey)?.seq;
 
   // 进行中任务的事件一律保留：租约回收与 rebuild 都要读它们
   const liveTaskIds = listTasks(opts.scope, { includeTerminal: false, limit: 1000 })

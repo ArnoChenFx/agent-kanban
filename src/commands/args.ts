@@ -215,3 +215,21 @@ export function requirePositional(args: ParsedArgs, index: number, name: string,
   }
   return value;
 }
+
+/**
+ * 拒绝多余的位置参数。
+ *
+ * parseArgs 把没被 spec 声明的东西按“有横杠 = 选项、没横杠 = 位置参数”分开，
+ * 而 assertKnownOptions 只校验 options——于是 `update check` 里少写横杠的
+ * `check` 落进 positionals 被完整忽略，命令照常跑（update 因此真的拉下并
+ * 替换过正在运行的二进制）。不接受位置参数的命令必须显式拒绝。
+ */
+export function rejectExtraPositionals(args: ParsedArgs, maxCount: number, usage: string): void {
+  const extra = args.positionals[maxCount];
+  if (extra === undefined) return;
+  const bare = extra.replace(/^-+/, "");
+  throw KanbanError.usage(
+    `unexpected argument: ${extra}${bare !== extra && bare.length > 0 ? " (did you mean --" + bare + "?)" : ""}`,
+    usage,
+  );
+}

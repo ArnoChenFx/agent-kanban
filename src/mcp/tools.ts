@@ -435,7 +435,8 @@ export const TOOLS: ToolSchema[] = [
     inputSchema: {
       type: "object",
       properties: {
-        include_ready: { type: "boolean", description: "default true" },
+        // 注意：没有 include_ready —— board.get 不支持这个参数，
+        // 声明了却不读会让模型以为传了就生效（静默失效最难查）
         include_done: { type: "boolean" },
       },
     },

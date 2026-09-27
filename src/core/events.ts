@@ -235,6 +235,10 @@ export function describeEvent(event: KanbanEvent): string {
       return "board exported";
     case "board_imported":
       return "board imported";
+    case "project_deleted":
+      return `project ${d.key ?? ""} deleted`;
+    case "system_notice":
+      return d.action ? `system: ${String(d.action)}` : "system notice";
     case "snapshot_written":
       return "snapshot written";
     case "protocol_installed":

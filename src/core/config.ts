@@ -29,7 +29,7 @@
  *   admin_token_hash = "sha256:..."   # 校验用
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { KanbanError } from "./errors.ts";
 import {
@@ -289,6 +289,8 @@ export function writeConfigFile(kanbanDir: string, config: KanbanConfigFile): st
   ].join("\n");
 
   writeFileSync(path, stringifyTomlWithHeader(obj, header), "utf8");
+  // POSIX 上收紧权限（文件里有 token）；Windows 的 chmod 是近似 no-op，调用无害
+  if (process.platform !== "win32") chmodSync(path, 0o600);
   return path;
 }
 
