@@ -446,15 +446,19 @@ harness 都能零配置接上。注意要从项目根启动 harness——`comman
 }
 ```
 
-20 个工具，全部是 CLI 同一套 core 的薄封装：
+29 个工具，全部是 CLI 同一套 core 的薄封装：
 
 | 分组 | 工具 |
 |---|---|
 | 会话 | `kanban_session_start` / `kanban_bootstrap` / `kanban_session_end` |
-| 任务 | `kanban_task_list` / `get` / `create` / `claim` / `progress` / `note` / `block` / `unblock` / `complete` / `review` |
+| 任务 | `kanban_task_list` / `get` / `create` / `claim` / `progress` / `note` / `block` / `unblock` / `complete` / `review` / `release` / `cancel` / `reopen` / `remove` |
+| 依赖 | `kanban_task_dep_add` / `dep_remove` / `dep_list` |
 | 恢复 | `kanban_resume` / `kanban_handoff` |
-| 计划 | `kanban_plan_save` / `show` / `diff` |
+| 计划 | `kanban_plan_save` / `show` / `list` / `history` / `diff` |
 | 看板 | `kanban_board` / `kanban_doctor` |
+
+各工具的参数见 [docs/plan/002-接口契约.md §3.2](docs/plan/002-接口契约.md)；同一节里还列了
+**刻意不暴露**给 agent 的操作（如 project 与 token 管理）及其原因。
 
 agent 被期望跑的训练流程：
 
@@ -507,10 +511,17 @@ skill 实体放在本仓库的 `skills/` 下，所以任何项目都能装，不
 安全，而且丢了能恢复。`.kanban/kanban.db` 是个 SQLite 文件：它本来就是构建产物、
 合并也麻烦。不入 git 是刻意的。
 
-这个文件里**只有 token 的哈希、没有 token 本身**：`id` 列是一个独立的随机引用
+这个文件里**只有 token 的哈希**：本版本签发的每个 token，其 `id` 列都是独立的随机引用
 （`t_…`），只用来在 admin 接口里寻址；鉴权时拿 `sha256(token)` 跟 `key_hash` 比对。
 旧版本把 token 本身存在 `id` 里，于是**任何一份数据库副本**——备份、`export` 产物、
-截图——都等于把全部在用的凭据送出去。从那个版本升级上来的，请重新签发 token。
+截图——都等于把全部在用的凭据送出去。
+
+从那个版本升级上来，**这些 token 本身不需要做任何处理**：`key_hash` 一直就算对了，
+它们照常可用。但没有任何迁移会去重写那些老行，明文仍在它们的 `id` 列里；而凡是显示
+token 的地方，看着像密钥的 `id` 一律打掩码。于是 `admin token list` 与管理页会把这些行
+截断显示，**在界面上无法给它们改授权或吊销**。改用命令行处理：
+`agent-kanban admin token revoke <token>`（老行的 `id` 就是 token 本身，所以传密钥），
+或者重新签发一个、把旧的吊销掉。
 
 **入 git 的是 `.kanban/journal/`** —— 只追加的事件流，每次变更一行 JSON，按天分文件。
 既然事件是事实来源、看板只是投影，那么在新机器上重放这个日志就能完整重建：

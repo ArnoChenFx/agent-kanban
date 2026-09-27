@@ -1,5 +1,5 @@
 -- =============================================================================
--- agent-kanban 数据库 schema（v5：plans 主键含 project_key）
+-- agent-kanban 数据库 schema（v6：tokens.key_hash 加 UNIQUE 索引）
 --
 -- 设计依据见 docs/plan/001-总体设计.md：
 --   §4 数据模型 / ADR-1 事件溯源 / ADR-2 并发 / ADR-4 租约
@@ -27,9 +27,11 @@
 --   project  —— 项目级：只能访问 projects 白名单里列出的 project
 --
 -- 安全：库里只存 key_hash（SHA-256），明文只在创建/轮换时显示一次。
+-- ⚠ id 列存的是**独立随机引用**（t_ + 32 hex），不是密钥，也不承担鉴权职责；
+--   鉴权一律走下面的 key_hash 唯一索引（v6 加的 UNIQUE）。
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS tokens (
-  id           TEXT PRIMARY KEY,          -- k_ + 32 hex
+  id           TEXT PRIMARY KEY,          -- t_ + 32 hex：独立引用，**不是密钥**
   name         TEXT,                      -- 人类可读名（admin 界面/审计用）
   role         TEXT NOT NULL,             -- admin | project
   projects     TEXT,                      -- JSON 数组：role=project 时的白名单
@@ -43,6 +45,10 @@ CREATE TABLE IF NOT EXISTS tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_tokens_role    ON tokens(role);
 CREATE INDEX IF NOT EXISTS idx_tokens_active  ON tokens(revoked_at, expires_at);
+-- v6：鉴权的唯一依据就是 key_hash（authenticate 走 WHERE key_hash = ?）。
+-- 没有这条索引时每个请求都全表扫描；UNIQUE 还把「一个明文 key 只能对应一行」
+-- 从应用层的「先查再插」（并发下会漏）下沉成数据库约束。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_key_hash ON tokens(key_hash);
 
 -- -----------------------------------------------------------------------------
 -- 项目（ADR-9）

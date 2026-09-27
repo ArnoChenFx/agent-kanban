@@ -25,6 +25,11 @@
  * 所以这里反向做：**枚举 `EVENT_TYPES`，断言每个都在两个 switch 里有 case**。
  * 新增事件类型而忘了加 case，`bun test` 立刻失败。
  *
+ * 集合比较只能回答「有没有 case」，回答不了「case 标签是不是只出现一次」。
+ * 补 case 时把旧的那份忘删，就会留下一条永远不可达的分支——它不报错、不影响
+ * 输出，却能让两份实现在下一次修改时**悄悄分叉**（改了一处、另一处不动）。
+ * 所以另有一条断言专门盯重复。
+ *
  * `default: return event.type` 那个兜底**故意留着**（向前兼容：
  * 旧 CLI 遇到新服务端的事件类型时不该崩），但它不再意味着「漏了就悄悄退化」。
  */
@@ -40,19 +45,27 @@ import { describeEvent as describeEventWeb } from "../src/core/events.ts";
 const ROOT = resolve(import.meta.dir, "..");
 
 /**
- * 抽出**某个函数体内**的所有 `case "xxx":`。
+ * 抽出**某个函数体内**的所有 `case "xxx":`，**保留重复**。
  *
  * 不能全文扫：context.ts 里还有 renderNextAction 的 switch（NextActionCode），
  * 全文扫会把那些代号当成事件类型，误报「两个函数 case 集合不一致」。
  */
-function casesInFunction(rel: string, fnName: string): Set<string> {
+function caseLabelsInFunction(rel: string, fnName: string): string[] {
   const src = readFileSync(join(ROOT, rel), "utf8");
   const start = src.indexOf(`function ${fnName}(`);
-  if (start === -1) return new Set();
+  if (start === -1) return [];
   // 函数体到行首的 `}` 为止（本仓库的函数都是这个收尾风格）
   const end = src.indexOf("\n}", start);
   const body = src.slice(start, end === -1 ? undefined : end);
-  return new Set([...body.matchAll(/case "([a-z_]+)"/g)].map((m) => m[1]!));
+  return [...body.matchAll(/case "([a-z_]+)"/g)].map((m) => m[1]!);
+}
+
+/**
+ * 同上，但去重——「有没有 case」是集合问题；
+ * 「case 标签是不是只出现一次」是另一条测试的事，两者不能互相代替。
+ */
+function casesInFunction(rel: string, fnName: string): Set<string> {
+  return new Set(caseLabelsInFunction(rel, fnName));
 }
 
 describe("事件渲染：必须穷尽 EVENT_TYPES", () => {
@@ -72,6 +85,24 @@ describe("事件渲染：必须穷尽 EVENT_TYPES", () => {
     const onlyInA = [...a].filter((x) => !b.has(x)).sort();
     const onlyInB = [...b].filter((x) => !a.has(x)).sort();
     expect({ onlyInA, onlyInB }).toEqual({ onlyInA: [], onlyInB: [] });
+  });
+
+  test("case 标签不得重复（重复的那条永远不可达）", () => {
+    // 上面两条都是**集合**比较：只要「每个类型都有 case」就绿，它们看不见重复。
+    // 而重复 case 是补 case 时忘删旧行留下的——不报错、不影响输出，
+    // 但两份实现在下一次修改时会悄悄分叉。
+    for (const [rel, fn] of [
+      ["src/core/events.ts", "describeEvent"],
+      ["src/core/context.ts", "describeEventBrief"],
+    ] as const) {
+      const seen = new Set<string>();
+      const dupes = new Set<string>();
+      for (const label of caseLabelsInFunction(rel, fn)) {
+        if (seen.has(label)) dupes.add(label);
+        seen.add(label);
+      }
+      expect({ fn, dupes: [...dupes].sort() }).toEqual({ fn, dupes: [] });
+    }
   });
 });
 

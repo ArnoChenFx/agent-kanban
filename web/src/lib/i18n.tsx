@@ -198,6 +198,15 @@ const zh = {
   "handoff.empty": "还没有交接记录",
   "handoff.emptyHint": "用卡片菜单的「写交接」给下一个 agent 留话",
 
+  // ---- 计划页签（版本链 + 正文） ----
+  "plan.versions": "版本",
+  "plan.savedAt": "保存于 {time}",
+  "plan.currentIs": "当前生效的是 v{version}",
+  // 计划 status 是界面自己说的话，不能把后端枚举值直接印上去
+  "plan.status.active": "生效中",
+  "plan.status.superseded": "已被顶替",
+  "plan.status.draft": "草稿",
+
   // ---- 会话面板 ----
   "sessions.empty": "还没有活跃会话",
   "sessions.stale": "失联",
@@ -552,6 +561,13 @@ const en: Record<MessageKey, string> = {
   "handoff.nextStep": "Next step:",
   "handoff.empty": "No handoffs yet",
   "handoff.emptyHint": "Use \"Write handoff\" in the card menu to leave a note for the next agent",
+
+  "plan.versions": "Versions",
+  "plan.savedAt": "saved {time}",
+  "plan.currentIs": "v{version} is in effect now",
+  "plan.status.active": "Active",
+  "plan.status.superseded": "Superseded",
+  "plan.status.draft": "Draft",
 
   "sessions.empty": "No active sessions",
   "sessions.stale": "Unresponsive",

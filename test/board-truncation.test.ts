@@ -183,7 +183,12 @@ describe("接线守卫：Web 侧必须真的用了 truncated", () => {
     const body = src.slice(start, src.indexOf('path === "/api/events"', start));
     expect(body).toMatch(/limit/);
     expect(body).toMatch(/offset/);
-    // 必须有上界，不是直接 Number() 透传
-    expect(body).toMatch(/Math\.min\(/);
+    // 必须走 core 的 clampInt + 与 Op 同一组常量。
+    // ⚠ 别改回断言 `Math.min(`：那是**实现形状**——clampInt 一接管就不匹配了，
+    //   而它本来防的是「没有上界」，不是「用什么写法写上界」。判复用关系才不漂移。
+    expect(body).toMatch(/clampInt\(/);
+    expect(body).toMatch(/PAGE_LIMIT_MAX/);
+    // 反向：REST 层不得再出现自己那套 Math.min 钳制（上界只应有一个出处）
+    expect(body).not.toMatch(/Math\.min\(/);
   });
 });

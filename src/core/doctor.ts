@@ -198,7 +198,7 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
     if (projIssue) issues.push(projIssue);
   }
 
-  // ---- 8. 已完成但检查项没勾完 ----
+  // ---- 7. 已完成但检查项没勾完 ----
   // 「done」是一个**断言**：它声称工作做完了。但 checklist 是这个断言的证据链，
   // 而证据与断言可以各走各的——本项目开发期间真的出现过：两张卡被标 done，
   // 而它们的 checklist 全部未勾（关卡时把命令输出 `*> $null` 吞了，失败看不见）。
@@ -223,7 +223,7 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
     });
   }
 
-  // ---- 7. 协作协议是否落后于当前 CLI ----
+  // ---- 8. 协作协议是否落后于当前 CLI ----
   // agent 靠 AGENTS.md 里的受管区块知道怎么用看板。升级了 kanban 却不更新，
   // agent 会照着旧协议执行已经不存在的命令。只能提示，不能自动修。
   const protocolIssue = checkProtocol(opts.projectRoot);

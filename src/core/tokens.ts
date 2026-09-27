@@ -8,7 +8,11 @@
  * - server 首次启动必须有一个管理员 token。
  *
  * 设计要点：
- * 1. **库里只存哈希**，明文只在签发/轮换时返回一次。
+ * 1. **新签发的 token，库里只存哈希**，明文只在签发/轮换时返回一次。
+ *    ⚠ 存量库是例外：因为 #4 采取「零迁移」策略（见 test/token-storage.test.ts
+ *      文件头「为什么不需要迁移」），**老库里 `tokens.id` 仍然存着明文密钥**。
+ *      鉴权不受影响（走 key_hash），但任何对外输出都必须先过 `describeTokenRef`，
+ *      见 `tokenToJson`。
  * 2. **401 vs 403 分工**：401 = token 无效/不存在/已吊销（调用方该去拿新 token）；
  *    403 = token 有效但无权访问该 project（调用方该换 token 或换 project）。
  *    两者不混淆，agent 能据此决定"重试"还是"改配置"。
@@ -38,6 +42,9 @@ export interface AccessToken {
    *
    * 它是 admin API 的寻址依据（`/api/admin/tokens/:id/...`），所以可以安全地
    * 显示在界面与日志里。
+   *
+   * ⚠ 零迁移意味着**老库里这一列是明文密钥**。类型上看不出来（都是 string），
+   *   所以任何把它直接吐给用户/日志的地方都必须先过 `describeTokenRef`。
    */
   id: string;
   /** 人类可读名（admin 界面与审计用） */
@@ -365,22 +372,27 @@ export function updateTokenMeta(
     });
   }
 
-  if (patch.name !== undefined) {
-    db.query("UPDATE tokens SET name = ? WHERE id = ?").run(patch.name, tokenId);
-  }
-  if (patch.note !== undefined) {
-    db.query("UPDATE tokens SET note = ? WHERE id = ?").run(patch.note, tokenId);
-  }
-  if (patch.expiresAtMs !== undefined) {
-    const expiresAt = patch.expiresAtMs === null ? null : now + patch.expiresAtMs;
-    db.query("UPDATE tokens SET expires_at = ? WHERE id = ?").run(expiresAt, tokenId);
-  }
-  // 元信息变更的审计（名字/备注/有效期）。与上面三条 UPDATE 同事务。
+  // 元信息变更：UPDATE 与审计事件在同一事务。
+  // ⚠ 这三条 UPDATE 曾经是**裸 db.query**，写在 auditWrite 之外——注释还自称
+  //   「与上面三条 UPDATE 同事务」，而事实是它们先各自提交、审计事件才在另一个
+  //   事务里落盘，中间崩了就留下「改了但没记」。这违反 auditWrite 立下的不变量。
+  // 把 UPDATE 挪进回调的同时也让 changed 与 UPDATE 一一对应，
+  // 以后不存在「记了哪些字段」与「实际改了哪些字段」各数一遍的可能。
   auditWrite(db, now, (ctx) => {
     const changed: string[] = [];
-    if (patch.name !== undefined) changed.push("name");
-    if (patch.note !== undefined) changed.push("note");
-    if (patch.expiresAtMs !== undefined) changed.push("expires_at");
+    if (patch.name !== undefined) {
+      ctx.db.query("UPDATE tokens SET name = ? WHERE id = ?").run(patch.name, tokenId);
+      changed.push("name");
+    }
+    if (patch.note !== undefined) {
+      ctx.db.query("UPDATE tokens SET note = ? WHERE id = ?").run(patch.note, tokenId);
+      changed.push("note");
+    }
+    if (patch.expiresAtMs !== undefined) {
+      const expiresAt = patch.expiresAtMs === null ? null : now + patch.expiresAtMs;
+      ctx.db.query("UPDATE tokens SET expires_at = ? WHERE id = ?").run(expiresAt, tokenId);
+      changed.push("expires_at");
+    }
     if (changed.length === 0) return;
     ctx.emit({
       type: "token_updated",
@@ -561,17 +573,24 @@ export function maskToken(tokenId: string): string {
 }
 
 /**
- * 回显一个 token 标识（引用或密钥）到错误信息里。
+ * 回显一个 token 标识（引用或密钥）到任何对外输出里。
  *
  * 规则：**看着像密钥（`k_` 开头）就掩码，否则原样显示。**
  * 因为 admin API 的 `:id` 段理论上该收引用，但如果有人误把密钥塞进去，
  * 原样回显就会把它写进日志与浏览器控制台。
+ *
+ * 这也正是 `tokenToJson` 用它来判断存量行的依据（见那里的注释）。
  */
 export function describeTokenRef(value: string): string {
   return value.startsWith(TOKEN_PREFIX) ? maskToken(value) : value;
 }
 
-/** token → 对外 JSON（admin 列表/界面用；不含明文 key） */
+/**
+ * token → 对外 JSON（admin 列表/界面用）。
+ *
+ * 唯一对外出口，**`id` 一律经 `describeTokenRef` 过滤**：新行是 `t_` 引用、原样；
+ * 存量行是 `k_` 密钥、掩码。见函数体内那段注释。
+ */
 export function tokenToJson(token: AccessToken, now: number = Date.now()): Record<string, unknown> {
   const status =
     token.revokedAt !== null
@@ -580,10 +599,23 @@ export function tokenToJson(token: AccessToken, now: number = Date.now()): Recor
         ? "expired"
         : "active";
   return {
-    // 引用不是密钥，直接给全——admin 界面要靠它做吊销/改白名单，掩码了就用不了。
-    // （曾经这里返回 maskToken(id)，而那时 id 就是明文密钥；
-    //   改成引用后如果还掩码，admin 页的按钮会继续 100% 失败。）
-    id: token.id,
+    // id 分两种情况处置：
+    //
+    // - **新行**：id 是独立的 `t_` 引用，不承担鉴权职责，直接给全——admin 界面
+    //   要靠它做吊销/改白名单，掩码了就用不了。（曾经这里返回 maskToken(id)，
+    //   那时 id 就是明文密钥，所以必须掩码；改成引用后如果继续掩码，
+    //   admin 页那两个按钮会 100% 失败。）
+    //
+    // - **存量行**（本文件头「为什么不需要迁移」那一节描述的老库）：因为刻意
+    //   选了零迁移，`tokens.id` 里仍然是明文 `k_` 密钥——这些行**原样留在库里**。
+    //   无条件 `id: token.id` 就等于把在用的密钥原样吐进 HTTP 响应体、CLI 的
+    //   `admin token list` 和 admin 页，即 #4 原本要消灭的泄漏。describeTokenRef
+    //   恰好就是这个判据：`k_` 掩码、`t_` 原样。
+    //
+    // 代价是 legacy 行在 admin 页上按钮不可用（掩码值回传必然 404）。这是有意的
+    // 取舍：这些行靠 key_hash 仍能正常鉴权，但正确处置是吊销后重新签发，
+    // 而不是继续让 admin 页拿着明文密钥操作。
+    id: describeTokenRef(token.id),
     name: token.name,
     role: token.role,
     // 项目级 token 才有限制；admin 为 null 表示"全部"

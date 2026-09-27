@@ -458,15 +458,20 @@ directory, and the board itself is found by walking up from there.
 }
 ```
 
-20 tools, all thin wrappers over the same core the CLI uses:
+29 tools, all thin wrappers over the same core the CLI uses:
 
 | Group | Tools |
 |---|---|
 | Session | `kanban_session_start` / `kanban_bootstrap` / `kanban_session_end` |
-| Tasks | `kanban_task_list` / `get` / `create` / `claim` / `progress` / `note` / `block` / `unblock` / `complete` / `review` |
+| Tasks | `kanban_task_list` / `get` / `create` / `claim` / `progress` / `note` / `block` / `unblock` / `complete` / `review` / `release` / `cancel` / `reopen` / `remove` |
+| Dependencies | `kanban_task_dep_add` / `dep_remove` / `dep_list` |
 | Recovery | `kanban_resume` / `kanban_handoff` |
-| Plans | `kanban_plan_save` / `show` / `diff` |
+| Plans | `kanban_plan_save` / `show` / `list` / `history` / `diff` |
 | Board | `kanban_board` / `kanban_doctor` |
+
+Per-tool parameters are in [docs/plan/002-接口契约.md §3.2](docs/plan/002-接口契约.md), which also
+lists the operations that are deliberately **not** exposed to agents (project and token
+management, among others) and why.
 
 The recovery flow an agent is expected to run:
 
@@ -523,12 +528,20 @@ Poor fit:
 Yes, and losing it is recoverable. `.kanban/kanban.db` is a SQLite file: a build
 artifact, awkward to merge. It is not in `.gitignore` by accident.
 
-That file holds **only token hashes**, never a token itself: the `id` column is an
-independent random reference (`t_…`) used for addressing in the admin API, and
-authentication compares `sha256(token)` against `key_hash`. An older version stored
-the token in `id` itself, which meant any copy of the database — a backup, an
-`export`, a screenshot — handed out every live credential. If you are upgrading from
-that version, re-issue your tokens.
+That file holds **only token hashes** for every token this version issues: the `id`
+column is an independent random reference (`t_…`) used for addressing in the admin
+API, and authentication compares `sha256(token)` against `key_hash`. An older version
+stored the token in `id` itself, which meant any copy of the database — a backup, an
+`export`, a screenshot — handed out every live credential.
+
+Upgrading from that version needs **no action for those tokens**: `key_hash` was
+always computed correctly, so they keep authenticating. But no migration rewrites the
+old rows, so the plaintext is still sitting in their `id` column — and anything that
+displays a token masks an `id` that looks like a key. `admin token list` and the admin
+page therefore show those rows truncated, and you cannot grant or revoke them from the
+UI. Manage them from the CLI instead (`agent-kanban admin token revoke <token>` —
+for an old row, pass the token itself, since its `id` *is* the token), or issue a new
+token and revoke the old one.
 
 What *is* in git is `.kanban/journal/` — the append-only event log, one JSON line per
 change, grouped into daily files. Since events are the source of truth and the board is

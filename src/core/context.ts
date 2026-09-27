@@ -646,7 +646,6 @@ function describeEventBrief(event: KanbanEvent): string {
     case "task_removed": return "deleted";
     case "task_progress": return `progress ${d.prev_pct ?? "?"}% → ${d.pct ?? "?"}%${d.note ? `: ${d.note}` : ""}`;
     case "task_claimed": return d.prev_assignee ? `taken over from ${d.prev_assignee}` : "claimed";
-    case "task_progress": return `progress ${d.prev_pct ?? "?"}% → ${d.pct}%${d.note ? `: ${d.note}` : ""}`;
     case "task_note": return `note: ${String(d.text ?? "").slice(0, 50)}`;
     case "task_blocked": return `blocked: ${d.reason ?? ""}`;
     case "task_unblocked": return "auto-unblocked";
@@ -663,7 +662,7 @@ function describeEventBrief(event: KanbanEvent): string {
     case "plan_created": return `saved plan ${d.version !== undefined ? `v${d.version}` : "(unknown)"}`;
     // ⚠ 字段名与 events.describeEvent 保持一致：savePlan 发的是 `id`，不是 old_plan_id
     case "plan_superseded": {
-      const id = d.id ?? "（未知）";
+      const id = d.id ?? "(unknown)";
       const v = d.version !== undefined ? ` v${d.version}` : "";
       return `plan ${id}${v} superseded by a new version`;
     }

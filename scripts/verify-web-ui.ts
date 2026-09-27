@@ -125,7 +125,10 @@ try {
     ["task", "add", CARD_TITLE, "-p", "0", "--check", "第一步,第二步", "-d", "详情页要能打开"],
     ["task", "claim", "T-0001"],
     ["task", "progress", "T-0001", "--pct", "50", "--check", "第一步", "--note", "做了一半"],
-    ["plan", "save", "--task", "T-0001", "--title", "T-0001 的计划", "--body", "1. 修前端 2. 补测试"],
+    // 同一张卡**连存两版**计划：版本切换器才有东西可切。
+    // 顺序有意义——后存的那版是当前版（v2），先存的那版被顶替（v1）。
+    ["plan", "save", "--task", "T-0001", "--title", "T-0001 的计划 v1", "--body", "1. 修前端 2. 补测试"],
+    ["plan", "save", "--task", "T-0001", "--title", "T-0001 的计划", "--body", "1. 修前端 2. 补测试 3. 上线灰度"],
     ["handoff", "--task", "T-0001", "--summary", "交接摘要：前半段完成", "--next", "收尾"],
     ["task", "add", "上游任务", "-p", "2"],
     ["task", "dep", "add", "T-0001", "T-0002"],
@@ -325,6 +328,54 @@ try {
   sheet = await sheetText();
   check("计划页签可点开", tabPlan);
   check("计划正文渲染", sheet.text.includes("修前端"), "");
+
+  // ---- 计划的历史版本（v1 被 v2 顶替）----
+  // 后端 plan.list 早就支持 status:"all"，但详情面板一直只拉 plan.show 当前那一份。
+  // 这里钉住：版本链列得出来、默认看当前版、切到旧版真的换正文、界面语言下不漏英文枚举值。
+  console.log("\n=== 计划历史版本 ===");
+  check(
+    "版本切换器列出两个版本",
+    await evaluate<boolean>(`(() => {
+      const sheet = document.querySelector('[role="dialog"]');
+      const labels = [...(sheet?.querySelectorAll('button') ?? [])].map((b) => b.textContent.trim());
+      return labels.includes('v1') && labels.includes('v2');
+    })()`),
+  );
+  check("页签上标出历史版本数", /计划\s*\n?\s*2/.test(sheet.text), sheet.text.match(/计划[\s\S]{0,6}/)?.[0] ?? "");
+  // 默认看当前版：v2 的正文与标题在，v1 独有的标题不在
+  check("默认显示当前版本（v2）的正文", sheet.text.includes("3. 上线灰度"), "");
+  check("默认不显示 v1 的标题", !sheet.text.includes("T-0001 的计划 v1"), "");
+  // 计划 status 是界面 chrome，不能把后端枚举值直接印在中文界面上
+  check("当前版本标为“生效中”（不是裸 active）", sheet.text.includes("生效中") && !/v2\s*\n?\s*active/.test(sheet.text), "");
+
+  const clickVersion = async (label: string) => {
+    const ok = await evaluate<boolean>(`(() => {
+      const sheet = document.querySelector('[role="dialog"]');
+      const btn = [...(sheet?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === ${JSON.stringify(label)});
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+    await sleep(900);
+    return ok;
+  };
+  check("点到 v1", await clickVersion("v1"));
+  sheet = await sheetText();
+  check("切到 v1 后正文换成旧版", sheet.text.includes("1. 修前端 2. 补测试") && !sheet.text.includes("3. 上线灰度"), "");
+  // 角标跟的是**正在看的那一版**，所以“已被顶替”要到切到 v1 之后才该出现
+  check("切到 v1 后标为“已被顶替”", sheet.text.includes("已被顶替"), "");
+  check("看历史版时提示当前生效的是 v2", /当前生效的是\s*v2/.test(sheet.text), "");
+
+  check("点回 v2", await clickVersion("v2"));
+  sheet = await sheetText();
+  check("切回 v2 恢复当前版正文", sheet.text.includes("3. 上线灰度"), "");
+  check("切回当前版不再提示“当前生效的是”", !/当前生效的是/.test(sheet.text), "");
+  // 切页签再切回来：选中态存在父组件，不该被 radix 卸载页签吃掉
+  await openTab("交接");
+  await openTab("计划");
+  sheet = await sheetText();
+  check("切走页签再回来仍是 v2（选中态没被卸载吃掉）", sheet.text.includes("3. 上线灰度"), "");
+  check("全程无未捕获异常", exceptions.length === 0, exceptions[0]?.split("\n")[0] ?? "");
 
   // ---- 排版回归：几何断言（比看截图可靠）----
   // 真实事故：①任务号与 hover 浮现的操作按钮叠在同一位置，卡片一悬停 id 就被盖住；

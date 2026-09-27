@@ -435,6 +435,37 @@ describe("Op 边界校验：validateOp 说清楚做到了什么（#13）", () =>
     expect((data as unknown[]).length).toBe(2);
   });
 
+  test("task.transition 的非法 to 明确报错（§13 的另一半）", () => {
+    seedTwo();
+    let caught: { code?: number; message?: string; details?: Record<string, unknown> } | null = null;
+    try {
+      executeOp(
+        { kind: "task.transition", params: { task_id: "T-0001", to: "nonexistent" as never } },
+        opCtx(),
+      );
+    } catch (e) {
+      caught = e as typeof caught;
+    }
+    expect(caught).not.toBeNull();
+    // USAGE（1）而不是 STATE（2）：这是「参数写错了」，不是「转移不合法」
+    expect(caught!.code).toBe(1);
+    expect(caught!.details?.reason).toBe("invalid_status");
+    // 关键：不能附上 legal_transitions —— 那个列表里没有 "nonexistent"，
+    // 给了就是一份自相矛盾的建议（详见 ops.ts 里那条注释）
+    expect(caught!.details?.legal_transitions).toBeUndefined();
+  });
+
+  test("task.transition 的合法 to 仍然放行", () => {
+    seedTwo();
+    // ⚠ 不用 todo → doing：那条**不在** TRANSITIONS 表里（由 claimTask 特殊处理，
+    //   需要原子抢占 + 允许接管僵死持有者）。这里用表里真实存在的 todo → cancelled。
+    const { data } = executeOp(
+      { kind: "task.transition", params: { task_id: "T-0001", to: "cancelled", reason: "测试" } },
+      opCtx(),
+    );
+    expect((data as { status?: string }).status).toBe("cancelled");
+  });
+
   test("params 必须是对象（数组也不行）", () => {
     expect(() => executeOp({ kind: "task.list", params: [] as never }, opCtx())).toThrow();
   });
@@ -445,7 +476,8 @@ describe("Op 边界校验：validateOp 说清楚做到了什么（#13）", () =>
     const body = ops.slice(start, ops.indexOf("\n}", start));
     // 清单里提到的几项，代码里确实有对应处理
     expect(body).toMatch(/clampInt\(p\.limit/);
-    expect(body).toMatch(/TASK_STATUSES\.includes/);
+    // status 与 to 各一处（§13）：前者拦 task.list，后者拦 task.transition
+    expect((body.match(/TASK_STATUSES\.includes/g) ?? []).length).toBe(2);
     // 而「没有」的那些就不该出现（防止清单变成许愿单）
     expect(body).not.toMatch(/title\.length/);
   });
@@ -454,9 +486,14 @@ describe("Op 边界校验：validateOp 说清楚做到了什么（#13）", () =>
 describe("文档漂移四处（#12）", () => {
   test("readVersion 读 package.json，不再硬编码", () => {
     const http = code("src/server/http.ts");
-    expect(http).toMatch(/function readVersion\(\)[\s\S]{0,200}readPackageVersion\(\)/);
+    // ⚠ 这里曾断言 `function readVersion()…readPackageVersion()`——那是**实现形状**。
+    //   而 `readVersion` 当时已是纯转发（Middle Man），包一层只为留住一段历史注释；
+    //   断言形状就会把「该不该存在这个函数」锁死。改判真正的目标：
+    //   ① 用的是 core 的单一真相 ② 没有任何硬编码版本号 ③ 别把转发包装加回来。
+    expect(http).toMatch(/const version = readPackageVersion\(\)/);
     // 旧版本号不许再出现
     expect(http).not.toMatch(/return "0\.1\.0"/);
+    expect(http).not.toMatch(/function readVersion/);
   });
 
   test("serve --help 里的命令真实存在（admin project add / config init）", () => {
@@ -476,8 +513,11 @@ describe("文档漂移四处（#12）", () => {
   test("session.start 不再把 server 的 cwd 当成 agent 的（ternary 两边一样已删）", () => {
     const ops = code("src/core/ops.ts");
     expect(ops).not.toMatch(/ctx\.db \? process\.cwd\(\) : process\.cwd\(\)/);
-    // 改成「调用方带自己的 cwd，缺省就不填」
-    expect(ops).toMatch(/reqCwd\(ctx\)/);
+    // 改成「调用方带自己的 cwd，缺省就不填」。
+    // ⚠ 这里曾断言 `reqCwd(ctx)` 出现——那是实现形状，那个函数当时已是单调用点的
+    //   纯转发。判语义：优先取 params（本地 CLI 传），否则取 OpContext（远程由
+    //   `X-Kanban-Cwd` 头带上来），两者都没有就 undefined（**绝不**退回 process.cwd()）。
+    expect(ops).toMatch(/cwd: op\.params\.cwd \|\| ctx\.cwd \|\| undefined/);
   });
 });
 
@@ -501,10 +541,16 @@ describe("buildContext / Web canMove 的行为（#10 / #11）", () => {
 describe("session cwd：不再把 server 的目录当成 agent 的（#12 附带）", () => {
   test("OpContext.cwd 一路传到 session.start，且缺省时不猜", () => {
     const ops = code("src/core/ops.ts");
-    expect(ops).toMatch(/function reqCwd/);
-    // reqCwd 的语义：没传就 null（不退回 process.cwd()）
-    const body = ops.slice(ops.indexOf("function reqCwd("), ops.indexOf("\n}", ops.indexOf("function reqCwd(")));
+    // ⚠ 这里曾断言 `function reqCwd` 存在——同样是实现形状。它当时已是单调用点的
+    //   纯转发（Middle Man），删掉后语义一行没变。改判 session.start 分支本身。
+    const start = ops.indexOf('case "session.start"');
+    expect(start).toBeGreaterThan(-1);
+    const body = ops.slice(start, ops.indexOf('case "', start + 10));
+    // 真正的目标：远程时 process.cwd() 是 **server** 的目录，绝不能进这个字段
     expect(body).not.toMatch(/process\.cwd/);
+    // cwd 已写进 Op 联合类型，所以不需要也不该有「as { cwd?: string }」的逃逸
+    expect(body).not.toMatch(/as \{ cwd\?: string \}/);
+    expect(body).toMatch(/cwd: op\.params\.cwd \|\| ctx\.cwd \|\| undefined/);
 
     // 调用方都把 cwd 传上来了
     const ctx = code("src/commands/context.ts");

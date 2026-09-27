@@ -146,8 +146,6 @@ export function describeEvent(event: KanbanEvent): string {
       return "moved to todo";
     case "task_removed":
       return "deleted";
-    case "task_ready":
-      return "moved to todo";
     case "task_claimed":
       return d.prev_assignee ? `claimed (taken over from ${d.prev_assignee})` : "claimed";
     case "task_released":
@@ -187,7 +185,7 @@ export function describeEvent(event: KanbanEvent): string {
     //   直接违反仓库自己的「输出里不许出现 undefined」规矩。
     //   拼上 version 是因为**项目级**计划的 id 只是 `PL-0001`，区分版本靠 version。
     case "plan_superseded": {
-      const id = d.id ?? "（未知）";
+      const id = d.id ?? "(unknown)";
       const v = d.version !== undefined ? ` v${d.version}` : "";
       return `plan ${id}${v} superseded by a new version`;
     }
@@ -199,12 +197,6 @@ export function describeEvent(event: KanbanEvent): string {
       return `handoff (${(d.handoff as { kind?: string } | undefined)?.kind ?? "voluntary"})`;
     case "handoff_consumed":
       return `handoff taken over by ${d.by_session ?? "(unknown)"}`;
-    case "session_started":
-      return `session started (${d.agent_name ?? ""})`;
-    case "session_closed":
-      return `session closed${d.summary ? `: ${d.summary}` : ""}`;
-    case "session_crashed":
-      return `session lost contact (no heartbeat for ${Math.round(Number(d.grace_ms ?? 0) / 1000)}s)`;
     case "session_started":
       return `session started (${d.agent_name ?? ""})`;
     case "session_closed":

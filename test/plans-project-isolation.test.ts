@@ -31,7 +31,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSchemaVersion, migrate, openDb, setInitialConfig, type Db } from "../src/core/db.ts";
+import { SCHEMA_VERSION, getSchemaVersion, migrate, openDb, setInitialConfig, type Db } from "../src/core/db.ts";
 import { createProject } from "../src/core/projects.ts";
 import { attachPlan, getPlan, listPlans, requirePlan, savePlan } from "../src/core/plans.ts";
 import { createTask, getTask } from "../src/core/tasks.ts";
@@ -215,7 +215,10 @@ describe("v4 → v5 迁移：plans 主键改成含 project_key", () => {
 
   test("迁移后主键含 project_key；空的 project_key 回落到最早创建的 project", () => {
     expect(getSchemaVersion(handle)).toBe(4);
-    expect(migrate(handle)).toEqual({ from: 4, to: 5 });
+    // 终点写 SCHEMA_VERSION 而不是 5：migrate() 总是一次跑到最新版本，
+    // 硬编码版本号意味着每加一条迁移就要回来改这个断言（漏改即红，且与本用例
+    // 要验的 plans 主键毫无关系）。起点 4 是这批用例刻意造出来的，可以写死。
+    expect(migrate(handle)).toEqual({ from: 4, to: SCHEMA_VERSION });
 
     const pk = handle.raw
       .query<{ name: string; pk: number }, []>("PRAGMA table_info(plans)")
@@ -268,8 +271,8 @@ describe("v4 → v5 迁移：plans 主键改成含 project_key", () => {
   test("迁移是幂等的（重复跑不会二次处理、不会索引报错）", () => {
     migrate(handle);
     const first = handle.raw.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM plans").get()!.n;
-    expect(getSchemaVersion(handle)).toBe(5);
-    expect(migrate(handle)).toEqual({ from: 5, to: 5 });
+    expect(getSchemaVersion(handle)).toBe(SCHEMA_VERSION);
+    expect(migrate(handle)).toEqual({ from: SCHEMA_VERSION, to: SCHEMA_VERSION });
     expect(handle.raw.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM plans").get()!.n).toBe(first);
   });
 

@@ -80,8 +80,6 @@ export interface ToolDeps {
 const S = {
   sessionId: { type: "string", description: "session id returned by kanban_session_start" },
   taskId: { type: "string", description: "task id, e.g. T-0007" },
-  /** 依赖边两端都是任务号（复用 taskId 的描述，不再单独起一份） */
-  dependsOn: { type: "string", description: "the other end of the dependency edge, e.g. T-0003" },
   planId: { type: "string", description: "plan id, e.g. PL-T-0007-03 or PL-0002" },
   agentName: { type: "string", description: "agent name, e.g. pi-main" },
   limit: { type: "number", description: "max cards to return (default 30)" },

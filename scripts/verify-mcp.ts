@@ -116,9 +116,48 @@ async function main() {
   const list = await rpc("tools/list", {});
   const tools = list?.result?.tools ?? [];
   // 工具数量写死是故意的：**加工具时这条会红**，提醒你同时更新 MCP 文档
-// （README / docs/plan/002 §3.4 列了工具清单）与下面的 CANCELLED 集合。
-// 曾经它写的是 20，而实际有 20 个；现在补了 9 个工作流必需的工具。
-check("tools/list 返回 29 个工具", tools.length === 29, `${tools.length} 个`);
+  // （README / docs/plan/002 §3.2 列了工具清单）与下面的 CANCELLED 集合。
+  // 曾经它写的是 20，而实际有 20 个；现在补了 9 个工作流必需的工具。
+  check("tools/list 返回 29 个工具", tools.length === 29, `${tools.length} 个`);
+
+  // ---- Op 覆盖率：每个 Op 要么有工具，要么在契约里被点名 ----
+  // 只钉「29 个工具」不够：它管住了“有没有少写工具”，却管不住
+  // “新增了一个 Op 卻没想好要不要做成工具”。而那种沉默的缺口，下一个读代码的人
+  // 会当成“漏了”去补一个，恰好把「project.* 故意不给 agent」这类决定推翻。
+  // 判据就是契约 §3.2.1 的那张表。
+  const opKinds = (src: string): Set<string> =>
+    new Set([...src.matchAll(/kind:\s*"([a-z]+\.[a-z_]+)"/g)].map((m) => m[1]!));
+  const allOps = opKinds(await Bun.file(join(ROOT, "src", "core", "ops.ts")).text());
+  const toolOps = opKinds(await Bun.file(join(ROOT, "src", "mcp", "tools.ts")).text());
+  const contract = await Bun.file(join(ROOT, "docs", "plan", "002-接口契约.md")).text();
+  // 只认 **§3.2.1 小节**里表格**第一列**的反引号项。两个限定都是被误报逼出来的：
+  //  · 全文扫反引号 → 把 `http.ts`、`tasks.id`、`params.session_id` 当成 Op；
+  //    全文扫表格 → 别的表（如 §7.1 的主键表）第一列也有 `tasks.id`。
+  //  · 只取 `|` 后的第一项 → 写成「`session.list` / `session.heartbeat`」的行会丢掉后半。
+  const section = contract.split("### 3.2.1")[1]?.split(/\n#{2,3} /)[0] ?? "";
+  if (!section) {
+    check("002 里有 §3.2.1「刻意不暴露的 Op」小节", false, "小节不见了");
+  }
+  const listed = new Set(
+    [...section.matchAll(/^\|\s*([^|]+?)\s*\|/gm)]
+      .map((m) => m[1]!)
+      .flatMap((cell) => [...cell.matchAll(/`([a-z]+\.[a-z_]+)`/g)].map((m) => m[1]!)),
+  );
+  // 通配条目（`project.*`）表示“整个前缀都不暴露”
+  const wildcards = [...section.matchAll(/`([a-z]+)\.\*`/g)].map((m) => m[1]!);
+  const isListed = (op: string): boolean =>
+    listed.has(op) || wildcards.some((w) => op.startsWith(w + "."));
+
+  const uncovered = [...allOps].filter((op) => !toolOps.has(op) && !isListed(op)).sort();
+  check(
+    "没有 MCP 工具的 Op 都在 002 §3.2.1 里被点名",
+    uncovered.length === 0,
+    uncovered.length > 0 ? `未点名：${uncovered.join(", ")}` : `${allOps.size} 个 Op 全覆盖`,
+  );
+  // 反向：逐个列出的 Op 必须真的存在（改名后表格不能变成谎言）。
+  // 通配条目不查——`project.*` 本身不是 Op 名。
+  const phantom = [...listed].filter((op) => !allOps.has(op) && !toolOps.has(op)).sort();
+  check("契约里点名的 Op 都真实存在", phantom.length === 0, phantom.join(", "));
 
   // 每个工具都必须有描述与 schema——没有描述的模型不会用
   const noDesc = tools.filter((t: { description?: string }) => !t.description);

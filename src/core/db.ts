@@ -33,8 +33,8 @@ import type { KanbanConfig } from "./types.ts";
  */
 import SCHEMA_FILE from "./schema.sql" with { type: "file" };
 
-/** 当前 schema 版本；新增表/列时 +1 并在 MIGRATIONS 里补一条 */
-export const SCHEMA_VERSION = 5;
+/** 当前 schema 版本；新增表/列/索引时 +1 并在 MIGRATIONS 里补一条 */
+export const SCHEMA_VERSION = 6;
 
 /** 默认配置：租约 15 分钟、失联宽限 10 分钟 */
 export const DEFAULT_TTL_MS = 15 * 60 * 1000;
@@ -515,6 +515,71 @@ const MIGRATIONS: Record<number, { up: (db: Db) => void }> = {
 
       raw.exec("CREATE INDEX IF NOT EXISTS idx_plans_scope  ON plans(project_key, scope, task_id, version)");
       raw.exec("CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(project_key, status)");
+    },
+  },
+
+  /**
+   * v5 → v6：给 `tokens.key_hash` 加 UNIQUE 索引。
+   *
+   * ## 为什么这条索引是承重的
+   *
+   * 把 `tokens.id` 改成独立引用之后，**鉴权的唯一依据就是 `key_hash`**
+   * （`authenticateInternal` 拿 `WHERE key_hash = ?` 查）。而这张表上原本
+   * 只有 `role` 与 `(revoked_at, expires_at)` 两个索引，**没有 key_hash 的索引**，
+   * 于是每个请求都退化成全表扫描。token 表通常很小（本机自用几个），
+   * 所以这个退化不报错、也慢不到能被察觉，只是安静地把 O(1) 变成 O(n)；
+   * 而远程 server 上 admin 会给 CI 一个、给外包一个，token 表是会长大的。
+   *
+   * UNIQUE 不只是性能，它是**不变量**：`hashToken` 是 sha256，同一个明文 key
+   * 只能对应一个 token 行。写进数据库层意味着这个约束连并发也管得住——
+   * 应用层「先查再插」在两个请求同时签发同一个值时会漏。
+   *
+   * ## 存量库可能有重复吗
+   *
+   * 自然情况下不可能：`generateToken` 给的是 256 位随机明文，两次签发出同一个
+   * 明文的概率约 2^-256。**但被手工改过的库可能有**（同一个明文插了两行、
+   * 或 import 过两份）。此时 `CREATE UNIQUE INDEX` 会直接报错，而迁移报错 =
+   * `migrate` 抛错 = **这个库从此打不开**——那比慢严重得多。
+   *
+   * 所以先查再建。查到了就**报错并附上排查语句**，而不是静默跳过：
+   * 静默跳过等于「索引没建 + 没人知道」，正是这次要消灭的那类安静退化。
+   * 重复几乎只可能是人为造成的，让人来看一眼是合理的。
+   */
+  5: {
+    up(db: Db) {
+      const raw = db.raw;
+
+      // ---- 幂等：索引已在就不动 ----
+      const existing = raw
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_tokens_key_hash'",
+        )
+        .get();
+      if (existing) return;
+
+      // ---- 先查重复：UNIQUE 建不上时不能把库锁死 ----
+      const dup = raw
+        .query<{ key_hash: string; n: number }, []>(
+          `SELECT key_hash, COUNT(*) AS n FROM tokens
+           GROUP BY key_hash HAVING n > 1 ORDER BY n DESC LIMIT 1`,
+        )
+        .get();
+      if (dup) {
+        throw KanbanError.notInit(
+          `cannot add the UNIQUE index on tokens.key_hash: ${dup.n} tokens share the same key hash (${dup.key_hash})`,
+          {
+            reason: "duplicate_token_key_hash",
+            key_hash: dup.key_hash,
+            hint:
+              "Two rows with the same key hash mean the same secret is stored twice, which should be impossible. " +
+              "List the affected rows with:\n" +
+              "  SELECT id, name, created_at FROM tokens WHERE key_hash = '<hash above>'\n" +
+              "Revoke the duplicates, issue a new token, then re-run this command.",
+          },
+        );
+      }
+
+      raw.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_key_hash ON tokens(key_hash)");
     },
   },
 };

@@ -50,6 +50,26 @@ export function statusLabel(status: TaskStatus, t: Translate): string {
   return t(STATUS_META[status].labelKey)
 }
 
+/**
+ * 计划版本的 status → 本地化文案。
+ *
+ * 为什么要专门一个函数：计划状态（active / superseded / draft）是**界面自己说的话**，
+ * 直接把后端的枚举值印在页面上，中文界面就会漏出三个英文单词。
+ * 认不出的值原样返回——宁可显示 "weird_status" 也不要静默显示空白。
+ */
+export function planStatusLabel(status: string, t: Translate): string {
+  switch (status) {
+    case "active":
+      return t("plan.status.active")
+    case "superseded":
+      return t("plan.status.superseded")
+    case "draft":
+      return t("plan.status.draft")
+    default:
+      return status
+  }
+}
+
 /** 泳道展示顺序：与人的阅读顺序一致（想法池 → 待办 → 进行中 → 阻塞 → 评审 → 完成） */
 export const LANE_ORDER: TaskStatus[] = [
   "backlog",

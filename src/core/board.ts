@@ -29,6 +29,23 @@ export const LANE_ORDER: TaskStatus[] = ["backlog", "todo", "doing", "blocked", 
  */
 export const BOARD_PAGE_SIZE = 500;
 
+/**
+ * `limit` 的硬上界（看板与任务列表**共用**）。
+ *
+ * 为什么必须有：SQLite 里 `LIMIT -1` 是**不限长**、`LIMIT 1e9` 会真的去扫那么多行。
+ * `/api/op` 与 `/api/board` 面前都是未信任的输入，没有上界时一个手滑（或恶意）的
+ * 请求就把整库塞进一个 HTTP 响应。
+ *
+ * 曾经这个数字在四个地方各写一遍（core 两处、http 一处、前端一处），于是「上界是多少」
+ * 有四个可能互相矛盾的真相。现在这里是唯一出处。
+ */
+export const PAGE_LIMIT_MAX = 2000;
+
+/**
+ * `offset` 的硬上界。同样是防止有人把 offset 调到天文数字逼着 SQLite 干等。
+ */
+export const PAGE_OFFSET_MAX = 1_000_000;
+
 /** 构建看板快照（强制按 project 过滤） */
 export function buildBoard(
   scope: Scope,

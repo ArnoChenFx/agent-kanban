@@ -165,6 +165,14 @@ export async function fetchBoard(
  *
  * 为什么要这个而不是直接用 `truncated.total`：前端要在**合并两页**时重算，
  * 而新一页的 `truncated.total` 是可信的、老服务端可能没有这个字段——所以两条路都得能走。
+ *
+ * ⚠ 「减掉 cancelled」与后端的「只加 LANE_ORDER」字面不同，两者等价**只因为**
+ * 一个后端不变量：`LANE_ORDER` 恰好覆盖了 `TASK_STATUSES` 里除 `cancelled` 外的
+ * 每一个状态。后端在 `test/board-truncation.test.ts` 里钉住了那条不变量；
+ * 哪天后端加了一个不在 LANE_ORDER 里的状态而没改这里，前端会把新状态算进去、
+ * 后端不会，「还有 N 张」就会一直差着几个数。
+ *
+ * 选「减法」而不是抄一份 LANE_ORDER 列表，是因为新增状态时减法自动跟随。
  */
 function totalFromCounts(counts: Record<string, number>): number {
   return Object.values(counts).reduce((n, c) => n + c, 0) - (counts.cancelled ?? 0)
@@ -204,6 +212,9 @@ export function mergeBoardPages(base: BoardSnapshot, next: BoardSnapshot): Board
     truncated: {
       total,
       showing,
+      // ⚠ 这个 500 必须与后端 `BOARD_PAGE_SIZE` 一致。web/ 不能 import src/core
+      //   （会把 bun:sqlite 拖进浏览器构建），所以两边只能各写一份——那就让
+      //   test/web-contract.test.ts 的静态守卫盯着它。
       limit: next.truncated?.limit ?? 500,
       offset: 0,
       truncated: showing < total,
@@ -273,6 +284,8 @@ export interface TaskDetail {
   timeline: KanbanEvent[]
   handoffs: HandoffItem[]
   plan: PlanItem | null
+  /** 计划的历史版本（新 → 旧），**不含正文**；见 PlanVersionItem */
+  planVersions: PlanVersionItem[]
 }
 
 /**
@@ -352,7 +365,7 @@ export async function fetchTaskDetail(
   // 时间线优先用同响应内嵌的那份；老服务端没带时再单独拉一次
   const embedded = Array.isArray(data.timeline) ? (data.timeline as KanbanEvent[]) : null
   // 交接 / 计划分开取：任一失败都不该让整个详情面板打不开
-  const [timeline, handoffs, plan] = await Promise.all([
+  const [timeline, handoffs, plan, planVersions] = await Promise.all([
     embedded ??
       executeOp<KanbanEvent[]>(token, project, { kind: "events.tail", params: { task_id: taskId, tail: 60 } })
         .then((r) => r.data)
@@ -365,6 +378,16 @@ export async function fetchTaskDetail(
           .then((r) => r.data)
           .catch(() => null)
       : Promise.resolve(null),
+    // 历史版本：status 必须显式给 "all"——plan.list 默认只回 active（见 listPlans），
+    // 而"历史"恰恰是那些已被顶替（superseded）的旧版本。
+    task.plan_id
+      ? executeOp<PlanVersionItem[]>(token, project, {
+          kind: "plan.list",
+          params: { task_id: taskId, status: "all", limit: 50 },
+        })
+          .then((r) => r.data)
+          .catch(() => [] as PlanVersionItem[])
+      : Promise.resolve([] as PlanVersionItem[]),
   ])
 
   const dependencies = normalizeDeps(data.dependencies)
@@ -379,7 +402,55 @@ export async function fetchTaskDetail(
     timeline,
     handoffs,
     plan,
+    planVersions: normalizePlanVersions(planVersions, plan),
   }
+}
+
+/**
+ * 归一化计划版本列表。
+ *
+ * 两个兜底：
+ * 1. 老服务端不认识 `plan.list`（会报错或回空）——此时用已经拿在手里的当前版本
+ *    补一条，版本切换器退化成单版本视图，而不是整个"计划"页签空掉。
+ * 2. 当前版本（`task.plan_id` 指向的那份）即便 `plan.list` 漏了它也补进去，
+ *    否则会出现"正在显示 v2、切换器里却只有 v1"这种自相矛盾的界面。
+ */
+function normalizePlanVersions(
+  raw: PlanVersionItem[],
+  current: PlanItem | null,
+): PlanVersionItem[] {
+  const list = Array.isArray(raw) ? raw.filter((p) => !!p && typeof p.id === "string") : []
+  if (current && !list.some((p) => p.id === current.id)) {
+    list.unshift({
+      id: current.id,
+      version: current.version,
+      title: current.title,
+      status: current.status,
+      created_at: current.created_at,
+      supersedes_id: current.supersedes_id,
+      body_lines: 0,
+      body_chars: 0,
+    })
+  }
+  return list
+}
+
+/**
+ * 取某个版本的计划全文（`plan.show`）。
+ *
+ * 版本切换器点旧版本时才调：版本列表来自 `plan.list`，**不带正文**，
+ * 正文必须单独取（见 PlanVersionItem 的说明）。
+ */
+export async function fetchPlan(
+  token: string,
+  project: string,
+  planId: string,
+): Promise<PlanItem> {
+  const { data } = await executeOp<PlanItem>(token, project, {
+    kind: "plan.show",
+    params: { plan_id: planId },
+  })
+  return data
 }
 
 /**
@@ -475,6 +546,8 @@ export function subscribeEventsWithTicket(
   onStateChange?: (connected: boolean) => void,
   onAuthExpired?: () => void,
 ): StreamHandle {
+  // `?static=1` 守卫：无头浏览器截图与「不需要实时更新」的场景靠它跳过 SSE。
+  // scripts/verify-web-ui.ts 的截图步骤就带着这个参数，所以别因为「看起来没用」删掉。
   if (typeof window !== "undefined" && new URL(window.location.href).searchParams.get("static") === "1") {
     onStateChange?.(false)
     return { close: () => {} }
@@ -500,18 +573,13 @@ export function subscribeEventsWithTicket(
       if (!closed) setTimeout(() => void connect(), 3000)
     }
     // 凭据在长连接期间失效：服务端会主动发这个事件（见 handleSse 的复验逻辑）
-    source.addEventListener("auth_expired", (e) => {
-      const detail = (() => {
-        try {
-          return JSON.parse((e as MessageEvent).data) as { reason?: string }
-        } catch {
-          return {} as { reason?: string }
-        }
-      })()
+    // ⚠ 曾经这里还把事件负载 JSON.parse 出来存进 `detail`，然后用 `void detail` 把它丢掉。
+    //   `onAuthExpired?: () => void` 不收参数，那段解析（10 行）纯是负担——
+    //   要么真用起来（得先改回调签名），要么删掉，留在中间只会让人以为 reason 有用。
+    source.addEventListener("auth_expired", () => {
       closed = true
       source?.close()
       onAuthExpired?.()
-      void detail
     })
     source.onmessage = (e) => {
       try {
@@ -650,12 +718,37 @@ export interface NextActionItem {
   }
 }
 
+/** `plan.show` / `plan.at` 的返回形状（含正文，字段名对齐 core 的 planToJson） */
 export interface PlanItem {
   id: string
   title: string
   body: string
   version: number
   status: string
+  /** 毫秒时间戳，与 TaskItem.created_at 同一口径，可直接喂 relativeTime */
+  created_at: number
+  /** 被这一版顶替掉的上一版；v1 为 null */
+  supersedes_id: string | null
+  author_session_id: string | null
+}
+
+/**
+ * `plan.list` 的一条：**不含正文**。
+ *
+ * 计划正文动辄几百行，`plan.history` 一次把每个版本的全文都带回来，
+ * 版本一多（改过十几次的卡并不罕见）抽屉会明显变沉。
+ * 所以列表只取元数据 + 体量提示（body_lines / body_chars），
+ * 正文等用户真的点了那个版本，再单独 `plan.show` 取。
+ */
+export interface PlanVersionItem {
+  id: string
+  version: number
+  title: string
+  status: string
+  created_at: number
+  supersedes_id: string | null
+  body_lines: number
+  body_chars: number
 }
 
 export interface RecoveryContext {

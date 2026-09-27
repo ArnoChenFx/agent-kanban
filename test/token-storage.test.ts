@@ -32,7 +32,16 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, migrate, setInitialConfig, type Db } from "../src/core/db.ts";
+import {
+  SCHEMA_VERSION,
+  getSchemaVersion,
+  openDb,
+  migrate,
+  setInitialConfig,
+  setMeta,
+  type Db,
+} from "../src/core/db.ts";
+import { queryEvents } from "../src/core/events.ts";
 import { ensureAdminToken, readConfigFile } from "../src/core/config.ts";
 import { createProject } from "../src/core/projects.ts";
 import { generateApiKey } from "../src/core/projects.ts";
@@ -44,8 +53,10 @@ import {
   getToken,
   hashToken,
   issueToken,
+  listTokens,
   revokeToken,
   tokenToJson,
+  updateTokenMeta,
   updateTokenProjects,
 } from "../src/core/tokens.ts";
 
@@ -179,5 +190,141 @@ describe("admin 界面链路：列表里的 id 要能直接用来操作", () => 
     // 引用不是密钥，显示全
     const ref = TOKEN_REF_PREFIX + "c".repeat(32);
     expect(describeTokenRef(ref)).toBe(ref);
+  });
+
+  test("存量行的 id 仍是明文密钥：对外一律掩码，鉴权不受影响", () => {
+    // 造一行 #4 之前的老库数据——tokens.id 里存的是明文密钥。零迁移意味着
+    // 这些行原样留在库里，所以 tokenToJson 不能无条件回显 id：那等于把在用的
+    // 密钥原样吐进 admin 列表 / CLI `admin token list` / admin 页。
+    const legacyPlain = TOKEN_PREFIX + "e".repeat(32);
+    db.query(
+      `INSERT INTO tokens (id, name, role, projects, key_hash, created_at, last_used_at, revoked_at, expires_at)
+       VALUES (?, 'legacy', 'project', ?, ?, ?, NULL, NULL, NULL)`,
+    ).run(legacyPlain, JSON.stringify(["p1"]), hashToken(legacyPlain), NOW);
+
+    // 库里确实还是明文（既有事实，本次不做数据清理）
+    expect(wholeTableDump()).toContain(legacyPlain);
+    // 鉴权照常——掩码只发生在显示层，不影响零迁移的结论
+    expect(authenticate(db, legacyPlain, "p1", NOW).ok).toBe(true);
+
+    // 两个出口（详情 / 列表）都不外泄
+    const one = tokenToJson(getToken(db, legacyPlain)!, NOW);
+    expect(String(one.id)).not.toBe(legacyPlain);
+    expect(String(one.id)).toContain("…");
+    expect(JSON.stringify(listTokens(db).map((t) => tokenToJson(t, NOW)))).not.toContain(legacyPlain);
+
+    // 代价：legacy 行无法再用列表里的 id 反查（掩码值回传必然查不到）
+    expect(getToken(db, String(one.id))).toBeNull();
+    // 正确处置是吊销后重新签发：那条路径是通的
+    revokeToken(db, legacyPlain, NOW + 1);
+    expect(authenticate(db, legacyPlain, "p1", NOW + 2)).toMatchObject({ ok: false, reason: "revoked" });
+  });
+
+  test("新行仍然给全引用——存量行掩码不能连累新行", () => {
+    const fresh = issueToken(db, { role: "project", projects: ["p1"] }, NOW);
+    expect(tokenToJson(fresh.token, NOW).id).toBe(fresh.token.id);
+    expect(getToken(db, String(tokenToJson(fresh.token, NOW).id))).not.toBeNull();
+  });
+
+  test("updateTokenMeta：改的字段与审计事件记的字段严格一致", () => {
+    const issued = issueToken(db, { role: "admin" }, NOW);
+    const tokenUpdates = () =>
+      queryEvents(db, { projectKey: "system" })
+        .filter((e) => e.type === "token_updated")
+        .map((e) => JSON.parse(e.data ?? "{}") as { field: string });
+
+    // 曾经那三条 UPDATE 是裸 db.query、写在 auditWrite 之外（注释还自称同事务），
+    // 崩在中间就会留下「改了但没记」。现在两者同事务。
+    const updated = updateTokenMeta(db, issued.token.id, { name: "n1", note: "note1", expiresAtMs: 1000 }, NOW + 1);
+    expect(updated.name).toBe("n1");
+    expect(updated.note).toBe("note1");
+    expect(updated.expiresAt).toBe(NOW + 1 + 1000);
+    expect(tokenUpdates().at(-1)!.field).toBe("name,note,expires_at");
+
+    // 只改一个字段时，事件只记那一个：防的是「changed」与实际 UPDATE 各数一遍
+    updateTokenMeta(db, issued.token.id, { name: "n2" }, NOW + 2);
+    expect(tokenUpdates().at(-1)!.field).toBe("name");
+    // 未传的字段不受影响
+    expect(getToken(db, issued.token.id)!.note).toBe("note1");
+    // 空 patch 不写事件（也无 UPDATE 可写）
+    const before = tokenUpdates().length;
+    updateTokenMeta(db, issued.token.id, {}, NOW + 3);
+    expect(tokenUpdates().length).toBe(before);
+  });
+});
+
+describe("key_hash 的 UNIQUE 索引（v6）", () => {
+  /** 把库退回「v5」：删掉索引、把版本号改回去 */
+  function downgradeToV5(h: Db): void {
+    h.raw.exec("DROP INDEX IF EXISTS idx_tokens_key_hash");
+    setMeta(h.raw, "schema_version", "5");
+  }
+
+  /** 读回这条索引；[unique] 是 SQLite 的保留字，必须打方括号。
+   *  注意 bun:sqlite 的 .get() 查不到行时返回 null（不是 undefined）。 */
+  function keyHashIndex(): { name: string; unique: number } | null {
+    return db
+      .query<{ name: string; unique: number }, []>(
+        "SELECT name, [unique] FROM pragma_index_list('tokens') WHERE name = 'idx_tokens_key_hash'",
+      )
+      .get();
+  }
+
+  test("新库直接就有（applySchema 建的，不是迁移补的）", () => {
+    expect(getSchemaVersion(handle)).toBe(SCHEMA_VERSION);
+    expect(keyHashIndex()?.unique).toBe(1);
+  });
+
+  test("v5 老库升级时补建——存量库不能一直全表扫描", () => {
+    downgradeToV5(handle);
+    expect(keyHashIndex()).toBeNull();
+    expect(getSchemaVersion(handle)).toBe(5);
+
+    migrate(handle);
+
+    expect(getSchemaVersion(handle)).toBe(SCHEMA_VERSION);
+    expect(keyHashIndex()?.unique).toBe(1);
+  });
+
+  test("索引建上后，重复 key_hash 由数据库直接拒绝", () => {
+    const issued = issueToken(db, { role: "project", projects: ["p1"] }, NOW);
+    // 应用层「先查再插」在两个请求同时签发时会漏，所以这个约束必须在库里
+    expect(() =>
+      db
+        .query(
+          `INSERT INTO tokens (id, name, role, projects, key_hash, created_at)
+           VALUES (?, 'copy', 'project', ?, ?, ?)`,
+        )
+        .run(TOKEN_REF_PREFIX + "9".repeat(32), JSON.stringify(["p1"]), issued.token.keyHash, NOW),
+    ).toThrow(/UNIQUE/i);
+  });
+
+  test("老库里已有重复行时：报错并给出排查语句，而不是把库锁死", () => {
+    const key = TOKEN_PREFIX + "f".repeat(32);
+    const hash = hashToken(key);
+    // 先退版本，否则带 UNIQUE 的索引会把重复行挡在插不进来
+    downgradeToV5(handle);
+    const ins = db.query(
+      `INSERT INTO tokens (id, name, role, projects, key_hash, created_at)
+       VALUES (?, ?, 'project', ?, ?, ?)`,
+    );
+    ins.run(TOKEN_REF_PREFIX + "1".repeat(32), "a", JSON.stringify(["p1"]), hash, NOW);
+    ins.run(TOKEN_REF_PREFIX + "2".repeat(32), "b", JSON.stringify(["p1"]), hash, NOW);
+
+    let err: unknown;
+    try {
+      migrate(handle);
+    } catch (e) {
+      err = e;
+    }
+    // 迁移必须失败：静默跳过就等于「索引没建 + 没人知道」
+    expect(String(err)).toContain("key_hash");
+    expect((err as { details?: Record<string, unknown> }).details?.reason).toBe("duplicate_token_key_hash");
+    // 错误要能指导排查，而不是只说一句建不了
+    expect((err as { details?: Record<string, unknown> }).details?.hint).toContain("SELECT id, name");
+    // ⚠ 版本号不能前进：否则重跑时会认为已迁移而永远不再建索引
+    expect(getSchemaVersion(handle)).toBe(5);
+    // 关键：库仍然可读可写，没有被迁移搞成打不开
+    expect(db.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM tokens").get()!.c).toBe(2);
   });
 });

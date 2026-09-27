@@ -454,6 +454,42 @@ describe("前端源码不得再拆 { task } 包装（本次 bug 的静态守卫�
     expect(missing).toEqual([]);
   });
 
+  test("前端写死的默认页大小与后端 BOARD_PAGE_SIZE 一致", () => {
+    // web/ 不能 import src/core（会把 bun:sqlite 拖进浏览器构建），所以
+    // `api.ts` 里的 `?? 500` 只能各写一份。写错的后果很轻——只是「还有 N 张」
+    // 提示条的 limit 字段显示错——所以必须靠静态扫描钉住，没人会手动发现。
+    const boardSrc = readFileSync(join(ROOT, "src", "core", "board.ts"), "utf8");
+    const backend = /BOARD_PAGE_SIZE\s*=\s*(\d+)/.exec(boardSrc)?.[1];
+    expect(backend).toBeDefined();
+
+    const offenders: string[] = [];
+    for (const [file, src] of readWebSources()) {
+      // 只认 limit 相关的兜底：`limit: … ?? 500`
+      for (const m of src.matchAll(/limit[^;\n]*\?\?\s*(\d+)/g)) {
+        if (m[1] !== backend) offenders.push(`${file}: ?? ${m[1]}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("前端 totalFromCounts 依赖的不变量：LANE_ORDER 覆盖除 cancelled 外所有状态", () => {
+    // 前端算 total 用的是「counts 全量 − cancelled」，后端 buildBoard 用的是
+    // 「LANE_ORDER 求和」。两者字面不同，只因为 LANE_ORDER 恰好等于
+    // TASK_STATUSES 去掉 cancelled。后端加状态而没同步这里时，前端会把新状态
+    // 算进去、后端不会——「还有 N 张」就会一直差着几个数，且没有任何报错。
+    const boardSrc = readFileSync(join(ROOT, "src", "core", "board.ts"), "utf8");
+    const typesSrc = readFileSync(join(ROOT, "src", "core", "types.ts"), "utf8");
+    const lanes = /LANE_ORDER[^=]*=\s*\[([^\]]*)\]/.exec(boardSrc)?.[1] ?? "";
+    const laneStatuses = [...lanes.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!);
+    const statusConst = /TASK_STATUSES[^=]*=\s*\[([^\]]*)\]/.exec(typesSrc)?.[1] ?? "";
+    const allStatuses = [...statusConst.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!);
+
+    expect(laneStatuses.length).toBeGreaterThan(0);
+    expect(allStatuses.length).toBeGreaterThan(0);
+    // 去掉 cancelled 之后必须完全相等（次序无关）
+    expect([...laneStatuses].sort()).toEqual([...allStatuses].filter((s) => s !== "cancelled").sort());
+  });
+
   test("task.create 传的是 description，不是 body（写错会被服务端静默忽略）", () => {
     const sources = readWebSources();
     const opsSrc = readFileSync(join(ROOT, "src", "core", "ops.ts"), "utf8");

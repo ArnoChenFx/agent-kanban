@@ -42,7 +42,7 @@ import {
   type ListFilter,
 } from "./tasks.ts";
 import { TASK_STATUSES } from "./types.ts";
-import { buildBoard } from "./board.ts";
+import { buildBoard, BOARD_PAGE_SIZE, PAGE_LIMIT_MAX, PAGE_OFFSET_MAX } from "./board.ts";
 import { closeSession, createSession, listSessions, toSessionView, touchSession } from "./sessions.ts";
 import { getConfig } from "./db.ts";
 import { countEvents, queryEvents, taskRecentEvents } from "./events.ts";
@@ -183,7 +183,7 @@ export type Op =
   | { kind: "task.dep.list"; params: { task_id: string } }
   | { kind: "task.remove"; params: { task_id: string; force?: boolean } }
   // ---- 会话 ----
-  | { kind: "session.start"; params: { agent_name: string; harness?: string; id?: string } }
+  | { kind: "session.start"; params: { agent_name: string; harness?: string; id?: string; cwd?: string } }
   | { kind: "session.end"; params: { summary?: string } }
   | { kind: "session.heartbeat"; params: Record<string, never> }
   | { kind: "session.list"; params: { include_closed?: boolean } }
@@ -571,7 +571,9 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
           //   （会让人以为持有者就在那个目录里）。
           //   远程客户端应通过 `X-Kanban-Cwd` 头（或 config）带上自己的工作目录；
           //   没带就存 null 而不是猜一个——猜出来的值比没有更坏。
-          cwd: (op.params as { cwd?: string }).cwd ?? reqCwd(ctx) ?? undefined,
+          //   用 `||` 而不是 `??`：空串同样算「没带」（HTTP 头可能被写成空的）。
+          //   `cwd` 已经在上面 Op 联合类型里声明过，所以这里不需要任何强转。
+          cwd: op.params.cwd || ctx.cwd || undefined,
           pid: process.pid,
           id: op.params.id,
         }),
@@ -655,8 +657,9 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
       const now = ctx.now();
       // limit/offset 必须钳制：server 直接吃未经验证的 JSON（见 #13），
       // 而这里一旦传个 limit: 1e9 就是把整库塞进一个 HTTP 响应。
-      const limit = clampInt(op.params.limit, 1, 2000, 500);
-      const offset = clampInt(op.params.offset, 0, 1_000_000, 0);
+      // 上界与默认值取自 board.ts 的常量，不要在本文件另写一份。
+      const limit = clampInt(op.params.limit, 1, PAGE_LIMIT_MAX, BOARD_PAGE_SIZE);
+      const offset = clampInt(op.params.offset, 0, PAGE_OFFSET_MAX, 0);
       const snapshot = buildBoard(scope, {
         now,
         includeTerminal: op.params.include_done ?? true,
@@ -1159,15 +1162,6 @@ function parseTtl(input: string): number | undefined {
   }
 }
 
-/**
- * 优先用 OpContext 里带的调用方工作目录；没有就返回 undefined
- * （而不是退回 `process.cwd()`——远程时那是 server 的目录）。
- */
-function reqCwd(ctx: OpContext): string | null {
-  const v = ctx.cwd;
-  return typeof v === "string" && v.length > 0 ? v : null;
-}
-
 /** 必填字符串校验（server 端不可信输入，必须校验） */
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -1186,8 +1180,12 @@ function requireString(value: unknown, field: string): string {
  * 存在的理由：`limit` 这类参数直接进 SQL 的 LIMIT，而 SQLite 里
  * `LIMIT -1` 是**不限长**、`LIMIT 1e9` 会真的去扫那么多行。
  * 没有上下界的话，一个手滑或恶意的请求就能把整库塞进一个 HTTP 响应。
+ *
+ * 导出给 `http.ts` 用：`/api/board` 曾经在这里之外自己写了一套
+ * `Number` / `Math.min` 的钳制，于是上界与默认值各有两个真相——
+ * 两边一旦不同步，REST 与 Op 对同一个 `?limit=` 的解释就会分叉。
  */
-function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+export function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   if (value === undefined || value === null) return fallback;
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -1202,25 +1200,32 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
  * 真正做到的事：
  *   1. op 本身是个 `{kind, params}` 对象；
  *   2. `params` 不是 null / 非对象；
- *   3. `task.progress` 的 `pct` 在 0..100。
+ *   3. `task.progress` 的 `pct` 在 0..100；
+ *   4. `task.list` 的 `limit` 钳到 1..2000（默认 200）、`offset` 钳到 0..1e6（默认 0）；
+ *   5. `task.list` 的 `status` 必须在 `TASK_STATUSES` 里，否则**明确报错**；
+ *   6. `task.transition` 的 `to` 同上。
  *
- * **没有**做到的事（交给各分支自己兜，或靠 SQLite 报错）：
+ * 3–6 是后加的：其中 `limit`/`status` 当时只在**使用点**（`board.get` / `listTasks`）
+ * 钳，而 `/api/op` 面前是未信任的 JSON——`LIMIT -1` 是不限长、`1e9` 会真去扫，
+ * 非法 status 则会静默返回空列表（调用方以为「没有这样的卡」）。
+ * 挪到入口后「这里只校验 pct」的说法就过时了，本清单必须跟着改，
+ * 否则注释会比代码更自信——那比没有注释更糟。
+ *
+ * **仍然没有**做到的事（交给各分支自己兜，或靠 SQLite 报错）：
  *   - 字符串长度、标题非空（`createTask` 会 trim 后存空串，**这是一个已知缺口**）；
- *   - `task.list` 的 `limit` / `offset`（已在 `board.get` 钳制，`task.list` 没有）；
- *   - `status` 是否在 `TASK_STATUSES` 里（`listTasks` 直接拼进 SQL，靠参数化挡住注入，
- *     但非法值会查出空列表而不是报错）；
- *   - 依赖是否成环（`addDependency` 自己查）。
+ *   - 依赖是否成环（`addDependency` 自己查）；
+ *   - `board.get` / `events.list` 的 `limit`（它们在各自的执行分支里钳）。
  *
  * ## 为什么不给每个 Op 写一套参数 schema
  *
  * 那是一整套新机制（新文件 + 生成式类型 + 与 Op 联合类型的同步），而当前
  * server 面前已经是「未信任的 JSON」。真正要紧的那几条（`limit` 会变成
- * `LIMIT -1` / `1e9`、token 格式）已经在**使用点**钳制了，
+ * `LIMIT -1` / `1e9`、token 格式）已经在**入口或使用点**钳制了，
  * 比在入口统一校验更贴近实际风险。
  *
- * 所以这里只做三件事，并且把「没做什么」写清楚——
+ * 所以这里只做上面那五件事，并且把「没做什么」写清楚——
  * 一句诚实的注释比一句做不到的承诺有用。
- * ⚠ 若要扩到每个字段，请同时更新上面这段清单，别让它再次漂移。
+ * ⚠ 若要扩到每个字段，请同时更新上面这两段清单，别让它再次漂移。
  */
 function validateOp(op: Op): void {
   if (!op || typeof op !== "object" || typeof (op as { kind?: unknown }).kind !== "string") {
@@ -1251,8 +1256,9 @@ function validateOp(op: Op): void {
   if (op.kind === "task.list") {
     const p = params as ListTaskParams | undefined;
     if (p) {
-      p.limit = clampInt(p.limit, 1, 2000, 200);
-      p.offset = clampInt(p.offset, 0, 1_000_000, 0);
+      // 默认 200；上界与看板共用 PAGE_LIMIT_MAX
+      p.limit = clampInt(p.limit, 1, PAGE_LIMIT_MAX, 200);
+      p.offset = clampInt(p.offset, 0, PAGE_OFFSET_MAX, 0);
     }
   }
   // status 非法值：明确报错而不是静默返回空列表
@@ -1266,6 +1272,23 @@ function validateOp(op: Op): void {
         `unknown task status: ${bad.map((s) => JSON.stringify(s)).join(", ")}`,
         `One of: ${TASK_STATUSES.join(", ")}`,
         { reason: "invalid_status", got: bad },
+      );
+    }
+  }
+  // task.transition 的 `to`：与上面同一条道理，但意义更大。
+  //
+  // 不校验时 `to: "nonexistent"` 会一路走到 `transition()`，被当成
+  // 「todo → nonexistent 不合法」报出来，并附上 `legal_transitions`。
+  // 而那个列表里根本没有 `nonexistent`——agent 收到的是一份**自相矛盾**的建议：
+  // 「你不能去那儿，可去的地方是这些」，而它写的那个地方压根不存在。
+  // 「状态名不存在」和「这个转移不合法」是两件不同的事，必须在入口就分开。
+  if (op.kind === "task.transition") {
+    const to = (params as { to?: unknown } | undefined)?.to;
+    if (to !== undefined && !TASK_STATUSES.includes(to as TaskStatus)) {
+      throw KanbanError.usage(
+        `unknown task status: ${JSON.stringify(to)}`,
+        `One of: ${TASK_STATUSES.join(", ")}`,
+        { reason: "invalid_status", got: [to] },
       );
     }
   }

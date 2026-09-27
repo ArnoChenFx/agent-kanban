@@ -153,6 +153,22 @@ describe("计划时间线里的 plan_superseded", () => {
     const hist = strip((await cli(["plan", "history", "PL-T-0002-02", "--db", dbPath])).out);
     expect(hist).not.toContain("undefined");
   });
+
+  test("plan show 同样没有 undefined", async () => {
+    // 补这条是因为：事故发生在 describeEvent（三个输出面共用），
+    // 而当时只钉了 task show --timeline 与 plan history。少一个面就少一份覆盖，
+    // 而这正是它当初能活下来的原因——所以三个面必须一起钉。
+    const show = strip((await cli(["plan", "show", "PL-T-0002-02", "--db", dbPath])).out);
+    expect(show).not.toContain("undefined");
+    // 顺带确认真的打出了正文（否则上面那条可能因为什么都没输出而跘绿）
+    expect(show).toContain("第二步");
+  });
+
+  test("plan show 给出的是 v2 正文（当前生效版本）", async () => {
+    const show = strip((await cli(["plan", "show", "PL-T-0002-02", "--db", dbPath])).out);
+    expect(show).toContain("第二步");
+    expect(show).not.toContain("第一步");
+  });
 });
 
 describe("context 的输出", () => {

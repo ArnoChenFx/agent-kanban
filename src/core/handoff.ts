@@ -17,7 +17,7 @@
 import type { Database } from "bun:sqlite";
 import { KanbanError } from "./errors.ts";
 import { toEvent, toHandoff, type HandoffRow } from "./rows.ts";
-import { taskRecentEvents, queryEvents } from "./events.ts";
+import { taskRecentEvents } from "./events.ts";
 import { requireTask, type Scope } from "./tasks.ts";
 import { withTx, type TxContext } from "./tx.ts";
 import type { Handoff, KanbanEvent } from "./types.ts";
@@ -149,6 +149,24 @@ export function taskHandoffs(scope: Scope, taskId: string, limit = 50): Handoff[
 }
 
 /**
+ * 「这条交接还待接手」的共用过滤子句：**所属卡未到终态**。
+ *
+ * ⚠ 曾经这段 EXISTS 在 `pendingHandoffs` 与 `countPendingHandoffs` 里各写了一份
+ *   逐字相同的副本，而「两边必须用同一条过滤」那句注释就贴在它们旁边——
+ *   注释提醒的恰恰就是这个会漂移的形状：改了一处忘了另一处，角标就会说
+ *   「2 条待接手」而侧栏一条不列。抽成常量后改一次两边同时生效；
+ *   万一真要分开口径，也只有这一个出处，必须想清楚才能改。
+ *
+ * `t.project_key = handoffs.project_key` 是**关联引用**，不占绑定值。
+ */
+const PENDING_TASK_EXISTS = `EXISTS (
+            SELECT 1 FROM tasks t
+             WHERE t.project_key = handoffs.project_key
+               AND t.id = handoffs.task_id
+               AND t.status NOT IN ('done','cancelled')
+          )`;
+
+/**
  * 待接手的交接（尚未被任何人消费，**且它那张卡还开着**）。
  * 按时间倒序：最新的交接最能代表当前现场。
  *
@@ -186,12 +204,7 @@ export function pendingHandoffs(
     .query<HandoffRow, Array<string | number>>(
       `SELECT * FROM handoffs
         WHERE project_key = ? AND consumed_by IS NULL ${excludeSelf}
-          AND EXISTS (
-            SELECT 1 FROM tasks t
-             WHERE t.project_key = handoffs.project_key
-               AND t.id = handoffs.task_id
-               AND t.status NOT IN ('done','cancelled')
-          )
+          AND ${PENDING_TASK_EXISTS}
         ORDER BY id DESC LIMIT ?`,
     )
     .all(...params)
@@ -406,10 +419,21 @@ export function recentHandoffs(scope: Scope, limit = 10): Handoff[] {
 }
 
 /**
+ * 「这条交接还待接手」——`project_key` 匹配且**所属卡未完成**。
+ *
+ * ⚠ 曾经这段 EXISTS 在 `pendingHandoffs` 与 `countPendingHandoffs` 里各写了一份
+ *   逐字相同的副本，而「两边必须用同一条过滤」那句注释就贴在它们旁边——
+ *   注释提醒的恰恰是这个会漂移的形状：改了一处忘了另一处，角标就会说
+ *   「2 条待接手」而侧栏一条不列。抽成常量后改一次两边同时生效；
+ *   万一真要分开口径，也只有这一个出处，必须想清楚才能改。
+ *
+ * `t.project_key = handoffs.project_key` 是**关联引用**，不占绑定值。
+ */
+/**
  * 统计待接手数量（board 上显示提醒）。
  *
- * ⚠ 必须与 `pendingHandoffs` 用**同一条**过滤：已完成的卡的交接不再算「待接手」。
- * 两边口径不一致的话，角标会说「2 条待接手」而侧栏一条不列。
+ * 过滤与 `pendingHandoffs` **共用** `PENDING_TASK_EXISTS`（定义在文件上方）：
+ * 已完成的卡的交接不算「待接手」，两边口径必须一致。
  */
 export function countPendingHandoffs(scope: Scope): number {
   return (
@@ -417,15 +441,8 @@ export function countPendingHandoffs(scope: Scope): number {
       .query<{ c: number }, [string]>(
         `SELECT COUNT(*) AS c FROM handoffs
           WHERE project_key = ? AND consumed_by IS NULL
-            AND EXISTS (
-              SELECT 1 FROM tasks t
-               WHERE t.project_key = handoffs.project_key
-                 AND t.id = handoffs.task_id
-                 AND t.status NOT IN ('done','cancelled')
-            )`,
+            AND ${PENDING_TASK_EXISTS}`,
       )
       .get(scope.projectKey)?.c ?? 0
   );
 }
-
-void queryEvents;

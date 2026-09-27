@@ -182,10 +182,23 @@ describe("接线守卫：两条读路径必须用同一条过滤（角标与列�
       .replace(/(^|[^:])\/\/.*$/gm, "$1");
   }
 
-  test("pendingHandoffs 与 countPendingHandoffs 都带「卡片未到终态」的条件", () => {
+  test("pendingHandoffs 与 countPendingHandoffs 都用**同一条**过滤子句", () => {
     const h = src("src/core/handoff.ts");
-    const occurrences = (h.match(/NOT IN \('done','cancelled'\)/g) ?? []).length;
-    // 两条读路径各一处；少一处就意味着角标与列表会说法不一
-    expect(occurrences).toBe(2);
+    // ⚠ 这条断言曾写成「`NOT IN ('done','cancelled')` 出现 2 次」——那是在两个函数
+    //   里数同一段 SQL 的副本数。它能抓住「少了一处」，但**结构上鼓励复制**：
+    //   复制出来两份各自改，谁也看不出来。真正的修法是抽成单一来源
+    //   （`PENDING_TASK_EXISTS`），而那样出现次数就变成 1 了——
+    //   一个为了防漂移而写的守卫，反过来把「消除重复」判成失败。
+    // 现在改判结构：子句只有一处定义，且两条读路径都引用它。
+    const defs = (h.match(/const PENDING_TASK_EXISTS\s*=/g) ?? []).length;
+    expect(defs).toBe(1);
+    expect(h).toMatch(/PENDING_TASK_EXISTS\s*=\s*`EXISTS \([\s\S]*?NOT IN \('done','cancelled'\)[\s\S]*?`/);
+    // 两条读路径各自引用它——不是各自内联一份
+    const uses = (h.match(/\$\{PENDING_TASK_EXISTS\}/g) ?? []).length;
+    expect(uses).toBe(2);
+    // 反向：这段 SQL 在整个文件里**只该出现一次**（就在常量定义里）。
+    // ⚠ 别写成 not.toMatch(/EXISTS \(…/)：常量定义本身就匹配那个形状。
+    const sqlSites = (h.match(/EXISTS \(\s*SELECT 1 FROM tasks t/g) ?? []).length;
+    expect(sqlSites).toBe(1);
   });
 });

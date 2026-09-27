@@ -55,7 +55,7 @@ const SiteZh = {
   "integ.opt1h": "1. 协议文件",
   "integ.opt1p": "往 AGENTS.md 写入一个受管理的协议块，任何读 AGENTS.md 的 agent 都会知道先跑 <code class=\"inline\">session start</code> 和 <code class=\"inline\">context</code> 再动代码。支持 <code class=\"inline\">--check</code> 做 CI 守卫。",
   "integ.opt2h": "2. MCP 工具",
-  "integ.opt2p": "通过 stdio 提供 20 个工具，是 CLI 同一套 core 的薄封装。每个工具返回 <code class=\"inline\">{ ok, data, next_actions }</code>，失败带与 CLI 一致的退出码语义。",
+  "integ.opt2p": "通过 stdio 提供 29 个工具，是 CLI 同一套 core 的薄封装。每个工具返回 <code class=\"inline\">{ ok, data, next_actions }</code>，失败带与 CLI 一致的退出码语义。",
   "integ.opt3h": "3. agent 技能",
   "integ.opt3p": "教的是工作流：task claim 返回退出码 3 该怎么办、task progress 兼职续租、doing → done 为什么要走 review。",
   "integ.more": "更多细节见<a href=\"docs.html\">文档页</a>。",

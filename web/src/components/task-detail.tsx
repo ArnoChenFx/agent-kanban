@@ -27,6 +27,7 @@ import {
   UserRoundIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
@@ -41,10 +42,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import {
+  fetchPlan,
   fetchTaskDetail,
   type ChecklistItem,
   type HandoffItem,
   type PlanItem,
+  type PlanVersionItem,
   type SessionItem,
   type TaskDetail,
   type TaskItem,
@@ -54,7 +57,7 @@ import { useI18n } from "@/lib/i18n"
 import { errorText } from "@/lib/error-text"
 import { ApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { PRIORITY_LABEL, STATUS_META, describeEvent, relativeTime, statusLabel } from "@/lib/status"
+import { PRIORITY_LABEL, STATUS_META, describeEvent, planStatusLabel, relativeTime, statusLabel } from "@/lib/status"
 
 export function TaskDetailSheet({
   task,
@@ -79,6 +82,9 @@ export function TaskDetailSheet({
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 计划页签里选中的历史版本。**存在父组件**是因为 radix 的 TabsContent 切走时会卸载，
+  // 放回 PlanView 就会在“计划 → 时间线 → 计划”之间丢掉用户选中的那一版。
+  const [planVersionId, setPlanVersionId] = useState<string | null>(null)
   const { t } = useI18n()
 
   useEffect(() => {
@@ -89,6 +95,8 @@ export function TaskDetailSheet({
     let cancelled = false
     setLoading(true)
     setError(null)
+    // 换卡就回到该卡的当前版本，否则会把上一张卡选中的版本号带过来
+    setPlanVersionId(null)
     fetchTaskDetail(token, project, task.id)
       .then((d) => {
         if (!cancelled) setDetail(d)
@@ -182,7 +190,16 @@ export function TaskDetailSheet({
                         </Badge>
                       )}
                     </TabsTrigger>
-                    {detail.plan && <TabsTrigger value="plan">{t("detail.tab.plan")}</TabsTrigger>}
+                    {(detail.plan || detail.planVersions.length > 0) && (
+                      <TabsTrigger value="plan">
+                        {t("detail.tab.plan")}
+                        {detail.planVersions.length > 1 && (
+                          <Badge variant="secondary" className="ml-1">
+                            {detail.planVersions.length}
+                          </Badge>
+                        )}
+                      </TabsTrigger>
+                    )}
                   </TabsList>
 
                   <TabsContent value="timeline">
@@ -193,9 +210,16 @@ export function TaskDetailSheet({
                     <Handoffs items={detail.handoffs} sessionNames={sessionNames} />
                   </TabsContent>
 
-                  {detail.plan && (
+                  {(detail.plan || detail.planVersions.length > 0) && (
                     <TabsContent value="plan">
-                      <PlanView plan={detail.plan} />
+                      <PlanView
+                        plan={detail.plan}
+                        versions={detail.planVersions}
+                        selectedId={planVersionId}
+                        onSelect={setPlanVersionId}
+                        token={token}
+                        project={project}
+                      />
                     </TabsContent>
                   )}
                 </Tabs>
@@ -495,20 +519,109 @@ function Handoffs({ items, sessionNames }: { items: HandoffItem[]; sessionNames?
   )
 }
 
-function PlanView({ plan }: { plan: PlanItem }) {
+/**
+ * 计划页签：当前版本 + 历史版本链。
+ *
+ * 版本链来自 `plan.list`（**不含正文**，只有元数据与体量提示），正文按需取：
+ * 当前版本随详情一起带回来了（`plan.show`），点旧版本才再发一次 `plan.show`。
+ * 不用 `plan.history` 一次拉全是刻意的——那会把每一版的全文都塞进抽屉，
+ * 改过十几次的计划在浏览器里会明显变沉。
+ */
+function PlanView({
+  plan,
+  versions,
+  selectedId,
+  onSelect,
+  token,
+  project,
+}: {
+  plan: PlanItem | null
+  versions: PlanVersionItem[]
+  /** 父组件持有的选中版本；null = 看当前版本 */
+  selectedId: string | null
+  onSelect: (planId: string) => void
+  token: string
+  project: string
+}) {
+  const { t } = useI18n()
+  const [body, setBody] = useState<PlanItem | null>(plan)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // 没显式选中就看当前版本；连当前版本都没有（老服务端只认 plan.show）才退到列表头一条
+  const currentId = selectedId ?? plan?.id ?? versions[0]?.id ?? null
+  // 正在看的是不是“当前生效”那一版——不是的话得说清楚，否则读者会以为历史版本才是计划
+  const showingCurrent = !plan || plan.id === currentId
+
+  useEffect(() => {
+    if (!currentId) return
+    // 当前版本已经在 detail 里了，直接复用，不重发请求
+    if (plan && plan.id === currentId) {
+      setBody(plan)
+      setLoading(false)
+      setError(null)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    fetchPlan(token, project, currentId)
+      .then((p) => {
+        if (!cancelled) setBody(p)
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e instanceof ApiError ? errorText(e, t) : e.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentId, plan, token, project, t])
+
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <FileTextIcon className="text-muted-foreground size-4" />
-        <p className="text-sm font-medium">{plan.title}</p>
-        <Badge variant="outline" className="ml-auto">
-          v{plan.version} · {plan.status}
-        </Badge>
-      </div>
-      <Separator />
-      <pre className="text-muted-foreground bg-muted/40 max-h-[24rem] overflow-auto rounded-md p-3 font-mono text-xs whitespace-pre-wrap">
-        {plan.body}
-      </pre>
+      {/* 只有一个版本时不占地方：版本链对“就一版计划”的卡是纯噪声 */}
+      {versions.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-muted-foreground mr-1 text-xs">{t("plan.versions")}</span>
+          {versions.map((v) => (
+            <Button
+              key={v.id}
+              size="xs"
+              variant={v.id === currentId ? "secondary" : "ghost"}
+              onClick={() => onSelect(v.id)}
+              className="font-mono"
+            >
+              v{v.version}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {loading && <Skeleton className="h-24 w-full" />}
+      {error && <p className="text-destructive text-sm">{error}</p>}
+
+      {body && !loading && (
+        <>
+          <div className="flex items-center gap-2">
+            <FileTextIcon className="text-muted-foreground size-4" />
+            <p className="text-sm font-medium">{body.title}</p>
+            <Badge variant="outline" className="ml-auto">
+              v{body.version} · {planStatusLabel(body.status, t)}
+            </Badge>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {t("plan.savedAt", { time: relativeTime(body.created_at, t) })}
+            {!showingCurrent && plan && ` · ${t("plan.currentIs", { version: plan.version })}`}
+          </p>
+          <Separator />
+          <pre className="text-muted-foreground bg-muted/40 max-h-[24rem] overflow-auto rounded-md p-3 font-mono text-xs whitespace-pre-wrap">
+            {body.body}
+          </pre>
+        </>
+      )}
     </div>
   )
 }

@@ -18,7 +18,8 @@ import type { Database } from "bun:sqlite";
 import { getConfig, migrate, openDb, type Db } from "../core/db.ts";
 import { ExitCode, KanbanError, toKanbanError, type ExitCodeValue } from "../core/errors.ts";
 import { findKanbanDirLoose, resolvePaths } from "../core/paths.ts";
-import { executeOp, type Op } from "../core/ops.ts";
+import { clampInt, executeOp, type Op } from "../core/ops.ts";
+import { BOARD_PAGE_SIZE, PAGE_LIMIT_MAX, PAGE_OFFSET_MAX } from "../core/board.ts";
 import { getProject, type Project } from "../core/projects.ts";
 import {
   authenticate,
@@ -83,7 +84,12 @@ export function startServer(opts: ServeOptions): {
   const tickets = new SseTicketStore();
   const host = opts.host ?? "127.0.0.1";
   const port = opts.port ?? 7788;
-  const version = readVersion();
+  // 单一真相：版本从 core/version.ts 读 package.json（与 `--version` 同源）。
+  // ⚠ 不要在这里硬编码版本号，也不要为了「加个函数」而再包一层转发——
+  //   曾经这里写着 `return "0.1.0"` 加一句「M5 阶段改为读 package.json」，
+  //   而 package.json 早已是 0.1.x，于是 /api/health 一直报一个**假版本**。
+  //   CI 在打 tag 时校验 package.json.version === tag，写第二份就多一个会漂移的真相。
+  const version = readPackageVersion();
   const nowFn = opts.now ?? Date.now;
   // 前端构建产物：找不到时 `/` 会退回内置占位页（里面会提示如何构建）
   const webDir = resolveWebDir(opts.webDir);
@@ -364,11 +370,11 @@ async function handleRequest(
 
   if (path === "/api/board") {
     // 分页参数（看板一次只取 limit 张，超出部分由前端「显示更多」拉取）。
-    // 必须钳制：SQLite 里 LIMIT -1 是不限长，直接透传会变成「把整库塞进一个响应」。
-    const rawLimit = Number(url.searchParams.get("limit") ?? "");
-    const rawOffset = Number(url.searchParams.get("offset") ?? "");
-    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(2000, Math.floor(rawLimit)) : 500;
-    const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.min(1_000_000, Math.floor(rawOffset)) : 0;
+    // 钳制**必须**走 core 的 clampInt 与同一组常量：这里曾经自己写了一套
+    // Number/Math.min，于是上界与默认值各有两个真相，两边不同步时 REST 与 Op
+    // 会对同一个 ?limit= 给出不同的解释。
+    const limit = clampInt(url.searchParams.get("limit"), 1, PAGE_LIMIT_MAX, BOARD_PAGE_SIZE);
+    const offset = clampInt(url.searchParams.get("offset"), 0, PAGE_OFFSET_MAX, 0);
     const { data } = executeOp(
       { kind: "board.get", params: { include_done: true, limit, offset } },
       {
@@ -1081,20 +1087,7 @@ function jsonError(error: KanbanError, status: number, extraHeaders: Record<stri
   return json({ ok: false, error: payload.error }, status, extraHeaders);
 }
 
-/**
- * 当前 CLI 版本。
- *
- * 从 `package.json` 读，与 `--version` 同源（core/version.ts）。
- * 曾经在这里硬编码 `"0.1.0"` 并注释着「M5 阶段改为读 package.json」——
- * 而 `package.json` 早已是 0.1.x，所以 `/api/health` 一直报一个**假版本**。
- * 版本号只能有一个来源（CI 在打 tag 时校验 `package.json.version === tag`），
- * 这里再写一份就多了一个会漂移的真相。
- */
-function readVersion(): string {
-  return readPackageVersion();
-}
-
-  /** 临时占位页（未构建前端时使用）
+/** 临时占位页（未构建前端时使用）
    *
    * 什么时候会看到它：仓库刚 clone 还没跑过 `bun run build:web`。
    * 页面里直接给出构建命令，不让用户对着一句 “Not Found” 猜。
