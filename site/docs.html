@@ -85,6 +85,16 @@ agent-kanban admin project add my-app
 agent-kanban admin token create --project my-app --name "CI runner"
 <span style="color:var(--fg-dim)"># → k_a1b2c3...</span></pre>
 
+      <h3 style="margin-top:32px" data-i18n="remote.docker.h">Or with Docker</h3>
+      <p data-i18n="remote.docker.p">The compose file pulls the published image from GitHub Container Registry and keeps data in a named volume. The image runs the TypeScript sources on Bun directly, so there is no build step.</p>
+      <pre class="terminal">cp .env.example .env
+<span style="color:var(--fg-dim)"># set KANBAN_ADMIN_TOKEN (generate one: openssl rand -hex 16)</span>
+docker compose up -d
+
+<span style="color:var(--fg-dim)"># or without compose</span>
+docker run -d --name agent-kanban -p 7788:7788 -v kanban-data:/data ghcr.io/arnochenfx/agent-kanban:latest</pre>
+      <div class="doc-note" style="margin-top:16px" data-i18n="remote.docker.note">KANBAN_BIND (default 127.0.0.1) and KANBAN_PORT decide how far the server is reachable and which host port it uses. Leave KANBAN_ADMIN_TOKEN empty and the server generates one on first boot, prints it once and stores it in /data/.kanban/config.toml. The container only runs serve — create projects and issue tokens on the /admin page with the admin token.</div>
+
       <h3 style="margin-top:32px" data-i18n="remote.client.h">On a client machine</h3>
       <pre class="terminal"><span style="color:var(--fg-dim)"># write &lt;project&gt;/.kanban/config.toml</span>
 mode = "remote"

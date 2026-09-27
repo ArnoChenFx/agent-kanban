@@ -34,6 +34,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # docs/images/*.png are Git LFS objects; without this the artifact
+          # gets 130-byte pointer files instead of real images
+          lfs: true
 
       - name: Assemble site (copy screenshots)
         run: |
