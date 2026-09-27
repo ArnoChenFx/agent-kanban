@@ -61,6 +61,7 @@ export function TaskDetailSheet({
   token,
   project,
   tasksById,
+  sessionNames,
   onSelect,
   onClose,
 }: {
@@ -69,6 +70,8 @@ export function TaskDetailSheet({
   project: string
   /** 当前看板上的任务索引：把依赖 / 父任务显示成"编号 + 标题"而不是光一个编号 */
   tasksById?: Map<string, TaskItem>
+  /** session id → agent 名：时间线 / 检查项 / 交接的署名要显示成"名字 + id"而不是裸 id */
+  sessionNames?: Map<string, string>
   /** 传入后依赖/父任务可点，直接跳到那张卡的详情 */
   onSelect?: (taskId: string) => void
   onClose: () => void
@@ -165,7 +168,7 @@ export function TaskDetailSheet({
               {error && <p className="text-destructive text-sm">{error}</p>}
 
               {/* 概览：描述 / 检查项 / 依赖。放在页签上方——这些是打开卡片就想看的东西 */}
-              {detail && <Overview detail={detail} tasksById={tasksById} onSelect={onSelect} />}
+              {detail && <Overview detail={detail} tasksById={tasksById} sessionNames={sessionNames} onSelect={onSelect} />}
 
               {detail && (
                 <Tabs defaultValue="timeline">
@@ -183,11 +186,11 @@ export function TaskDetailSheet({
                   </TabsList>
 
                   <TabsContent value="timeline">
-                    <Timeline events={detail.timeline} />
+                    <Timeline events={detail.timeline} sessionNames={sessionNames} />
                   </TabsContent>
 
                   <TabsContent value="handoff">
-                    <Handoffs items={detail.handoffs} />
+                    <Handoffs items={detail.handoffs} sessionNames={sessionNames} />
                   </TabsContent>
 
                   {detail.plan && (
@@ -223,10 +226,12 @@ export function TaskDetailSheet({
 function Overview({
   detail,
   tasksById,
+  sessionNames,
   onSelect,
 }: {
   detail: TaskDetail
   tasksById?: Map<string, TaskItem>
+  sessionNames?: Map<string, string>
   onSelect?: (taskId: string) => void
 }) {
   const { t } = useI18n()
@@ -271,7 +276,7 @@ function Overview({
           </SectionTitle>
           <ul className="flex flex-col gap-1">
             {detail.checklist.map((item, i) => (
-              <ChecklistRow key={`${i}-${item.text}`} item={item} />
+              <ChecklistRow key={`${i}-${item.text}`} item={item} sessionNames={sessionNames} />
             ))}
           </ul>
         </section>
@@ -309,8 +314,27 @@ function SectionTitle({ icon: Icon, children }: { icon: React.ElementType; child
   )
 }
 
+/**
+ * 会话署名的两种渲染：JSX 版（id 用等宽字体，与侧栏会话列表同口径）与纯字符串版
+ * （塞进 i18n 模板参数用）。名字查不到（会话已清 / 老服务端）就退回裸 id。
+ */
+function SessionSig({ names, id }: { names?: Map<string, string>; id: string }) {
+  const name = names?.get(id)
+  return (
+    <>
+      {name && `${name} `}
+      <span className="font-mono">{id}</span>
+    </>
+  )
+}
+
+function sessionLabel(names: Map<string, string> | undefined, id: string): string {
+  const name = names?.get(id)
+  return name ? `${name} ${id}` : id
+}
+
 /** 检查项一行：勾了的划线 + 勾的人/时间（“谁勾的”是协作里最常被问的一个问题） */
-function ChecklistRow({ item }: { item: ChecklistItem }) {
+function ChecklistRow({ item, sessionNames }: { item: ChecklistItem; sessionNames?: Map<string, string> }) {
   const { t } = useI18n()
   return (
     <li className="flex items-start gap-2 text-sm">
@@ -322,7 +346,9 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
       <span className={cn("flex-1", item.done && "text-muted-foreground line-through")}>{item.text}</span>
       {item.done && (item.by || item.done_at) && (
         <span className="text-muted-foreground shrink-0 text-[11px]">
-          {[item.by, item.done_at ? relativeTime(item.done_at, t) : null].filter(Boolean).join(" · ")}
+          {item.by && <SessionSig names={sessionNames} id={item.by} />}
+          {item.by && item.done_at && " · "}
+          {item.done_at && relativeTime(item.done_at, t)}
         </span>
       )}
     </li>
@@ -376,7 +402,7 @@ function RelatedTask({
   )
 }
 
-function Timeline({ events }: { events: KanbanEvent[] }) {
+function Timeline({ events, sessionNames }: { events: KanbanEvent[]; sessionNames?: Map<string, string> }) {
   const { t } = useI18n()
   if (events.length === 0) {
     return <p className="text-muted-foreground py-8 text-center text-sm">{t("detail.timeline.empty")}</p>
@@ -392,9 +418,12 @@ function Timeline({ events }: { events: KanbanEvent[] }) {
               {i < events.length - 1 && <div className="bg-border w-px flex-1" />}
             </div>
             <div className="flex flex-col gap-0.5 pb-4">
-              <p className="text-sm">{describeEvent(e.type, e.data, t)}</p>
+              <p className="text-sm">
+                {describeEvent(e.type, e.data, t, (id) => sessionLabel(sessionNames, id))}
+              </p>
               <p className="text-muted-foreground text-[11px]">
-                {relativeTime(e.ts, t)} · {e.session_id ?? "system"}
+                {relativeTime(e.ts, t)} ·{" "}
+                {e.session_id ? <SessionSig names={sessionNames} id={e.session_id} /> : "system"}
               </p>
             </div>
           </li>
@@ -404,7 +433,7 @@ function Timeline({ events }: { events: KanbanEvent[] }) {
   )
 }
 
-function Handoffs({ items }: { items: HandoffItem[] }) {
+function Handoffs({ items, sessionNames }: { items: HandoffItem[]; sessionNames?: Map<string, string> }) {
   const { t } = useI18n()
   if (items.length === 0) {
     return (
@@ -431,11 +460,11 @@ function Handoffs({ items }: { items: HandoffItem[] }) {
               {h.kind === "crash" ? t("handoff.kind.crash") : t("handoff.kind.manual")}
             </Badge>
             <span className="text-muted-foreground text-[11px]">
-              {h.from_session} · {relativeTime(h.created_at, t)}
+              <SessionSig names={sessionNames} id={h.from_session} /> · {relativeTime(h.created_at, t)}
             </span>
             {h.consumed_by && (
               <Badge variant="outline" className="ml-auto text-[10px]">
-                {t("handoff.consumed", { by: h.consumed_by })}
+                {t("handoff.consumed", { by: sessionLabel(sessionNames, h.consumed_by) })}
               </Badge>
             )}
           </div>

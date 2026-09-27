@@ -229,6 +229,13 @@ export function Board() {
     return map
   }, [board])
 
+  // 详情抽屉的署名要用（时间线 / 检查项 / 交接显示成"agent 名 + session id"）
+  const sessionNames = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const s of board?.sessions ?? []) map.set(s.id, s.agent_name)
+    return map
+  }, [board])
+
   const tasksById = useMemo(() => {
     const map = new Map<string, TaskItem>()
     for (const list of Object.values(board?.lanes ?? {})) {
@@ -629,6 +636,7 @@ export function Board() {
         token={token}
         project={project ?? ""}
         tasksById={tasksById}
+        sessionNames={sessionNames}
         onSelect={(id) => {
           const target = tasksById.get(id)
           if (target) setSelected(target)

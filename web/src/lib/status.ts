@@ -125,8 +125,15 @@ export function leaseText(expiresAt: number | null, t: Translate, now = Date.now
   return t("time.leaseHours", { n: Math.floor(min / 60) })
 }
 
-/** 事件 → 一句话（与后端 describeEventBrief 同口径） */
-export function describeEvent(type: string, data: Record<string, unknown>, t: Translate): string {
+/** 事件 → 一句话（与后端 describeEventBrief 同口径）。
+ *  resolveSession：把事件数据里的 session id 翻成"名字 + id"（如 handoff_consumed 的接管方）；
+ *  不传或查不到就原样用 id。 */
+export function describeEvent(
+  type: string,
+  data: Record<string, unknown>,
+  t: Translate,
+  resolveSession?: (id: string) => string,
+): string {
   switch (type) {
     case "task_created":
       return t("event.task_created")
@@ -172,8 +179,10 @@ export function describeEvent(type: string, data: Record<string, unknown>, t: Tr
       return t("event.plan_superseded")
     case "handoff_created":
       return data.kind === "crash" ? t("event.handoff_created.crash") : t("event.handoff_created.manual")
-    case "handoff_consumed":
-      return t("event.handoff_consumed", { by: String(data.by_session ?? "?") })
+    case "handoff_consumed": {
+      const by = String(data.by_session ?? "?")
+      return t("event.handoff_consumed", { by: resolveSession ? resolveSession(by) : by })
+    }
     case "session_started":
       return t("event.session_started")
     case "session_closed":
