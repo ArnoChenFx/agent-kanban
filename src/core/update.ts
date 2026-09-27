@@ -15,6 +15,8 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
+import { KanbanError } from "./errors.ts";
+
 /** 默认更新源：与 README 的 Releases 链接同源。可用 KANBAN_UPDATE_REPO 覆盖（自建 fork / 镜像） */
 export const DEFAULT_UPDATE_REPO = "ArnoChenFx/agent-kanban";
 
@@ -184,7 +186,19 @@ export async function downloadToBuffer(url: string, fetchImpl: typeof fetch = fe
   return new Uint8Array(await res.arrayBuffer());
 }
 
-/** 解析 .sha256 文件（"hex  filename" 格式，由 CI 的 sha256sum/shasum 生成） */
+/**
+ * 解析 .sha256 文件（"hex  filename" 格式，由 CI 的 sha256sum/shasum 生成）
+ *
+ * 文件名段有两种写法，必须都认：
+ *   文本模式   `<hash>  name`   （两个空格，Linux / macOS runner 实测）
+ *   二进制模式 `<hash> *name`   （`*` 前缀，Windows runner 实测）
+ * GNU coreutils 用 `*` 标记"按二进制读"；MSYS2 发行版（即 Git Bash 里那个
+ * sha256sum）默认就是二进制模式，所以 **只有 Windows 的 .sha256 带 `*`**。
+ * 不剥掉它的话，"校验文件名与资产是否一致"这一步在 Windows 上永远失败，
+ * 而 digest 本身是对的——v0.1.8 自更新就是这么坏的（用户看到
+ * `checksum file records *agent-kanban-windows-x64.exe`）。
+ * 顺带剥掉 shasum 可能写出的 `./` 前缀，只留 basename 再比对。
+ */
 export function parseChecksum(content: string): { digest: string; file: string | null } {
   const line = content
     .split("\n")
@@ -193,12 +207,43 @@ export function parseChecksum(content: string): { digest: string; file: string |
   if (!line) throw new Error("checksum file is empty");
   const m = line.match(/^([0-9a-fA-F]{64})(?:\s+(.*))?$/);
   if (!m) throw new Error("checksum file does not start with a sha256 hex digest");
-  const file = m[2]?.trim();
+  const file = m[2]?.trim().replace(/^\*/, "").trim().replace(/^\.\//, "");
   return { digest: m[1]!.toLowerCase(), file: file && file.length > 0 ? file : null };
 }
 
 export function sha256Hex(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
+}
+
+/**
+ * 完整校验链：先看 .sha256 里记录的文件名是不是这个资产（防止拿错 checksum），
+ * 再比 digest。两个失败都归为 STATE 而不是 INTERNAL——外部发布物不对是
+ * 数据问题，重试不会变好，报 INTERNAL 会让调用方以为该上报缺陷。
+ *
+ * 单独抽出来是为了能脱网测：文件名对不上正是 v0.1.8 在 Windows 上自更新
+ * 失败的原因（checksum 文件带 `*` 前缀），而这条链原本埋在命令里，
+ * 只有真去下一个 100MB 的包才会暴露。
+ */
+export function verifyChecksum(opts: {
+  binary: Uint8Array;
+  checksumContent: string;
+  assetName: string;
+}): { digest: string } {
+  const checksum = parseChecksum(opts.checksumContent);
+  if (checksum.file && checksum.file !== opts.assetName) {
+    throw KanbanError.state(
+      `checksum file records ${checksum.file}, expected ${opts.assetName}`,
+      { reason: "checksum_name_mismatch", recorded: checksum.file, expected: opts.assetName },
+    );
+  }
+  const actual = sha256Hex(opts.binary);
+  if (actual !== checksum.digest) {
+    throw KanbanError.state(
+      `checksum mismatch for ${opts.assetName}: expected ${checksum.digest}, got ${actual}`,
+      { reason: "checksum_mismatch", asset: opts.assetName, expected: checksum.digest, actual },
+    );
+  }
+  return { digest: checksum.digest };
 }
 
 /**

@@ -224,3 +224,34 @@ describe("task show --json", () => {
     expect(data.next_actions.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * `update` 的参数守卫（v0.1.8 事故）。
+ *
+ * 事故：`agent-kanban update check`（少两个横杠）里的 `check` 进了 positionals
+ * 被完整忽略，命令直接跑到下载 + 原地替换，把正在运行的二进制换掉了。
+ *
+ * 为什么在这里再 spawn 一次：unit 层的守卫测试证明的是"抛了 usage 错误"，
+ * 而这一层证明的是**真的被渲染成人能读的样子**——错误信息里重复两行
+ * `Usage:`（details.usage 不自包含）这种事只有真跑一次才看得见。
+ * 顺带证明它不碰库、不联网：这里跑在源码模式（`bun run src/cli.ts`），
+ * 就算守卫失效，命令也只会在 isCompiledBinary() 处停下打印"从源码运行"。
+ */
+describe("update 的位置参数守卫", () => {
+  test("`update check` 报用法错误并直接教回 --check", async () => {
+    const r = await cli(["update", "check"]);
+    const out = strip(r.out);
+    expect(r.code).toBe(1);
+    expect(out).toContain("unexpected argument: check");
+    expect(out).toContain("did you mean --check?");
+    // details.usage 自包含于 "Usage: "（output.ts 靠这个判是否补表头），
+    // 所以表头只该出现一次
+    expect(out.match(/Usage:/g) ?? []).toHaveLength(1);
+  });
+
+  test("`update --help` 仍然正常（守卫没误伤选项）", async () => {
+    const r = await cli(["update", "--help"]);
+    expect(r.code).toBe(0);
+    expect(strip(r.out)).toContain("Usage: agent-kanban update [--check]");
+  });
+});

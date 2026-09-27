@@ -18,7 +18,10 @@ import {
   resolveAssetName,
   resolveUpdateRepo,
   sha256Hex,
+  verifyChecksum,
 } from "../src/core/update.ts";
+import { cmdUpdate } from "../src/commands/update.ts";
+import { KanbanError } from "../src/core/errors.ts";
 
 describe("compareVersions", () => {
   test("same version is 0, v prefix ignored", () => {
@@ -96,6 +99,23 @@ describe("parseChecksum and sha256Hex", () => {
     const { digest, file } = parseChecksum("0F1A65CD4E1B8F0B6A2C8E5D7F9A3B1C4E6D8F0A2B4C6E8D0F2A4B6C8D0E2F4A");
     expect(digest).toBe("0f1a65cd4e1b8f0b6a2c8e5d7f9a3b1c4e6d8f0a2b4c6e8d0f2a4b6c8d0e2f4a");
     expect(file).toBe(null);
+  });
+
+  // 真实事故（v0.1.8 自更新在 Windows 上必坏）：Windows runner 的 sha256sum
+  // 走二进制模式，文件名带 `*` 前缀，而 Linux / macOS 是两个空格的文本模式。
+  // 下面是 v0.1.8 真实的 agent-kanban-windows-x64.exe.sha256 原文。
+  test("GNU binary-mode '*' prefix is stripped (v0.1.8 windows asset)", () => {
+    const real = "862733062d0d1899652a4e3f9d1908b9992ce73ae6538b25efd3a9a7e7b788ad *agent-kanban-windows-x64.exe\n";
+    expect(parseChecksum(real)).toEqual({
+      digest: "862733062d0d1899652a4e3f9d1908b9992ce73ae6538b25efd3a9a7e7b788ad",
+      file: "agent-kanban-windows-x64.exe",
+    });
+  });
+
+  test("CRLF and a leading ./ are tolerated", () => {
+    const digest = "0f1a65cd4e1b8f0b6a2c8e5d7f9a3b1c4e6d8f0a2b4c6e8d0f2a4b6c8d0e2f4a";
+    expect(parseChecksum(`${digest} *./agent-kanban-darwin-arm64\r\n`).file).toBe("agent-kanban-darwin-arm64");
+    expect(parseChecksum(`${digest}  ./agent-kanban-linux-x64\r\n`).file).toBe("agent-kanban-linux-x64");
   });
 
   test("rejects empty or non-hex content", () => {
@@ -183,6 +203,127 @@ describe("resolveUpdateRepo", () => {
     expect(resolveUpdateRepo({})).toBe(DEFAULT_UPDATE_REPO);
     expect(resolveUpdateRepo({ KANBAN_UPDATE_REPO: "me/fork" })).toBe("me/fork");
     expect(resolveUpdateRepo({ KANBAN_UPDATE_REPO: "  " })).toBe(DEFAULT_UPDATE_REPO);
+  });
+});
+
+describe("verifyChecksum", () => {
+  const binary = new TextEncoder().encode("fake-binary-bytes");
+  const digest = sha256Hex(binary);
+
+  test("accepts the real windows .sha256 (binary-mode '*' marker)", () => {
+    // 这份 checksum 记录的 digest 是 v0.1.8 真实 .exe 的，内容换成假字节
+    // 只为了让断言跑得快；关键是**文件名**能被正确识别并对上资产名。
+    const { file } = parseChecksum(
+      "862733062d0d1899652a4e3f9d1908b9992ce73ae6538b25efd3a9a7e7b788ad *agent-kanban-windows-x64.exe\n",
+    );
+    expect(file).toBe("agent-kanban-windows-x64.exe");
+  });
+
+  test("matching name and digest pass", () => {
+    expect(
+      verifyChecksum({
+        binary,
+        checksumContent: `${digest} *agent-kanban-linux-x64\n`,
+        assetName: "agent-kanban-linux-x64",
+      }).digest,
+    ).toBe(digest);
+    // 文本模式（两个空格）同样通过
+    expect(
+      verifyChecksum({
+        binary,
+        checksumContent: `${digest}  agent-kanban-linux-x64\n`,
+        assetName: "agent-kanban-linux-x64",
+      }).digest,
+    ).toBe(digest);
+  });
+
+  test("a name pointing at another asset is refused before the digest is used", () => {
+    let err: unknown;
+    try {
+      verifyChecksum({
+        binary,
+        checksumContent: `${digest} *agent-kanban-darwin-arm64\n`,
+        assetName: "agent-kanban-linux-x64",
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(KanbanError);
+    expect((err as KanbanError).code).toBe(2);
+    expect((err as KanbanError).details.reason).toBe("checksum_name_mismatch");
+  });
+
+  test("a wrong digest is a state error, not an internal bug", () => {
+    const wrong = "0".repeat(64);
+    expect(() =>
+      verifyChecksum({
+        binary,
+        checksumContent: `${wrong}  agent-kanban-linux-x64\n`,
+        assetName: "agent-kanban-linux-x64",
+      }),
+    ).toThrow(KanbanError);
+    try {
+      verifyChecksum({ binary, checksumContent: `${wrong}  agent-kanban-linux-x64\n`, assetName: "agent-kanban-linux-x64" });
+    } catch (e) {
+      expect((e as KanbanError).code).toBe(2);
+      expect((e as KanbanError).details.reason).toBe("checksum_mismatch");
+    }
+  });
+});
+
+describe("cmdUpdate argument guard", () => {
+  // 回归：`agent-kanban update check`（少两个横杠）曾经被完整忽略，
+  // 于是命令继续往下走，把新二进制下载下来替换掉了正在运行的自己。
+  // 守卫必须在**任何网络请求之前**生效——用 fetch 间谍来证明这一点。
+  const withFetchSpy = async (fn: () => Promise<unknown>) => {
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (() => {
+      calls++;
+      return Promise.reject(new Error("network must not be touched"));
+    }) as unknown as typeof fetch;
+    try {
+      await fn();
+    } finally {
+      globalThis.fetch = original;
+    }
+    return calls;
+  };
+
+  test("a stray 'check' positional fails as a usage error and never hits the network", async () => {
+    let err: unknown;
+    const calls = await withFetchSpy(async () => {
+      try {
+        await cmdUpdate(["check"]);
+      } catch (e) {
+        err = e;
+      }
+    });
+    expect(err).toBeInstanceOf(KanbanError);
+    expect((err as KanbanError).code).toBe(1);
+    expect((err as KanbanError).message).toContain("unexpected argument: check");
+    // 最关键的一条：错误信息必须直接教回正确写法
+    expect((err as KanbanError).message).toContain("did you mean --check");
+    expect(String((err as KanbanError).details.usage)).toContain("--check");
+    expect(calls).toBe(0);
+  });
+
+  test("any other stray positional is refused too (with the full usage text)", async () => {
+    let err: unknown;
+    await withFetchSpy(async () => {
+      try {
+        await cmdUpdate(["oops"]);
+      } catch (e) {
+        err = e;
+      }
+    });
+    expect((err as KanbanError).code).toBe(1);
+    expect(String((err as KanbanError).details.usage)).toContain("Usage: agent-kanban update");
+  });
+
+  test("--help and --check are still accepted as options, not positionals", () => {
+    // --help 在守卫之前返回（不打网络），断言它不抛用法错误
+    expect(cmdUpdate(["--help"])).resolves.toBe(0);
   });
 });
 
