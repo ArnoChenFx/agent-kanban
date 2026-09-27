@@ -24,8 +24,8 @@
 | 需要结构化返回、不想解析文本表格 | 需要人读输出 |
 | 同一个会话里连续操作（长驻进程，连接复用） | 一次性查询 |
 
-**MCP 不会自动读 `.kanban/session`**，所以每次调用都要显式带 `session_id`。
-（CLI 在**本地模式**下可以从 `.kanban/session` 自动取；**远程模式**下 CLI 也得显式传，见 [remote.md](remote.md)。）
+**MCP 不读任何身份文件**（`.kanban/sessions/<key>` 是 CLI 进程自己的事），所以每次调用都要显式带 `session_id`。
+（CLI 两种模式都能从身份文件自动取，见 [commands.md](commands.md#会话-session)。）
 
 **MCP 走的是和 CLI 完全相同的配置解析**，所以远程配置对 MCP 一样生效（`.kanban/config.toml` 被读取）。
 
@@ -175,7 +175,7 @@ kanban_session_end(session_id="s-4k9d2m")
 
 | 差异点 | CLI | MCP |
 |---|---|---|
-| 会话身份 | 读 `.kanban/session`，无需显式传 | 长驻进程，**每次调用传 `session_id`** |
+| 会话身份 | 读本机 `.kanban/sessions/<key>`（本地远程都行），无需显式传 | 长驻进程，**每次调用传 `session_id`** |
 | 错误通道 | stderr，进程退出码 | 返回值里的 `error` 对象 |
 | 列表默认条数 | `limit=200` | `limit=30` |
 | 租约时长格式 | `2h` / `30m` 字符串 | `ttl_ms` 毫秒数 |

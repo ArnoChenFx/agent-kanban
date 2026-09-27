@@ -97,12 +97,12 @@ hold, and what is free to claim right now. **Skipping it means working blind.**
 
 \`\`\`bash
 agent-kanban task progress T-0007 --pct 60 --note "rewrote the storage layer"   # renews your lease
-agent-kanban task check T-0007 --item "add migration test"                      # checklist item
+agent-kanban task progress T-0007 --check "add migration test"                  # checklist item
 agent-kanban task note T-0007 "found a dependency conflict"                     # quick note
 agent-kanban task block T-0007 --reason "waiting on API key"                    # releases the lease
 \`\`\`
 
-Tasks over 30 minutes long: \`agent-kanban task claim T-0007 --ttl 7200\` extends the lease.
+Tasks over 30 minutes long: \`agent-kanban task claim T-0007 --ttl 2h\` extends the lease.
 
 ### Before you stop
 

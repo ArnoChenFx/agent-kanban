@@ -1,6 +1,6 @@
 ---
 name: agent-kanban
-description: 用 agent-kanban 看板协调多个 agent 会话的任务——开工读现场、认领租约、推进进度、写交接、崩溃后接管别人的卡。适用于任何存在 .kanban/ 目录、AGENTS.md 里带 kanban 协议块、或注册了 kanban MCP server 的仓库；CLI 与 MCP 工具（kanban_*）两套接口都覆盖。触发词：kanban、看板、认领、claim、交接、handoff、租约、lease、接管、resume、agent-kanban context、agent-kanban task progress、多会话协作、崩溃恢复、共享任务状态。不适用于：单 agent 的短任务、不需要跨会话共享的待办清单。
+description: 用 agent-kanban 看板协调多个 agent 会话的任务——开工读现场、认领租约、推进进度、写交接、崩溃后接管别人的卡、看懂身份分片与 missing session id。适用于任何存在 .kanban/ 目录、AGENTS.md 里带 kanban 协议块、或注册了 kanban MCP server 的仓库；CLI 与 MCP 工具（kanban_*）两套接口都覆盖。触发词：kanban、看板、认领、claim、交接、handoff、租约、lease、接管、resume、agent-kanban context、agent-kanban task progress、多会话协作、崩溃恢复、共享任务状态、missing session id、identity key、session 串号。不适用于：单 agent 的短任务、不需要跨会话共享的待办清单。
 ---
 
 # agent-kanban 协作
@@ -17,6 +17,18 @@ description: 用 agent-kanban 看板协调多个 agent 会话的任务——开�
 4. **交接是写给下一个人看的**：落到函数名、文件路径、失败的测试名。"剩下的不复杂"会让下一个会话多花一整轮。
 5. **状态流转必须走 CLI/工具**，守卫是有意设计的（见"状态机"）。绕过守卫等于让看板说谎。
 
+## 仓库还没装协议时
+
+发现当前仓库有 `.kanban/`（或能 `config show` 成功）但 `AGENTS.md` 里没有 `<!-- agent-kanban:begin -->` 托管块，
+说明新会话不会自动知道该先读看板。补上：
+
+```bash
+agent-kanban install-protocol              # 幂等写入 AGENTS.md 的托管块，区块外内容逐字不动
+agent-kanban install-protocol --check      # 只检查：缺失/落后时退出码 2（CI 里用）
+```
+
+`doctor` 也会报这块是否落后于 CLI 版本（本地模式专属）。
+
 ## 第一步：确认模式（两种模式行为不同）
 
 ```bash
@@ -27,29 +39,60 @@ agent-kanban config show      # 看「模式」那行：本地 还是 远程
 |---|---|---|
 | 数据在哪 | 本地 `.kanban/kanban.db` | **server 的库里**；本地只有 `.kanban/config.toml` |
 | 怎么配 | `agent-kanban init`，零配置 | `agent-kanban config init --server <url> --project <key> --key k_xxx` |
-| 会话身份 | `session start` 会写 `.kanban/session`，后续命令自动带上 | ⚠️ **`session start` 不写本地文件**——每条命令都要 `--session <id>` 或设 `KANBAN_SESSION` |
+| 会话身份 | `session start` 写本机身份文件，后续命令自动带上 | **完全一样**——同样写本机身份文件，不需要每条命令都带 `--session` |
 | 失联回收 | 每次命令隐式触发 | **server 定时回收**（`serve --reap-interval`，默认 30s） |
 | `export`/`import`/`snapshot`/`compact`/`project list` | 可用 | ❌ 退出码 5（本地没库），要在 **server 机器上**跑 |
 
-最容易被坑的一条：**远程模式下 `agent-kanban session start` 不会写 `.kanban/session`**，紧接着的 `task claim` 会报
-`missing session id, cannot tell who is operating`。补救：`export KANBAN_SESSION=s-xxxx`（或每条命令带 `--session`）。
-详见 [references/remote.md](references/remote.md)。
+两种模式在**会话身份**上没有差别：`session start` 在本地和远程都会把 id 写进本机 `.kanban/sessions/<key>`。
+身份文件记的是"这台机器上我是谁"，不是看板状态——远程模式下 `config.toml` 同样在本机 `.kanban/` 里，
+两者放一起毫无矛盾。远程模式的其余差异见 [references/remote.md](references/remote.md)。
 
 ## 开工：两条命令读现场
 
 每个工作会话的第一件事。**在仓库任意子目录执行都有效**——看板靠向上查找 `.kanban/` 定位：
 
 ```bash
-agent-kanban session start --agent <你的名字> --harness pi   # 拿到 s-xxxx，并把 id 写进 .kanban/session
+agent-kanban session start --agent <你的名字> --harness pi   # 拿到 s-xxxx，写进 .kanban/sessions/<key>
 agent-kanban context                                        # 读现场：交接 / 我在做的 / 失联会话 / 阻塞 / 可认领 / 建议动作
 ```
 
 - `session start` 在**本地模式**下顺带触发僵尸回收：崩溃 agent 遗留的租约在这里被回收，卡片重新变成可认领（远程模式由 server 定时回收，见上表）。
-- **本地模式**下 `session start` 会把 id 写进 `.kanban/session`，之后的 CLI 命令不用再带 `--session`。
-  **远程模式不会写**——每条命令都要显式带 `--session <id>`，或先 `export KANBAN_SESSION=s-xxxx`。
+- 输出里有一行 `identity   : <key>`——**这是"我到底是谁"的唯一凭据**。同目录并行时先看它，见下面"身份"。
+- 之后的 CLI 命令不用再带 `--session`（本地远程都一样）。`--session` / `KANBAN_SESSION` 任何时候都有效，只是优先级最高。
+- 脚本里自己管身份（已经在传 `KANBAN_SESSION`）时加 `--no-write`，不往磁盘落。
 - `agent-kanban context` 会**消费**交接（标记已读）。只预览不消费用 `--no-consume`。
 - MCP 是长驻进程、不读那个文件，**每次工具调用都要显式传 `session_id`**。
 - `context --json` 字段：`project` / `counts` / `zombie_sessions` / `pending_handoffs` / `my_tasks` / `in_progress` / `blocked` / `ready` / `next_actions`。**先读 `next_actions`，它直接告诉你下一步干什么。**
+
+## 身份：谁在操作看板
+
+`session start` 把 session id 写进本机 `.kanban/sessions/<identity-key>`，key 按这个顺序自动推导：
+
+1. `$KANBAN_SESSION_KEY` —— 任意稳定唯一值，最高优先级
+2. 已核实的 harness 会话变量：`PI_SESSION_ID`(pi)、`PI_SESSION_FILE`(oh-my-pi)、`CLAUDE_CODE_SESSION_ID`、`GROK_SESSION_ID`、`CODEX_SESSION_ID`、`DSH_SESSION_ID`……
+3. 自动发现：环境里任何形如 `<TOOL>_SESSION_ID` 的变量（按变量名排序取第一个；`TERM_*` / `ITERM_*` / `OTEL_*` / `ANTHROPIC_*` 已排除，它们不是 agent 会话身份）
+
+**三条都推不出 key 时**才退回旧的单文件 `.kanban/session`（裸 shell、cursor-agent 这类不导出任何会话变量的工具）。
+`--harness` 只是给看板上的会话贴标签，**不参与选 key**。
+
+要点：
+
+- **读的时候绝不回退。** 解析得出 key 就只读那个分片文件。这样"另一个 agent 跑过 `session start`"不会让你
+  以它的身份操作看板。代价是**升级后第一次**用会看到 `missing session id, ...`，提示里直接告诉你跑
+  `session start`——跑一次就自愈，重注册是安全的（旧会话过了宽限期判失联，它手里的卡回 `todo`，
+  进度与 checklist 全部保留）。
+- **推不出 key 又不想共用身份**：`export KANBAN_SESSION_KEY=<任意稳定唯一值>`。同目录多个 cursor-agent 就靠这个分开。
+- **`KANBAN_SESSION=`（赋空值）算"未设置"**，不会盖掉身份文件。
+- **Qoder** 截至 2026-09 不注入任何会话变量。唯一的对外通道是 skill 文本里的 `${QODER_SESSION_ID}` 占位符，
+  运行时被替换成本会话的真实 UUID——**看这一行**：
+  - 是 UUID（`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`）→ 你在 Qoder 里。Qoder 的 shell 每次都是新进程，
+    `export` 不跨调用，所以**每条** `agent-kanban` 命令都要带前缀：
+    ```bash
+    KANBAN_SESSION_KEY=qoder-<上面的UUID> agent-kanban session start --agent <你的名字> --harness qoder
+    KANBAN_SESSION_KEY=qoder-<上面的UUID> agent-kanban context
+    ```
+  - 还是字面量 `${QODER_SESSION_ID}`（pi / claude-code / grok 等环境）→ 忽略本节，身份变量由 harness 自动提供。
+    **绝不要把字面量本身当 key**——那会让所有 agent 共用一个假身份，比没有身份更糟。
 
 ## 认领与推进：租约会过期
 
@@ -185,3 +228,8 @@ CLI **没有** `plan diff` 子命令（`plan.diff` 只在 core 与 MCP 层暴露
 - 在**仓库的子目录**里跑 `agent-kanban init` 不会建新看板——它向上找到已有的 `.kanban/` 就复用。要隔离测试得把目录放到仓库外面。
 - 远程模式的目录里跑 `agent-kanban export` 会报 NOT_INIT（找不到 `.kanban/`）——**这个提示是误导的**，你的看板在 server 上好好的。备份要去 server 机器跑。
 - `--force` 不是"再试一次"的意思。
+- **`--ttl` 收时长字符串**（`2h` / `30m` / `short`），不是数字。`--ttl 7200` 会报 `cannot parse lease duration`。
+  （`init --ttl` / `init --grace` 才是分钟数。）
+- 旧二进制只认 `.kanban/session`，与新版分片共存时它会报 `missing session id`——跑一次 `agent-kanban update` 升级即可。
+  反过来，用新版时**有 key 的一侧绝不读那个旧单文件**，所以"我明明跑过 session start 却还说没有身份"通常
+  是 key 变了（换了 harness / 换了终端窗口），看 `session start` 打的 `identity` 行确认。

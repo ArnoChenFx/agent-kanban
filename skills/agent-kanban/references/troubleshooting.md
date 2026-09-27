@@ -2,7 +2,7 @@
 
 > 看板在**别的机器**上（`agent-kanban serve`）、本地没有 db 时，症状完全不同——先看 [remote.md](remote.md)。
 >
-> 索引：症状速查 · 租约 · 冲突 · 流转被拦 · 认证 · 远程 · 数据一致性 · CLI 行为异常 · MCP 异常
+> 索引：症状速查 · 会话身份 · 租约 · 冲突 · 流转被拦 · 认证 · 远程 · 数据一致性 · CLI 行为异常 · MCP 异常
 
 ## 症状速查
 
@@ -13,7 +13,7 @@
 | 退出码 3 | 卡在别人手里，租约还活着 | [冲突](#冲突) |
 | 退出码 4 | 数据库被锁 | [数据库被锁](#数据库被锁) |
 | 退出码 2 + `legal_transitions` | 非法流转或被守卫拦下 | [流转被守卫拦下](#流转被守卫拦下) |
-| `missing session id` | 没跑 `session start`，或**远程模式不会写 `.kanban/session`** | [远程模式](#远程模式看板在别的机器上) |
+| `missing session id` | 没跑 `session start`（**升级后第一次最常见**），或 identity key 变了 | [会话身份](#会话身份分片) |
 | 改完代码，看板还显示 0% | 忘了 `task progress` | [租约与"看板说谎"](#租约与看板说谎) |
 | 照着 `next_actions` 跑却撞退出码 2 | 流转类建议要对照当前状态校验 | [已知的转移缺口](#已知的转移缺口review-打回重做) |
 | 卡片莫名回到 `todo`，进度还在 | 上一个会话 `session end` 释放了它 | [租约与"看板说谎"](#租约与看板说谎) |
@@ -21,6 +21,22 @@
 | `agent-kanban doctor` 报投影漂移 | 事件流与投影不一致 | [数据一致性](#数据一致性) |
 | `--help` 真的执行了操作 | export/import/snapshot/compact 不处理 `--help` | [CLI 行为异常](#cli-行为异常) |
 | 换了个目录就找不到看板 | 看板靠向上查找 `.kanban/` | [CLI 行为异常](#cli-行为异常) |
+| `session start` 打的 `identity` 是 `(none …)` | 环境里推不出 identity key（裸 shell、cursor-agent） | [会话身份](#会话身份分片) |
+
+## 会话身份分片
+
+身份文件是 `.kanban/sessions/<identity-key>`，一个 key 一个文件；**推不出 key** 时才退回旧的单文件
+`.kanban/session`。key 的解析顺序：`$KANBAN_SESSION_KEY` → 已核实的 harness 变量（`PI_SESSION_ID` 等）
+→ 自动发现任何 `<TOOL>_SESSION_ID`（按变量名排序取第一个）。
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| 升级后**第一次**写命令报 `missing session id, cannot tell who is operating` | 新版本按 identity key 读分片文件，而你这个 key 还没注册过 | 跑一次 `agent-kanban session start --agent <name>`。**重注册是安全的**：旧会话过了宽限期判失联，它手里的卡回 `todo`，进度与 checklist 全部保留 |
+| `session start` 的 `identity` 行是 `(none — sharing .kanban/session…)` | 环境里没有任何可用会话变量 | `export KANBAN_SESSION_KEY=<任意稳定唯一值>` 再跑一次 `session start`（Qoder 见 [SKILL.md 的身份一节](SKILL.md#身份谁在操作看板)） |
+| “我明明跑过 `session start` 却还说没有身份” | identity key 变了（换了终端窗口 / 换了 harness / 变量名不同），落到了另一个分片文件 | 跑 `session start` 看它打的 `identity` 行；同目录两个会话的 key 不同才算真分开了 |
+| 两个 agent 互相看不见租约、冲突信息指错人 | 都推不出 key，共用同一个 `.kanban/session` | 各自 `export KANBAN_SESSION_KEY=<各自的稳定值>`，重跑 `session start` |
+| 旧二进制报 `missing session id`，但新版正常 | 旧二进制只认 `.kanban/session` 单文件，新版有 key 时**不写**也不读它 | `agent-kanban update` 升级；临时解法是给旧进程也带上 `--session` |
+| `KANBAN_SESSION=`（赋空值）没盖住身份文件 | 空值算“未设置” | 这是有意行为，不要改成"空串胜出"——那会让两个 agent 共用一个空身份、看板 holder 栏空白 |
 
 ## 租约与"看板说谎"
 
@@ -128,7 +144,6 @@ agent-kanban config path      # 配置文件在哪
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
-| `missing session id, cannot tell who is operating` | **远程模式下 `session start` 不写 `.kanban/session`**，紧接着的写命令就找不到身份 | `export KANBAN_SESSION=<session_id>`，或每条命令带 `--session`；id 用 `agent-kanban session start --agent X --json` 取 |
 | `export` / `import` / `snapshot` / `compact` / `project list` 报退出码 5 | 这些命令直连本地库，远程模式本地没库 | 去 **server 机器**上跑。错误里的 `board data directory not found` 是误导，看板没坏 |
 | 崩溃后 `context` 还显示那张卡有人做 | 回收在 server 侧按 `--reap-interval`（默认 30s）跑，与你的命令无关 | 等 30s + 失联宽限（默认 10 分钟）；急的话去 server 跑 `doctor --fix`。别反复 `claim --force` |
 | 远程目录里跑过 `init` 之后 `export` 不报错了 | `init` 建了个没人用的本地 `kanban.db` 当"诱饵"，`export` 静默导这个空库 | 删掉那个本地 `kanban.db`（配置在 `config.toml`，不会丢），备份去 server 做 |
@@ -183,7 +198,7 @@ agent-kanban init && agent-kanban import .kanban/journal && agent-kanban rebuild
 
 | 现象 | 原因 | 应对 |
 |---|---|---|
-| 工具报 USAGE "missing session id" | MCP 不读 `.kanban/session`，必须显式传 | 先 `kanban_session_start` 拿到 `session_id`，之后每次调用都带上 |
+| 工具报 USAGE "missing session id" | MCP 是长驻进程，不读任何身份文件，必须显式传 | 先 `kanban_session_start` 拿到 `session_id`，之后每次调用都带上 |
 | 看板定位到别的项目 | `command` 路径相对 harness 工作目录；看板靠 cwd 向上查找 | 从项目根目录启动 harness |
 | 工具列表里没有 `plan history` / `task cancel` / `rebuild` | MCP 只暴露核心 20 个工具 | 这些走 CLI |
 | stdout 出现非 JSON 文本 | `agent-kanban mcp` 的 stdout 是 JSON-RPC 通道 | 诊断信息走 stderr；把 stdout 当纯协议流读 |

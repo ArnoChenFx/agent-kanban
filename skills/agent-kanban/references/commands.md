@@ -1,7 +1,7 @@
 # agent-kanban 完整命令参考
 
-> 本文以**本地模式**为准。**远程模式**（看板在别的机器上）下有 5 个命令不可用、`session start` 也不写本地文件，
-> 先看 [remote.md](remote.md)。
+> 本文以**本地模式**为准。**远程模式**（看板在别的机器上）下有 5 个命令不可用，
+> 先看 [remote.md](remote.md)。会话身份、状态机、JSON 字段在两种模式下**完全一致**。
 >
 > 索引：全局选项 · 配置 · 会话 · 任务 · 看板与现场 · 交接 · 计划 · 运维 · 备份 · JSON 字段 · 状态机
 
@@ -14,8 +14,8 @@
 - [看板与现场](#看板与现场)
 - [交接 handoff](#交接-handoff)
 - [计划 plan](#计划-plan)
-- [运维 doctor / rebuild / rebuild](#运维-doctor--rebuild)
-- [配置 config / project / admin / serve](#配置-config--project--admin--serve)
+- [运维 doctor / rebuild](#运维-doctor--rebuild)
+- [配置 / install-protocol / admin / serve](#配置-install-protocol--admin--serve)
 - [备份 export / import / snapshot / compact](#备份-export--import--snapshot--compact)
 - [JSON 输出字段](#json-输出字段)
 - [状态机与守卫](#状态机与守卫)
@@ -52,7 +52,7 @@
 | token | `--key` | `KANBAN_KEY` | — |
 | 模式 | `agent-kanban config use` | `KANBAN_MODE` | 有 server 则 `remote`，否则 `local` |
 | 数据库 | `--db` | `KANBAN_DB` | `<project>/.kanban/kanban.db` |
-| 会话 id | `--session` | `KANBAN_SESSION` | `<project>/.kanban/session` |
+| 会话 id | `--session` | `KANBAN_SESSION` | `<project>/.kanban/sessions/<identity-key>`，推不出 key 时退回 `.kanban/session` |
 
 **空环境变量算"未设置"**，不是空值——否则 `export KANBAN_SERVER=` 会静默盖掉 `config.toml`，凭空建一个空本地库。
 
@@ -62,17 +62,29 @@ Docker 里 `KANBAN_BIND` 控制**宿主机侧**绑定地址（容器内永远听
 ## 会话 session
 
 ```bash
-agent-kanban session start --agent <名字> [--harness pi|claude-code|cursor|human] [--id s-xxx]
+agent-kanban session start --agent <名字> [--harness pi|claude-code|cursor|human] [--id s-xxx] [--no-write]
 agent-kanban session list [--all] [--json]
 agent-kanban session heartbeat [--session <id>]
 agent-kanban session end [--summary "本次做了什么"] [--session <id>]
 ```
 
-- `start` 把 `session_id` 写进 `.kanban/session`，之后 CLI 命令无需再传 `--session`；并顺带触发僵尸回收。
-  ⚠️ **只有本地模式会写这个文件**。远程模式下 `start` 只在 server 侧建会话，本地不留痕迹，
-  每条命令都要显式带 `--session` 或设 `KANBAN_SESSION`（`session start --json` 可直接取 id）。
+- `start` 把 `session_id` 写进本机身份文件，之后 CLI 命令无需再传 `--session`；并顺带触发僵尸回收（仅本地模式）。
+  **本地与远程都会写这个文件**——身份文件记的是"这台机器上我是谁"，不是看板状态。
+- 身份文件位置由 **identity key** 决定，解析顺序：
+  1. `$KANBAN_SESSION_KEY`（任意稳定唯一值）
+  2. 已核实的 harness 变量：`PI_SESSION_ID`(pi)、`PI_SESSION_FILE`(oh-my-pi)、`CLAUDE_CODE_SESSION_ID`、`GROK_SESSION_ID`、`CODEX_SESSION_ID`、`DSH_SESSION_ID`……
+  3. 自动发现：任何 `<TOOL>_SESSION_ID`（按变量名排序取第一个；`TERM_*` / `ITERM_*` / `OTEL_*` / `ANTHROPIC_*` 已排除）
+
+  → `.kanban/sessions/<key>`；**三者都推不出**才退回旧的单文件 `.kanban/session`。
+  `--harness` 只是贴标签，不参与选 key。
+- 输出里有 `identity   : <key>` 一行；显示 `(none — sharing .kanban/session…)` 就是没分片，
+  同目录的所有无 key 进程共用一个身份。`--no-write` 可以让 `start` 不落盘。
+- **读取时绝不回退**：解析得出 key 就只读那个分片。所以升级后第一次跑会看到
+  `missing session id, cannot tell who is operating`——跑一次 `session start` 即可，重注册安全
+  （旧会话过宽限期判失联，卡回 `todo`，进度与 checklist 保留）。
 - `end` **释放本会话持有的所有任务**（进度保留，状态回 `todo`），输出里列出释放了哪些卡。
 - `heartbeat` 只刷新活跃时间，不写事件（否则事件量会被心跳淹没）。远程模式下回收由 server 定时做，不是靠心跳。
+- MCP 不读这个文件，每次调用都要显式传 `session_id`（见 [mcp-tools.md](mcp-tools.md)）。
 
 ## 任务 task
 
@@ -119,7 +131,8 @@ agent-kanban task rm T-0007 [--force]                     # 事件与交接记�
 ```
 
 - `--estimate` 支持 `30m` / `2h` / `1d` / `1h30m`。
-- `--ttl` 传的是**时长字符串**（`30m`、`2h`），不是分钟数。
+- `--ttl` 传的是**时长字符串**（`30m`、`2h`、`short`），**不是分钟数**——`--ttl 7200` 会报 `cannot parse lease duration`。
+  （`init --ttl` / `init --grace` 才收分钟数。）
 - `--check` / `--uncheck` / `--add-check` / `--label` 是**逗号分隔列表**，按文本匹配。
 - `done` 的返回体里有 `unblocked` 数组——告诉 agent 哪些下游卡现在能开工了。
 
@@ -185,19 +198,25 @@ agent-kanban rebuild [--write] [--force] [--from-seq 100] [--json]
 - `lease_expires_at` 与 `updated_at` **不参与**漂移比较（由心跳/续租前移，续租不写事件）。这是设计上的正常现象。
 - `agent-kanban doctor` 还会报告 AGENTS.md 里安装的协议块是否落后于 CLI 版本（**本地模式专属**，它读的是本地文件）。
 
-## 配置 config / project / admin / serve
+## 配置 / install-protocol / admin / serve
 
 ```bash
 agent-kanban config show | init | set | use | path
   agent-kanban config init --server <url> --project <key> --key k_xxx
   agent-kanban config set server.url <url>
   agent-kanban config use remote|local
+agent-kanban install-protocol [--file <path>] [--check]   # 写入 / 校验 AGENTS.md 里的协作协议块
 agent-kanban project list
 agent-kanban admin project add|remove|list ...
 agent-kanban admin token create|revoke|grant ... --project <key> --name "CI runner"
 agent-kanban serve [--host 127.0.0.1] [--port 7788] [--reap-interval 30] [--quiet]
+agent-kanban update [--check]        # 从 GitHub Releases 自更新二进制
 agent-kanban mcp        # 以 stdio 启动 MCP server，harness 当子进程拉起
 ```
+
+- `install-protocol` 幂等：只改 `<!-- agent-kanban:begin --> ... <!-- agent-kanban:end -->` 托管块，
+  区块外的内容逐字不动，可以和别的约定写在同一个文件里。`--check` 只校验，缺失/落后时**退出码 2**（CI 用）。
+  `doctor` 也会报这块是否落后于 CLI 版本（本地模式专属）。
 
 - `serve` **默认只绑 127.0.0.1，且不终结 TLS**。跨机访问必须放在 TLS 反向代理之后，否则 token 明文过网。
 - **`serve` 忽略 `--server`**——它自己就是提供能力的那一端，只能直连本地库。
@@ -288,3 +307,5 @@ agent-kanban init && agent-kanban import .kanban/journal && agent-kanban rebuild
 - 依赖满足时，被阻塞的依赖方会**自动**从 `blocked` 回到 `todo`（写 `task_unblocked` 事件）。
 - `task done` 会解除依赖它的卡，返回体里带 `unblocked` 数组。
 - 非法转移 → 退出码 2，错误 `details.legal_transitions` 列出合法后继。
+- ⚠️ 这张表是**状态机本身**，不是 CLI 子命令表。`review → doing`（打回重做）**没有对应的 CLI/MCP 命令**
+  （`task.transition` Op 只在 Web 看板拖拽里用到），变通见 [troubleshooting.md](troubleshooting.md#已知的转移缺口review-打回重做)。

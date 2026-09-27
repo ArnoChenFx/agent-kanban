@@ -8,7 +8,7 @@
 - [两种模式的差别](#两种模式的差别)
 - [搭建](#搭建)
 - [客户端配置](#客户端配置)
-- [最大的坑：session start 不写本地文件](#最大的坑session-start-不写本地文件)
+- [会话身份：与本地模式完全一致](#会话身份与本地模式完全一致)
 - [命令可用性对照](#命令可用性对照)
 - [失联回收的时机不一样](#失联回收的时机不一样)
 - [别在远程目录里跑 agent-kanban init](#别在远程目录里跑-kanban-init)
@@ -24,7 +24,7 @@
 |  | 本地模式 | 远程模式 |
 |---|---|---|
 | 数据在哪 | `<项目>/.kanban/kanban.db` | **server 的库**；客户端只有 `.kanban/config.toml` |
-| `.kanban/` 里有啥 | `kanban.db` + `config.toml` + `session` + `journal/` | **只有 `config.toml`**（`session` 也不会有，见下） |
+| `.kanban/` 里有啥 | `kanban.db` + `config.toml` + `sessions/<key>` + `journal/` | `config.toml` + `sessions/<key>`（身份文件一样写，只是没有库和 journal） |
 | 怎么进这个模式 | `agent-kanban init`（默认 `mode = "local"`） | 配置里 `mode = "remote"` 且 `server.url` 非空 |
 | 看板定位 | 向上找带 `kanban.db` 的 `.kanban/` | 向上找带 `config.toml` 的 `.kanban/`（宽松查找，**不要求有 db**） |
 | 失联回收时机 | 每次命令隐式触发 | server 定时（`serve --reap-interval`，默认 30s） |
@@ -102,7 +102,7 @@ agent-kanban config set project.key my-app
 
 ⚠️ `config.toml` **含 token，不要提交到公开仓库**。
 
-## 最大的坑：session start 不写本地文件
+## 会话身份：与本地模式完全一致
 
 ```console
 $ agent-kanban session start --agent remote-agent --harness pi
@@ -110,29 +110,33 @@ $ agent-kanban session start --agent remote-agent --harness pi
   session_id : s-16bbht
   agent      : remote-agent (pi)
   project    : my-app
-$ agent-kanban task claim T-0001
-
-Error[USAGE]: missing session id, cannot tell who is operating
+  identity   : pi-3f9a2c1e-...
+$ agent-kanban task claim T-0001      # 不用带 --session，读的就是上面写的那个身份文件
+✓ Claimed T-0001 ...
 ```
 
-**远程模式下 `session start` 故意不写 `.kanban/session`**（源码注释：「远程模式不写本地状态」），所以每条命令都得自己带身份。三种解法：
+**远程模式下 `session start` 同样会把 session id 写进本机 `.kanban/sessions/<identity-key>`。**
+身份文件记的是"这台机器上我是谁"，不是看板状态——远程模式下 `config.toml` 同样在本机 `.kanban/` 里，
+两者放一起毫无矛盾。
+
+> ⚠️ 这里曾经有个反直觉的 bug，值得记一下：老实现给写侧加了 `&& mode === "local"`，理由是"远程模式状态在 server，
+> 别碰本地"，但**读侧没跟着改**。结果是远程模式下 `session start` 报告成功、打印 session_id 与 identity key，
+> 却一个字节都没落地（`.kanban` 目录甚至没被创建），紧接着的 `task claim` 报
+> `missing session id, cannot tell who is operating`——提示还反过来叫人"去跑一次 session start"（已经跑过了）。
+> 身份文件是"我是谁"、不是"看板状态"，守卫要加在**两个**方向上。
+
+真正需要显式传身份的只有两种情况：
 
 ```bash
-# 1. 导出环境变量（本会话内最省事）
-export KANBAN_SESSION=s-16bbht
+# 1. 脚本里自己管身份（此时加 --no-write，别污染身份文件）
+agent-kanban session start --agent my-agent --no-write --json | jq -r .id
+export KANBAN_SESSION=$(agent-kanban session start --agent my-agent --no-write --json | jq -r .id)
 
-# 2. 每条命令显式传
-agent-kanban task claim T-0001 --session s-16bbht
-
-# 3. 记在 agent 的上下文里，每条命令都带上
+# 2. 同目录多个进程推不出 identity key，共用同一个 .kanban/session
+KANBAN_SESSION_KEY=my-run-42 agent-kanban session start --agent my-agent
 ```
 
-`--session` / `KANBAN_SESSION` **两种模式都有效**；只是本地模式还能白拿 `.kanban/session` 兜底，远程模式没有。
-`session start --json` 可以直接拿到 id，方便脚本化：
-
-```bash
-SID=$(agent-kanban session start --agent my-agent --json | jq -r .id)
-```
+`--session` / `KANBAN_SESSION` **两种模式都有效**，只是优先级最高，会盖掉身份文件。
 
 ## 命令可用性对照
 
@@ -219,7 +223,7 @@ MCP server 用的是**和 CLI 完全相同的配置解析**，所以 `.kanban/co
 远程模式下 MCP 的两条额外要求（本地模式没这些问题）：
 
 1. `command` 路径相对于 harness 工作目录，**从项目根目录启动 harness**。
-2. `session_id` 仍然必须每次显式传——MCP 走 `kanban_session_start` 拿 id，与 `.kanban/session` 文件无关（两种模式都一样）。
+2. `session_id` 仍然必须每次显式传——MCP 是长驻进程，不读任何身份文件（CLI 读的 `.kanban/sessions/<key>` 与它无关，两种模式都一样）。
 
 网络抖动时的表现：命令失败会返回 `error.code`（7 = 认证/连接类）。**不要因为一次网络失败就以为租约丢了**——
 先 `agent-kanban context` 确认卡的真实状态，再决定是重试还是换卡。
