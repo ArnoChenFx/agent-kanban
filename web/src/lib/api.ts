@@ -6,8 +6,8 @@
  * - 写：一律 `POST /api/op`，body = `{ project, op: { kind, params } }`
  *   这样本地/远程行为一致，前端不需要知道具体业务逻辑
  *
- * 鉴权：`X-Kanban-Key` 头。token 由用户输入后存 localStorage
- * （与 /admin 页面的 sessionStorage 策略不同：看板希望刷新后免重复登录）
+ * 鉴权：`X-Kanban-Key` 头。token 由用户输入后存 localStorage（`kanban.token`），
+ * 刷新与重开浏览器都免登录——/admin 页的 `kanban.admin.token` 也是同一策略。
  */
 
 import type { KanbanEvent } from "./types"

@@ -528,7 +528,7 @@ try {
   console.log("\n=== 界面语言：管理页（/admin）===");
   await send("Page.navigate", { url: `${BASE}/admin` });
   await sleep(1800);
-  // /admin 不用 sessionStorage 里的 token（用完即清），所以登录要真的走一遍表单
+  // /admin 的 token 不在看板的 localStorage key 里，所以登录要真的走一遍表单
   const adminLoggedIn = await evaluate<boolean>(`(() => {
     const input = document.getElementById('tokenInput');
     const btn = document.getElementById('loginBtn');
@@ -579,6 +579,18 @@ try {
     await evaluate<string>(`document.getElementById('newProjectKey').placeholder`),
   );
   check("html lang 回到 zh-CN", (await evaluate<string>(`document.documentElement.lang`)) === "zh-CN");
+
+  // token 记在 localStorage：重开页面应当自动恢复登录，不再弹登录表单
+  await send("Page.navigate", { url: `${BASE}/admin` });
+  await sleep(1500);
+  check(
+    "管理页记住登录（重开免登）",
+    await evaluate<boolean>(`!document.getElementById('app').hidden`),
+  );
+  check(
+    "记忆登录用的是 localStorage",
+    await evaluate<boolean>(`localStorage.getItem('kanban.admin.token') !== null`),
+  );
   check("管理页无未捕获异常", exceptions.length === 0, exceptions[0]?.split("\n")[0] ?? "");
   check("管理页无控制台 error", consoleErrors.length === 0, [...new Set(consoleErrors)][0]?.slice(0, 120) ?? "");
 } catch (e) {

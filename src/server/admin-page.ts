@@ -5,8 +5,9 @@
  * 1. **页面本身不需要鉴权**，所有数据请求都带管理员 token。
  *    好处：可以用 localStorage 记住登录状态，刷新不丢；
  *    安全性由 API 层保证（页面里没有任何数据）。
- * 2. **token 存在 sessionStorage 而不是 localStorage**：
- *    关掉标签页即失效，避免在共享机器上长期驻留管理员凭据。
+ * 2. **token 存在 localStorage**：刷新、重开浏览器都免登录（与看板页的
+ *    `kanban.token` 同一策略）。代价是管理员凭据长期驻留在本机浏览器里，
+ *    共享机器上用完请手动登出（右上角退出按钮会清掉它）。
  * 3. **不用框架**：管理页面功能有限（列 project、发/吊销 token），
  *    引入 React/Vue 反而增加构建与依赖负担。
  * 4. **全部 textContent 渲染**，不拼 innerHTML —— 任务标题、备注等是用户输入。
@@ -346,7 +347,9 @@ function setLocale(next) {
 }
 
 // ---- 全局状态 ----
-let adminToken = sessionStorage.getItem("kanban_admin_token") || "";
+// 与看板页的 kanban.token / kanban.locale 同一命名约定
+const TOKEN_STORAGE_KEY = "kanban.admin.token";
+let adminToken = localStorage.getItem(TOKEN_STORAGE_KEY) || "";
 /** 最近一次 /overview 的响应：切语言时用它重画表格，避免多打一次请求 */
 let lastOverview = null;
 
@@ -383,21 +386,22 @@ async function api(path, options = {}) {
 
 // ---- 登录 / 登出 ----
 function logout(msg) {
-  sessionStorage.removeItem("kanban_admin_token");
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
   adminToken = "";
   $("app").hidden = true;
   $("login").hidden = false;
   if (msg) showError(msg);
 }
 
-async function doLogin() {
-  const token = $("tokenInput").value.trim();
+// token 入参用于启动时恢复记忆的登录；表单提交则从输入框取值
+async function doLogin(token) {
+  token = (token ?? $("tokenInput").value).trim();
   if (!token) return showError(t("admin.err.needToken"));
   showError("");
   adminToken = token;
   try {
     await loadAll();
-    sessionStorage.setItem("kanban_admin_token", token);
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
     $("login").hidden = true;
     $("app").hidden = false;
     showError("");
@@ -610,7 +614,7 @@ async function revokeProjectGrant(id, projects) {
 
 // ---- 事件绑定 ----
 applyStaticI18n();
-$("loginBtn").onclick = doLogin;
+$("loginBtn").onclick = () => doLogin();
 $("tokenInput").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
 $("logoutBtn").onclick = () => logout();
 $("refreshBtn").onclick = () => loadAll().catch((e) => showError(e.message));
@@ -633,9 +637,10 @@ $("copyBtn").onclick = async () => {
   }
 };
 
-// ---- 启动：有已登录 token 就直接进，否则显示登录页 ----
+// ---- 启动：有记忆的 token 就直接进（校验失败时 api() 会走 logout 回登录页），
+// 否则显示登录页 ----
 if (adminToken) {
-  doLogin();
+  doLogin(adminToken);
 } else {
   $("login").hidden = false;
 }

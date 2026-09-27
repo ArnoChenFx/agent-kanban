@@ -1,6 +1,6 @@
 {
   "name": "agent-kanban",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "多会话 agent 共享的项目级任务看板：共享任务列表、进度、历史计划，并在 agent 崩溃后恢复上下文",
   "type": "module",
   "module": "src/cli.ts",
