@@ -156,6 +156,7 @@ cd web && bun run typecheck # 前端
 | `verify-deploy.ts` | Dockerfile、compose、`.env` 的结构正确 |
 | `verify-deps.ts` | 没有未声明的（幽灵）依赖 |
 | `verify-workflows.ts` | workflow 文件可解析且保留必要结构 |
+| `verify-install.ts` | 安装脚本真能装：资产名与 release 矩阵对账，各脚本端到端装出可运行的二进制 |
 | `verify-docs.ts` | 文档与代码一致：退出码、环境变量、选项、命令名、脚本名 |
 | `verify-auth.ts` | token 权限范围与 project 隔离 |
 | `verify-remote.ts` | 本地与远程后端行为一致 |
@@ -170,6 +171,7 @@ bun run verify:web
 bun run verify:web:ui   # 需要本机有 Chrome/Edge，没有则跳过
 bun run verify:deps
 bun run verify:workflows
+bun run verify:install
 bun run verify:docs
 bun run verify:deploy
 bun run verify:mcp

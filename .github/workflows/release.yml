@@ -370,7 +370,29 @@ jobs:
           progress stays traceable, and a crashed agent can be picked up mid-task with its
           context and handoff intact.
 
+          ### One-line install
+
+          Downloads the right binary for your platform, installs it to a per-user directory
+          (no administrator rights needed) and puts it on your PATH.
+
+          \`\`\`bash
+          # macOS / Linux
+          curl -fsSL https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.sh | bash
+          \`\`\`
+
+          \`\`\`powershell
+          # Windows (PowerShell)
+          irm https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.ps1 | iex
+          \`\`\`
+
+          Re-run the same command to upgrade. Add \`AGENT_KANBAN_VERSION=0.1.5\` to pin a
+          specific release.
+
+          No Linux arm64 binary is published; the script says so and points you at Docker.
+
           ### Download
+
+          Manual download, if you would rather not run a script:
 
           | Platform | File |
           | --- | --- |
@@ -446,6 +468,8 @@ jobs:
           #   by exactly one pattern, so this cannot come back unnoticed.
           files: |
             release-assets/agent-kanban-*
+            install/install.sh
+            install/install.ps1
             release-notes.md
           # Re-running a failed release is the normal repair path, and a failed run
           # always leaves assets behind (the action publishes the release only after

@@ -65,6 +65,12 @@ jobs:
       - name: Verify workflow files
         run: bun run verify:workflows
 
+      # Runs the real installer against a local fake release. The matrix covers
+      # all three OSes, so install.sh and install.ps1 are each exercised on the
+      # platform they actually target.
+      - name: Verify install scripts
+        run: bun run verify:install
+
       - name: Verify documentation accuracy
         run: bun run verify:docs
 

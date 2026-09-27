@@ -82,18 +82,41 @@ agent-kanban  replayed 412 events (19ms)
 
 ## 快速开始
 
-### 方式 A —— 单文件二进制（无需运行时）
+### 方式 A —— 一行命令安装（无需运行时）
 
-从 [Releases](https://github.com/ArnoChenFx/agent-kanban/releases) 下载对应平台的文件。二进制内嵌了 Bun 运行时、数据库 schema 和整个 Web 界面。
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.sh | bash
+```
+
+```powershell
+# Windows（PowerShell）
+irm https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.ps1 | iex
+```
+
+脚本会自动识别平台、下载对应二进制、装到**用户级目录**（`~/.local/bin`；Windows 是
+`%LOCALAPPDATA%\Programs\agent-kanban`）并写进 PATH。**不需要管理员权限，不需要 sudo。**
+再跑一次同一条命令就是升级。
+
+```bash
+agent-kanban init                      # 在当前目录建一个看板
+agent-kanban install-protocol          # 教会你的 agent 使用看板
+agent-kanban serve                     # → http://127.0.0.1:7788/
+```
+
+加 `AGENT_KANBAN_VERSION=0.1.5` 可以指定版本。Linux arm64 不发布二进制，脚本会明确提示
+并指向 Docker（镜像本身是多架构的）。
+
+**更想手动下载？** 二进制是自包含的（Bun 运行时、数据库 schema、整个 Web 界面都在里面），
+从 [Releases](https://github.com/ArnoChenFx/agent-kanban/releases) 取对应平台的文件：
 
 ```bash
 chmod +x agent-kanban-linux-x64        # macOS 用 agent-kanban-darwin-arm64 · Windows 用 agent-kanban-windows-x64.exe
 ./agent-kanban-linux-x64 init
-./agent-kanban-linux-x64 install-protocol   # 教会你的 agent 使用看板
-./agent-kanban-linux-x64 session start --agent my-agent
-./agent-kanban-linux-x64 task add "重写鉴权层"
-./agent-kanban-linux-x64 serve         # → http://127.0.0.1:7788/
+./agent-kanban-linux-x64 serve
 ```
+
+后续升级直接跑 `agent-kanban update`（先 `--check` 可以只看不下）。它会拉取最新 release、对照发布的 `.sha256` 校验后原地替换二进制，并把旧版保留为 `<name>.old`。源码与 Docker 方式下会打印对应的升级办法。
 
 ### 方式 B —— 从源码运行
 
@@ -362,6 +385,7 @@ Server 端：`KANBAN_HOST`、`KANBAN_PORT`、`KANBAN_WEB_DIR`、`KANBAN_ADMIN_TO
 | `agent-kanban config show \| init \| set \| use \| path` | 配置管理 |
 | `agent-kanban project list` | 查询 project（本地库） |
 | `agent-kanban admin project … \| token …` | project 与 token 管理 |
+| `agent-kanban update [--check]` | 从 GitHub Release 自更新二进制（带 checksum 校验） |
 | `agent-kanban serve` | 启动 HTTP + SSE server |
 
 完整参数见 `agent-kanban <命令> --help`。

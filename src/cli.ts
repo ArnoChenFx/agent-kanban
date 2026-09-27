@@ -25,6 +25,7 @@ import { cmdHandoff } from "./commands/handoff.ts";
 import { cmdContext } from "./commands/recovery.ts";
 import { cmdPlan } from "./commands/plan.ts";
 import { cmdRebuild } from "./commands/rebuild.ts";
+import { cmdUpdate } from "./commands/update.ts";
 import { runServe } from "./server/http.ts";
 import { reportError } from "./commands/output.ts";
 import { assertKnownOptions, getBool, getInt, getString, parseArgs } from "./commands/args.ts";
@@ -53,6 +54,7 @@ Commands:
   config      Project config: show / init / set / use (.kanban/config.toml)
   project     Project queries (direct local access)
   admin       Admin: project create/delete, token issue/revoke/authorize
+  update      Self-update the binary from GitHub Releases (--check to compare only)
   serve       Start the HTTP + SSE server (for sharing across machines)
   mcp         Start the MCP server (stdio; agents read and write the board via tool calls)
 
@@ -235,6 +237,9 @@ async function main(): Promise<void> {
       break;
     case "rebuild":
       code = await cmdRebuild(withGlobals());
+      break;
+    case "update":
+      code = await cmdUpdate(withGlobals());
       break;
     case "handoff":
       code = await cmdHandoff(withGlobals());

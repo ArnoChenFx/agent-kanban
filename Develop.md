@@ -157,6 +157,7 @@ Unit tests cover logic. The scripts below boot real servers, spawn real processe
 | `verify-deploy.ts` | Dockerfile, compose, and `.env` structure |
 | `verify-deps.ts` | No undeclared ("phantom") dependencies |
 | `verify-workflows.ts` | Workflow files parse and keep their required structure |
+| `verify-install.ts` | The install scripts really work: asset names match the release matrix, and each script installs a runnable binary end-to-end |
 | `verify-docs.ts` | Docs still match the code: exit codes, env vars, flags, command and script names |
 | `verify-mcp.ts` | The MCP server works over real stdio JSON-RPC, contract §3.4 recovery flow |
 | `verify-backup.ts` | export → import on a second machine restores the board losslessly |
@@ -171,6 +172,7 @@ bun run verify:web
 bun run verify:web:ui   # needs Chrome/Edge locally; skips when absent
 bun run verify:deps
 bun run verify:workflows
+bun run verify:install
 bun run verify:docs
 bun run verify:deploy
 bun run verify:mcp

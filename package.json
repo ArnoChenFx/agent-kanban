@@ -26,6 +26,7 @@
     "verify:web:ui": "bun run scripts/verify-web-ui.ts",
     "verify:deps": "bun run scripts/verify-deps.ts",
     "verify:workflows": "bun run scripts/verify-workflows.ts",
+    "verify:install": "bun run scripts/verify-install.ts",
     "verify:docs": "bun run scripts/verify-docs.ts",
     "verify:mcp": "bun run scripts/verify-mcp.ts",
     "verify:backup": "bun run scripts/verify-backup.ts",

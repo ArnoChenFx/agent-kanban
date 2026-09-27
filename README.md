@@ -84,18 +84,43 @@ When a session stops, it writes a handoff: what's done, what's next, what's bloc
 
 ## Quick start
 
-### Option A — single binary (no runtime required)
+### Option A — one-line install (no runtime required)
 
-Download the file for your platform from [Releases](https://github.com/ArnoChenFx/agent-kanban/releases). The binary embeds the Bun runtime, the database schema, and the entire web UI.
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.ps1 | iex
+```
+
+The script detects your platform, downloads the matching binary, installs it to a
+per-user directory (`~/.local/bin`, or `%LOCALAPPDATA%\Programs\agent-kanban` on
+Windows) and adds it to your PATH. No administrator rights, no `sudo`. Re-run the
+same command to upgrade.
+
+```bash
+agent-kanban init                      # create a board in the current directory
+agent-kanban install-protocol          # teach your agents to use the board
+agent-kanban serve                     # → http://127.0.0.1:7788/
+```
+
+Pin a version with `AGENT_KANBAN_VERSION=0.1.5`. There is no Linux arm64 binary;
+the script tells you so and points you at Docker, which is multi-architecture.
+
+**Prefer to download by hand?** The binary is self-contained (the Bun runtime, the
+database schema and the whole web UI are embedded). Get it from
+[Releases](https://github.com/ArnoChenFx/agent-kanban/releases):
 
 ```bash
 chmod +x agent-kanban-linux-x64        # macOS: agent-kanban-darwin-arm64 · Windows: agent-kanban-windows-x64.exe
 ./agent-kanban-linux-x64 init
-./agent-kanban-linux-x64 install-protocol   # teach your agents to use the board
-./agent-kanban-linux-x64 session start --agent my-agent
-./agent-kanban-linux-x64 task add "Rewrite the auth layer"
-./agent-kanban-linux-x64 serve         # → http://127.0.0.1:7788/
+./agent-kanban-linux-x64 serve
 ```
+
+To upgrade later, run `agent-kanban update` (or `--check` first to peek). It fetches the latest release, verifies it against the published `.sha256`, replaces the binary in place, and keeps the previous one as `<name>.old`. When running from source or in Docker, it prints the matching upgrade path instead.
 
 ### Option B — from source
 
@@ -369,6 +394,7 @@ When it comes from the environment, the token is neither written to `config.toml
 | `agent-kanban config show \| init \| set \| use \| path` | Configuration |
 | `agent-kanban project list` | Query projects (local database) |
 | `agent-kanban admin project … \| token …` | Project and token management |
+| `agent-kanban update [--check]` | Self-update the binary from GitHub Releases (checksum-verified) |
 | `agent-kanban serve` | Run the HTTP + SSE server |
 
 Run `agent-kanban <command> --help` for the full option list.

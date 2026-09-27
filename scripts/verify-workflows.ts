@@ -149,6 +149,23 @@ for (const file of FILES) {
       badMatches.length ? `命中数不为 1：${badMatches.join(", ")}` : `${expectedAssets.length} 个资产`,
     );
     check("release-notes.md 在 files: 里", filePatterns.includes("release-notes.md"));
+
+    // ---- 一键安装脚本 ----
+    // 两个脚本作为 Release 资产原样上传，路径是仓库里的 install/，**不是**
+    // release-assets/。原因是上面那个资产计数断言：`release-assets/` 里非 .sha256
+    // 的文件数必须等于平台数（4），把脚本拷进去会变成 "expected 4, found 6"。
+    // 而 install/install.sh 匹配不到 `release-assets/agent-kanban-*`，所以
+    // 「每个资产恰好被一个 glob 命中」那条也不会被影响。
+    check("release 上传 install.sh", filePatterns.includes("install/install.sh"), filePatterns.join(" | "));
+    check("release 上传 install.ps1", filePatterns.includes("install/install.ps1"));
+    check(
+      "安装脚本不进 release-assets/（会打破上面的平台数断言）",
+      !filePatterns.some((p) => p.startsWith("release-assets/") && p.includes("install")),
+    );
+    check("release notes 含一键安装小节", /One-line install/.test(text));
+    check("release notes 给出三平台的一行命令", /install\/install\.sh \| bash/.test(text) && /install\/install\.ps1 \| iex/.test(text));
+    // 版本 pin 的说明必须和安装脚本里的变量名一致
+    check("release notes 的版本 pin 用的是脚本里的变量名", /AGENT_KANBAN_VERSION/.test(text));
     // 重跑失败发布是常规修复手段，overwrite_files 决定重跑能否收敛（默认 true，显式钉住）
     check("显式 overwrite_files: true", /overwrite_files:\s*true/.test(text));
 

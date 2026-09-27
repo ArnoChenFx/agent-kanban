@@ -17,6 +17,7 @@ const GATES: Gate[] = [
   { name: "单元测试", cmd: ["bun", "test"] },
   { name: "依赖声明", cmd: ["bun", "run", "verify:deps"] },
   { name: "Workflow 校验", cmd: ["bun", "run", "verify:workflows"] },
+  { name: "安装脚本", cmd: ["bun", "run", "verify:install"] },
   { name: "文档事实", cmd: ["bun", "run", "verify:docs"] },
   { name: "部署配置", cmd: ["bun", "run", "verify:deploy"] },
   { name: "崩溃恢复", cmd: ["bun", "run", "scripts/verify-recovery.ts"], quiet: true },

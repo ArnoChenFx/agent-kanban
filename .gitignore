@@ -30,3 +30,4 @@ skills-lock.json
 # （内嵌资源清单）。所以构建后工作区会显示这个文件 modified ——
 # 那是预期的，不必提交。
 .mcp.json
+.qoder
