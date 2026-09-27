@@ -93,7 +93,12 @@ export function savePlan(ctx: TxContext, input: SavePlanInput): Plan {
 
   // ---- 旧版本转 superseded ----
   if (previousActive) {
-    db.query("UPDATE plans SET status = 'superseded' WHERE id = ?").run(previousActive.id);
+    // ⚠ 必须带 project_key：v5 之后 plans 主键是 (project_key, id, version)，
+    //   同号计划在两个 project 下可以共存，只按 id 更新会连带顶掉另一个的。
+    db.query("UPDATE plans SET status = 'superseded' WHERE project_key = ? AND id = ?").run(
+      projectKey,
+      previousActive.id,
+    );
     ctx.emit({
       type: "plan_superseded",
       taskId: previousActive.taskId,

@@ -593,7 +593,9 @@ async function addToken() {
 async function revokeToken(id) {
   if (!confirm(t("admin.confirm.revoke", { id }))) return;
   try {
-    await api("/tokens/" + encodeURIComponent(id) + "/revoke", { method: "POST" });
+    // 按契约用 DELETE（docs/plan/002-接口契约.md §4.2 写的就是这个）。
+    // 服务端同时保留 POST /tokens/:id/revoke 作为别名，两者行为一致（有测试钉住）。
+    await api("/tokens/" + encodeURIComponent(id), { method: "DELETE" });
     await loadAll();
   } catch (e) {
     showError(e.message);

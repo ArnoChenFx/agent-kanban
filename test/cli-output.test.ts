@@ -120,6 +120,41 @@ describe("task show 的文本输出", () => {
   });
 });
 
+/**
+ * 计划时间线（#9）。
+ *
+ * 事故：`events.describeEvent` 的 `plan_superseded` 读 `d.old_plan_id`，
+ * 而 `savePlan` 发的 data 里是 `id` —— 于是 `plan history` 与
+ * `task show --timeline` 打出「plan **undefined** superseded by a new version」。
+ *
+ * 之前没被抓到，只因为这套 fixture **从不建计划**：事件根本没产生过。
+ * 所以这里专门补一份「建两次计划」的 fixture。
+ */
+describe("计划时间线里的 plan_superseded", () => {
+  let out = "";
+
+  beforeAll(async () => {
+    await cli(["session", "start", "--agent", "cli-out", "--db", dbPath]);
+    await cli(["plan", "save", "--task", "T-0002", "--title", "方案 v1", "--body", "第一步", "--db", dbPath]);
+    await cli(["plan", "save", "--task", "T-0002", "--title", "方案 v2", "--body", "第二步", "--db", dbPath]);
+    out = strip((await cli(["task", "show", "T-0002", "--timeline", "--db", dbPath])).out);
+  });
+
+  test("时间线里没有 undefined", () => {
+    expect(out).not.toContain("undefined");
+  });
+
+  test("渲染的是真实的计划号（不是原始事件名）", () => {
+    expect(out).toMatch(/plan PL-T-0002-\d+ v1 superseded/);
+    expect(out).not.toContain("plan_superseded");
+  });
+
+  test("plan history 同样没有 undefined", async () => {
+    const hist = strip((await cli(["plan", "history", "PL-T-0002-02", "--db", dbPath])).out);
+    expect(hist).not.toContain("undefined");
+  });
+});
+
 describe("context 的输出", () => {
   // 事故记录：context 里出现过 `Last: handoff written (undefined)`。
   // 根因不是文案，而是 `describeEventBrief` 读 `d.kind`，而 handoff_created 事件的

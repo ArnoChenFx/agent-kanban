@@ -34,7 +34,7 @@ import type { KanbanConfig } from "./types.ts";
 import SCHEMA_FILE from "./schema.sql" with { type: "file" };
 
 /** 当前 schema 版本；新增表/列时 +1 并在 MIGRATIONS 里补一条 */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** 默认配置：租约 15 分钟、失联宽限 10 分钟 */
 export const DEFAULT_TTL_MS = 15 * 60 * 1000;
@@ -414,6 +414,107 @@ const MIGRATIONS: Record<number, { up: (db: Db) => void }> = {
       }
 
       // ---- 3. schema 版本由外层统一更新 ----
+    },
+  },
+
+  /**
+   * v4 → v5：plans 主键改成含 project_key（ADR-9 的遗漏，plans 版）
+   *
+   * 背景：**计划号是 per-project 分配的**（ids.ts 的 nextProjectPlanId /
+   * nextTaskPlanId 都带 projectKey），但 plans.id 是 `TEXT PRIMARY KEY`（全局唯一）。
+   * 于是第二个 project 存第一份计划时就撞主键：
+   *   pa → PL-0001
+   *   pb → unique constraint failed
+   * 而 ADR-9 声称支持「一个 server 管多个 project」，所以这是功能级断裂。
+   *
+   * 顺带修掉一个被它掩盖的缺陷：项目级计划 `PL-000N` 里**不含 project**，
+   * 即使不撞主键，也无法从 ID 看出它属于哪个看板。
+   *
+   * ## 为什么不改成全局计数，而是改主键
+   *
+   * 三个理由，按重要性：
+   *   1. 与 tasks / events / handoffs 的形状一致（都是 per-project 标识 + per-project 主键），
+   *      少一条「计划是例外」的特例规则。
+   *   2. 改主键后 ID 可以保持 `PL-0001` 短且可读；改全局计数则 ID 要变长。
+   *   3. v1→v2 已经为 `tasks` 走过一遍同型迁移（rebuildTasksTableForProject），
+   *      有可直接照抄的套路。
+   *
+   * ## 迁移步骤
+   *
+   * 1. 幂等检查：主键已含 project_key 就直接建索引返回
+   * 2. 建 plans_v5（三元组主键），逐行拷入；project_key 为空时回落到库里最早创建的 project
+   * 3. 删旧表、改名、重建索引
+   *
+   * ## 存量库会不会有「同 project 同 id」的行
+   *
+   * 不会：旧主键就是 id 单列，重复 id 根本插不进去。所以拷入用普通 INSERT 而非 IGNORE——
+   * 真出现重复说明库已被手工改坏，宁可让它报错也不要静默丢一份计划。
+   * 也就是说迁移要处理的只是「往后按 project 分配」，没有 id 冲突要解。
+   */
+  4: {
+    up(db: Db) {
+      const raw = db.raw;
+
+      // ---- 幂等：主键已经是含 project_key 的三元组就什么都不用做 ----
+      const info = raw.query<{ name: string; pk: number }, []>("PRAGMA table_info(plans)").all();
+      const pkCols = info.filter((c) => c.pk !== 0).map((c) => c.name);
+      if (info.some((c) => c.name === "project_key") && pkCols.includes("project_key")) {
+        raw.exec("CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(project_key, status)");
+        return;
+      }
+
+      // ---- 回填用的 project：老库里 project_key 可能为空 ----
+      // （v1→v2 的 ADD COLUMN 允许 NULL，后面那轮回填又只处理 NULL/空串）
+      const fallback = raw
+        .query<{ key: string }, []>("SELECT key FROM projects ORDER BY created_at ASC, key ASC LIMIT 1")
+        .get()?.key;
+      if (!fallback) {
+        throw KanbanError.notInit(
+          "cannot migrate the plans table: this database has no project",
+          {
+            reason: "plans_migration_no_project",
+            hint: "This database has plans but no project; it was probably created by a broken version. Restore from a backup with `agent-kanban import` instead",
+          },
+        );
+      }
+
+      // ---- 换表：建新表 → 拷数据 → 删旧表 → 改名 ----
+      // 关外键是为了换表期间 tasks.plan_id 的悬空引用不被拦下。
+      // （schema 里其实没声明外键约束，所以这一步目前是纯粹的保险）
+      raw.exec("PRAGMA foreign_keys = OFF");
+      try {
+        raw.exec(`CREATE TABLE plans_v5 (
+          id                TEXT NOT NULL,
+          project_key       TEXT NOT NULL,
+          scope             TEXT NOT NULL,
+          task_id           TEXT,
+          version           INTEGER NOT NULL,
+          title             TEXT NOT NULL,
+          body              TEXT NOT NULL,
+          status            TEXT NOT NULL,
+          author_session_id TEXT,
+          created_at        INTEGER NOT NULL,
+          supersedes_id     TEXT,
+          PRIMARY KEY (project_key, id, version)
+        )`);
+
+        raw.exec(`INSERT INTO plans_v5
+          (id, project_key, scope, task_id, version, title, body, status,
+           author_session_id, created_at, supersedes_id)
+          SELECT id,
+                 COALESCE(NULLIF(project_key, ''), '${defaultKeySql(fallback)}'),
+                 scope, task_id, version, title, body, status,
+                 author_session_id, created_at, supersedes_id
+            FROM plans`);
+
+        raw.exec("DROP TABLE plans");
+        raw.exec("ALTER TABLE plans_v5 RENAME TO plans");
+      } finally {
+        raw.exec("PRAGMA foreign_keys = ON");
+      }
+
+      raw.exec("CREATE INDEX IF NOT EXISTS idx_plans_scope  ON plans(project_key, scope, task_id, version)");
+      raw.exec("CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(project_key, status)");
     },
   },
 };

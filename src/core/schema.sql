@@ -1,5 +1,5 @@
 -- =============================================================================
--- agent-kanban 数据库 schema（v3：token 权限模型）
+-- agent-kanban 数据库 schema（v5：plans 主键含 project_key）
 --
 -- 设计依据见 docs/plan/001-总体设计.md：
 --   §4 数据模型 / ADR-1 事件溯源 / ADR-2 并发 / ADR-4 租约
@@ -10,9 +10,10 @@
 --   * 所有时间戳均为 epoch 毫秒（INTEGER）
 --   * JSON 字段以 TEXT 存储，读取时解析，缺失时用默认值
 --   * events 表只追加不修改，是唯一事实来源；tasks/sessions/plans 都是它的投影
---   * **任务号 T-0007 是 per-project 唯一的**（不是全局唯一），
+--   * **任务号 T-0007 与计划号 PL-0001 都是 per-project 唯一的**（不是全局唯一），
 --     因为 agent 口语里的 "T-0007" 必须只指向本 project 的卡；
---     且 tasks 的 UNIQUE 约束是 (project_key, id) 而非 id。
+--     且 tasks / plans 的 UNIQUE 约束都含 project_key。
+--     （plans 直到 v5 才补上：v1→v2 迁移漏了它，导致第二个 project 存计划必撞主键）
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -190,10 +191,16 @@ CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_key, seq);
 -- 计划（版本化，ADR-1 中"历史计划可追溯"的载体）
 --
 -- 同一 scope 内 version 自增；新版本落库时旧版本转 superseded 并被 supersedes_id 串成链。
+--
+-- ⚠ 主键含 project_key（v5 补的）：计划号按 project 分配（见 ids.ts），
+--   而旧版主键只有 id，于是两个 project 的第一份计划都叫 PL-0001 → 撞主键，
+--   `plan save` 在多 project server 上整个不可用。
+--   version 也要在主键里：任务级计划的 id 里已含版本号（PL-T-0007-01/02…），
+--   但项目级计划的 id 只是 PL-0001，version 承载了区分。
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS plans (
-  id                TEXT PRIMARY KEY,   -- PL-0007（项目级） / PL-T-0003-02（任务级）
-  project_key       TEXT NOT NULL,      -- 所属 project（ADR-9）
+  id                TEXT NOT NULL,      -- PL-0007（项目级） / PL-T-0003-02（任务级）
+  project_key       TEXT NOT NULL,      -- 所属 project（ADR-9）；per-project 唯一
   scope             TEXT NOT NULL,      -- project | task
   task_id           TEXT,               -- scope=task 时有效
   version           INTEGER NOT NULL,   -- 同 scope 内自增，从 1 开始
@@ -202,7 +209,8 @@ CREATE TABLE IF NOT EXISTS plans (
   status            TEXT NOT NULL,      -- active | superseded | draft
   author_session_id TEXT,
   created_at        INTEGER NOT NULL,
-  supersedes_id     TEXT
+  supersedes_id     TEXT,
+  PRIMARY KEY (project_key, id, version)
 );
 CREATE INDEX IF NOT EXISTS idx_plans_scope   ON plans(project_key, scope, task_id, version);
 CREATE INDEX IF NOT EXISTS idx_plans_status  ON plans(project_key, status);

@@ -76,10 +76,13 @@ export interface ToolDeps {
   execute(op: Op): Promise<{ data: unknown; nextActions: string[] }>;
 }
 
-// ---- 复用的 schema 片段，避免 20 个工具重复写 ----
+// ---- 复用的 schema 片段，避免每个工具重复写 ----
 const S = {
   sessionId: { type: "string", description: "session id returned by kanban_session_start" },
   taskId: { type: "string", description: "task id, e.g. T-0007" },
+  /** 依赖边两端都是任务号（复用 taskId 的描述，不再单独起一份） */
+  dependsOn: { type: "string", description: "the other end of the dependency edge, e.g. T-0003" },
+  planId: { type: "string", description: "plan id, e.g. PL-T-0007-03 or PL-0002" },
   agentName: { type: "string", description: "agent name, e.g. pi-main" },
   limit: { type: "number", description: "max cards to return (default 30)" },
 } as const;
@@ -204,7 +207,11 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "kanban_task_block",
-    description: "Mark a task blocked. Releases the lease so someone else can pick it up.",
+    // ⚠ 描述必须与行为一致：blocking **does** release the lease（持卡人与租约一起清），
+    //   这条描述以前就是这么写的，但实现不清——于是 blocked 卡上永远挂着一个
+    //   没人回收的幽灵持卡人。以后改行为时记得连描述一起改。
+    description:
+      "Mark a task blocked with a reason. Releases the lease and the assignee, so the card stops showing a stale holder; unblock it later with kanban_task_unblock.",
     inputSchema: {
       type: "object",
       properties: {
@@ -236,6 +243,103 @@ export const TOOLS: ToolSchema[] = [
         force: { type: "boolean" },
       },
       required: [...REQUIRED_SESSION, "task_id"],
+    },
+  },
+  {
+    name: "kanban_task_release",
+    description:
+      "Give up a card you are holding: doing → todo, keeping the progress and checklist so whoever picks it up continues from where you stopped. Use this when you are stopping work without finishing; use kanban_task_block when something outside your control is in the way.",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: S.sessionId, task_id: S.taskId, reason: { type: "string" } },
+      required: [...REQUIRED_SESSION, "task_id"],
+    },
+  },
+  {
+    name: "kanban_task_cancel",
+    description:
+      "Cancel a task (needs a reason). Terminal: only kanban_task_reopen can bring it back.",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: S.sessionId, task_id: S.taskId, reason: { type: "string" } },
+      required: [...REQUIRED_SESSION, "task_id", "reason"],
+    },
+  },
+  {
+    name: "kanban_task_reopen",
+    description: "Bring a done or cancelled task back to todo, keeping its progress.",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: S.sessionId, task_id: S.taskId, reason: { type: "string" } },
+      required: [...REQUIRED_SESSION, "task_id", "reason"],
+    },
+  },
+  {
+    name: "kanban_task_remove",
+    description:
+      "Delete a task outright. Only cancelled tasks can be deleted without force; the card and its history stop existing.",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: S.sessionId, task_id: S.taskId, force: { type: "boolean" } },
+      required: [...REQUIRED_SESSION, "task_id"],
+    },
+  },
+  {
+    name: "kanban_task_dep_add",
+    description:
+      "Say task A can only start once task B is done. Refuses to create a cycle. Use kanban_task_list with ready=true to see what this unblocks.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: S.sessionId,
+        task_id: { type: "string", description: "the task that waits" },
+        depends_on: { type: "string", description: "the task that must finish first" },
+      },
+      required: [...REQUIRED_SESSION, "task_id", "depends_on"],
+    },
+  },
+  {
+    name: "kanban_task_dep_remove",
+    description: "Drop a dependency edge (A waits for B).",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: S.sessionId, task_id: S.taskId, depends_on: S.taskId },
+      required: [...REQUIRED_SESSION, "task_id", "depends_on"],
+    },
+  },
+  {
+    name: "kanban_task_dep_list",
+    description: "List a task's dependencies and which of them are still unfinished.",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: S.sessionId, task_id: S.taskId },
+      required: [...REQUIRED_SESSION, "task_id"],
+    },
+  },
+  {
+    name: "kanban_plan_list",
+    description:
+      "List plan versions. Use scope=task with task_id to see one card's plans, or omit for project-level plans. status defaults to active.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: S.sessionId,
+        task_id: S.taskId,
+        scope: { type: "string", enum: ["project", "task"] },
+        status: { type: "string", enum: ["active", "superseded", "draft", "all"] },
+        limit: { type: "number" },
+      },
+      required: [...REQUIRED_SESSION],
+    },
+  },
+  {
+    name: "kanban_plan_history",
+    description:
+      "Show the full version chain of a plan, newest first. Use this to find out how the approach changed and when.",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: S.sessionId, plan_id: S.planId },
+      required: [...REQUIRED_SESSION, "plan_id"],
     },
   },
   {
@@ -680,6 +784,90 @@ export const HANDLERS: Record<string, ToolHandler> = {
     const { data, nextActions } = await d.execute({
       kind: "session.end",
       params: { summary: optStr(a, "summary") },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_task_release: async (a, d) => {
+    const { data, nextActions } = await d.execute({
+      kind: "task.release",
+      params: { task_id: str(a, "task_id"), reason: optStr(a, "reason") },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_task_cancel: async (a, d) => {
+    const { data, nextActions } = await d.execute({
+      kind: "task.cancel",
+      params: { task_id: str(a, "task_id"), reason: str(a, "reason") },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_task_reopen: async (a, d) => {
+    const { data, nextActions } = await d.execute({
+      kind: "task.reopen",
+      params: { task_id: str(a, "task_id"), reason: str(a, "reason") },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_task_remove: async (a, d) => {
+    const { data, nextActions } = await d.execute({
+      kind: "task.remove",
+      params: { task_id: str(a, "task_id"), force: bool(a, "force") },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_task_dep_add: async (a, d) => {
+    const { data, nextActions } = await d.execute({
+      kind: "task.dep.add",
+      params: { task_id: str(a, "task_id"), depends_on: str(a, "depends_on") },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_task_dep_remove: async (a, d) => {
+    const { data, nextActions } = await d.execute({
+      kind: "task.dep.remove",
+      params: { task_id: str(a, "task_id"), depends_on: str(a, "depends_on") },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_task_dep_list: async (a, d) => {
+    const { data, nextActions } = await d.execute({
+      kind: "task.dep.list",
+      params: { task_id: str(a, "task_id") },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_plan_list: async (a, d) => {
+    // enum 在 inputSchema 里已经约束过，但 TS 不知道；这里显式收窄，
+    // 免得以后有人把 enum 改了而这边静默传一个非法值进 SQL。
+    const scope = optStr(a, "scope");
+    const status = optStr(a, "status");
+    const { data, nextActions } = await d.execute({
+      kind: "plan.list",
+      params: {
+        task_id: optStr(a, "task_id") ?? null,
+        scope: scope === "project" || scope === "task" ? scope : undefined,
+        status:
+          status === "active" || status === "superseded" || status === "draft" || status === "all"
+            ? status
+            : undefined,
+        limit: num(a, "limit", 50),
+      },
+    });
+    return ok(data, nextActions);
+  },
+
+  kanban_plan_history: async (a, d) => {
+    const { data, nextActions } = await d.execute({
+      kind: "plan.history",
+      params: { plan_id: str(a, "plan_id") },
     });
     return ok(data, nextActions);
   },

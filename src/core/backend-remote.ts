@@ -83,9 +83,19 @@ export class RemoteBackend implements Backend {
   async streamEvents(opts: { afterSeq?: number; signal?: AbortSignal } = {}): Promise<ReadableStream<Uint8Array>> {
     const url = new URL(`${this.server}/api/stream`);
     url.searchParams.set("project", this.projectKey);
-    url.searchParams.set("key", this.apiKey);
     if (opts.afterSeq !== undefined) url.searchParams.set("after", String(opts.afterSeq));
-    return await this.fetchStream(url.toString(), opts.signal);
+
+    // ⚠ **token 走 header，不进 URL。**
+    //   以前是 `url.searchParams.set("key", this.apiKey)`——而 URL 会进反代/容器 access log
+    //   与 Referer。这边是 fetch（不是浏览器 EventSource），所以能直接设 header，
+    //   不需要绕道 `/api/stream-ticket`（那张票是给不能设 header 的浏览器用的）。
+    return fetch(url, {
+      headers: { "X-Kanban-Key": this.apiKey, Accept: "text/event-stream" },
+      signal: opts.signal,
+    }).then((r) => {
+      if (!r.ok || !r.body) throw new Error(`stream failed: HTTP ${r.status}`);
+      return r.body;
+    });
   }
 
   /**

@@ -85,6 +85,10 @@ const zh = {
 
   // ---- 空看板 ----
   "board.empty.title": "看板还是空的",
+  // ---- 截断提示（看板一次只取一页，超出部分要显式说清）----
+  "board.truncated.hint": "共 {total} 张卡，当前只列出前 {showing} 张",
+  "board.truncated.more": "显示更多",
+  "board.truncated.loading": "加载中…",
   // 命令本身单独一个键：它是 <code>，要保留等宽字形，不能跟解释文案溟在一起
   "board.empty.desc": "新建第一张卡，或在项目目录里执行",
   "board.empty.cmd": "agent-kanban task add \"...\"",
@@ -449,6 +453,11 @@ const en: Record<MessageKey, string> = {
   "board.empty.title": "This board is empty",
   "board.empty.desc": "Create the first card, or run this in the project directory:",
   "board.empty.cmd": "agent-kanban task add \"...\"",
+
+  // ---- truncation notice ----
+  "board.truncated.hint": "{total} card(s) in total; showing the first {showing}",
+  "board.truncated.more": "Show more",
+  "board.truncated.loading": "Loading…",
 
   "board.zombie.title": "{n} unresponsive session(s)",
   "board.zombie.line": "{agent} ({session}, silent for {minutes} min) holds {tasks}",

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 崩溃恢复测试（M2 / ADR-7）。
  *
  * 覆盖四条主链路：
@@ -259,7 +259,6 @@ describe("context —— 恢复现场", () => {
         now: t.now(),
         graceMs: DEFAULT_GRACE_MS,
         sessionId: sidB,
-        consumeHandoffs: false,
       });
 
       // 交接可见，并带上"还剩什么"
@@ -302,7 +301,6 @@ describe("context —— 恢复现场", () => {
         now: t.now(),
         graceMs: DEFAULT_GRACE_MS,
         sessionId: sidB,
-        consumeHandoffs: false,
       });
       expect(preview.pending_handoffs).toHaveLength(1);
       expect(taskHandoffs(t.scope, tid)[0]!.consumedBy).toBeNull();
@@ -329,7 +327,6 @@ describe("context —— 恢复现场", () => {
         now: t.now(),
         graceMs: DEFAULT_GRACE_MS,
         sessionId: sidB,
-        consumeHandoffs: false,
       });
       expect(ctx.in_progress.find((i) => i.id === tid)?.stale_holder).toBe(true);
       expect(ctx.next_actions.some((a) => a.includes("resume"))).toBe(true);

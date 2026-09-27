@@ -1,4 +1,4 @@
-/**
+﻿/**
  * `agent-kanban admin ...` —— 管理员命令（ADR-13）。
  *
  * 两种执行路径（都能工作，按可用性自动选择）：
@@ -23,7 +23,7 @@ import {
   getToken,
   issueToken,
   listTokens,
-  maskToken,
+  describeTokenRef,
   revokeToken,
   tokenToJson,
   updateTokenMeta,
@@ -537,6 +537,13 @@ async function tokenCreate(argv: string[]): Promise<ExitCodeValue> {
   out.line(`${style.yellow("token (shown only once, save it now)")}`);
   out.line(`  ${style.bold(String(data.token))}`);
   out.line("");
+  // 打印引用：吊销/改白名单要的是它（库里不存明文，所以不能用 token 明文当句柄）。
+  // 不打印的话，用户只能去 `token list` 或 admin 页把它找回来。
+  if (data.id) {
+    out.line(style.gray("  Ref (for revoke / grant — not a secret):"));
+    out.line(`    ${style.cyan(String(data.id))}`);
+    out.line("");
+  }
   if (role === "project") {
     out.line(style.gray("  Write it into the client config:"));
     out.line(style.gray(`    agent-kanban config set server.token ${data.token}`));
@@ -568,7 +575,7 @@ async function tokenGrant(argv: string[]): Promise<ExitCodeValue> {
   if (handle) {
     try {
       const token = getToken(handle.raw, tokenId);
-      if (!token) throw KanbanError.state(`token not found: ${maskToken(tokenId)}`);
+      if (!token) throw KanbanError.state(`token not found: ${describeTokenRef(tokenId)}`);
       const next = getBool(args, "replace")
         ? addProjects
         : Array.from(new Set([...token.projects, ...addProjects]));
@@ -577,7 +584,7 @@ async function tokenGrant(argv: string[]): Promise<ExitCodeValue> {
         out.data(tokenToJson(updated));
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} grants of token ${maskToken(tokenId)} updated`);
+      out.line(`${style.green("✓")} grants of token ${describeTokenRef(tokenId)} updated`);
       out.line(`  Current grants: ${updated.projects.join(", ")}`);
       return ExitCode.OK;
     } finally {
@@ -598,7 +605,7 @@ async function tokenGrant(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`${style.green("✓")} grants of token ${maskToken(tokenId)} updated`);
+  out.line(`${style.green("✓")} grants of token ${describeTokenRef(tokenId)} updated`);
   out.line(`  Current grants: ${(data.projects as string[]).join(", ")}`);
   return ExitCode.OK;
 }
@@ -622,7 +629,7 @@ async function tokenRevoke(argv: string[]): Promise<ExitCodeValue> {
         out.data(tokenToJson(revoked));
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} token ${maskToken(tokenId)} revoked (irreversible)`);
+      out.line(`${style.green("✓")} token ${describeTokenRef(tokenId)} revoked (irreversible)`);
       return ExitCode.OK;
     } finally {
       handle.raw.close();
@@ -635,7 +642,7 @@ async function tokenRevoke(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`${style.green("✓")} token ${maskToken(tokenId)} revoked (irreversible)`);
+  out.line(`${style.green("✓")} token ${describeTokenRef(tokenId)} revoked (irreversible)`);
   return ExitCode.OK;
 }
 
@@ -663,7 +670,7 @@ async function tokenRename(argv: string[]): Promise<ExitCodeValue> {
         out.data(tokenToJson(updated));
         return ExitCode.OK;
       }
-      out.line(`${style.green("✓")} token ${maskToken(tokenId)} updated`);
+      out.line(`${style.green("✓")} token ${describeTokenRef(tokenId)} updated`);
       return ExitCode.OK;
     } finally {
       handle.raw.close();
@@ -679,7 +686,7 @@ async function tokenRename(argv: string[]): Promise<ExitCodeValue> {
     out.data(data);
     return ExitCode.OK;
   }
-  out.line(`${style.green("✓")} token ${maskToken(tokenId)} updated`);
+  out.line(`${style.green("✓")} token ${describeTokenRef(tokenId)} updated`);
   return ExitCode.OK;
 }
 

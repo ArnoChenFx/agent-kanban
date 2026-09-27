@@ -372,7 +372,10 @@ export function compactEvents(
   db: Database,
   opts: { keepDays: number; snapshotOut: string; now: number; projectKey: string; scope: Scope },
 ): CompactResult {
-  const before = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events").get()?.n ?? 0;
+  const before =
+    db
+      .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM events WHERE project_key = ?")
+      .get(opts.projectKey)?.n ?? 0;
   const cutoff = opts.now - opts.keepDays * 86_400_000;
 
   // 保底：至少留下最近 1000 条（无论多旧）
@@ -386,14 +389,40 @@ export function compactEvents(
   const liveTaskIds = listTasks(opts.scope, { includeTerminal: false, limit: 1000 })
     .map((t) => t.id);
 
-  const clauses = ["ts < ?"];
-  const params: Array<string | number> = [cutoff];
+  // ⚠ 第一条子句必须是 project_key = ?：本函数只裁**本 project** 的事件。
+  //   曾经这里只有 ts/seq/task_id 三个条件，而 opts.projectKey 收了参数却从头到尾
+  //   没用过——于是在多 project server 上 `compact --project A` 会把 B 的历史
+  //   **不可逆地**删掉，而 B 的进行中任务之所以能被保住，仅仅是因为
+  //   liveTaskIds 里只查了 A 的任务。
+  //
+  // ## 副作用：`system` 事件不参与裁剪（这是有意的）
+  //
+  // 会话生命周期事件（session_started / session_closed / session_crashed）
+  // 的 project_key 是 'system'——它们**不属于任何 project**（ADR-9：
+  // 会话是 agent 进程身份，可以跨项目工作）。而 compact 是**按 project 触发**的，
+  // 所以裁 p1 时删掉 server 全局的会话历史既说不通也危险。
+  //
+  // 代价（已知且接受）：**system 事件目前没有任何裁剪途径**，会一直增长。
+  // 之所以可以接受：
+  //   - 量级可控：每个会话 3 条，心跳事件从未写入（见 events.ts 的说明）；
+  //   - 不影响性能：rebuild 只重放目标 project 的事件，system 事件不参与；
+  //   - events 表不是瓶颈（SQLite 处理百万行毫无压力）。
+  // 真要清理，正确做法是加一个**显式的**全局裁剪，而不是让某个 project 的
+  // compact 越权删全局历史。守卫见 test/backup-compact.test.ts。
+  const clauses = ["project_key = ?", "ts < ?"];
+  const params: Array<string | number> = [opts.projectKey, cutoff];
   if (floorSeq !== null && floorSeq !== undefined) {
     clauses.push("seq < ?");
     params.push(floorSeq);
   }
   if (liveTaskIds.length > 0) {
-    clauses.push(`task_id NOT IN (${liveTaskIds.map(() => "?").join(",")})`);
+    // ⚠ `task_id IS NULL OR ...` 那一半不是度余：
+    //   SQL 三值逻辑下 `NULL NOT IN ('T-0001', …)` 求值为 NULL（假），
+    //   于是**所有不挂在任务上的事件**（project_created / board_exported /
+    //   snapshot_written / protocol_installed）会因为 task_id 为 NULL 而
+    //   **永远裁不掉**。那是个意外，不是「这些事件要永久保留」的决定。
+    //   任务事件总是带 task_id，所以显式放行 NULL 不会误伤进行中任务的历史。
+    clauses.push(`(task_id IS NULL OR task_id NOT IN (${liveTaskIds.map(() => "?").join(",")}))`);
     params.push(...liveTaskIds);
   }
 
@@ -406,7 +435,10 @@ export function compactEvents(
   const removed =
     db.query(`DELETE FROM events WHERE ${clauses.join(" AND ")}`).run(...params).changes;
 
-  const after = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events").get()?.n ?? 0;
+  const after =
+    db
+      .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM events WHERE project_key = ?")
+      .get(opts.projectKey)?.n ?? 0;
 
   return { before, after, removed, cutoff_ts: cutoff, snapshotFile: opts.snapshotOut };
 }

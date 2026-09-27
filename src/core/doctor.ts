@@ -101,7 +101,7 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
     return isStale(holder, now, graceMs);
   });
   if (orphanTasks.length > 0) {
-    const fixedCount = fix ? releaseOrphans(db, orphanTasks, now) : 0;
+    const fixedCount = fix ? releaseOrphans(db, orphanTasks, opts.projectKey, now) : 0;
     issues.push({
       code: "stale_lease",
       message:
@@ -198,6 +198,31 @@ export function runDoctor(db: Database, opts: DoctorOptions): DoctorReport {
     if (projIssue) issues.push(projIssue);
   }
 
+  // ---- 8. 已完成但检查项没勾完 ----
+  // 「done」是一个**断言**：它声称工作做完了。但 checklist 是这个断言的证据链，
+  // 而证据与断言可以各走各的——本项目开发期间真的出现过：两张卡被标 done，
+  // 而它们的 checklist 全部未勾（关卡时把命令输出 `*> $null` 吞了，失败看不见）。
+  // 人眼扫一眼看板不会注意到，但下一个接手的人会以为那几步都做过了。
+  //
+  // 故意只报不修：勾选是**人的判断**（某一步可能确实被有意放弃，比如前提
+  // 后来不成立了），doctor 替你勾上就把「有意没做」和「忘了做」混成一样。
+  // `ok: true` 的卡也可能命中——那通常意味着有一项被有意放弃，应该配一条 note 说明。
+  const doneWithUnchecked = allTasks.filter(
+    (t) =>
+      (t.status === "done" || t.status === "cancelled") &&
+      t.checklist.some((c) => !c.done),
+  );
+  if (doneWithUnchecked.length > 0) {
+    issues.push({
+      code: "done_with_unchecked_checklist",
+      message: `${doneWithUnchecked.length} completed task(s) still have unchecked checklist items`,
+      subjects: doneWithUnchecked.map((t) => `${t.id} (${t.checklist.filter((c) => !c.done).length} unchecked)`),
+      fixed: false,
+      hint: "Tick what you did with `agent-kanban task progress <id> --check \"item\"`. If an item was deliberately dropped because its premise no longer holds, say so with `agent-kanban task note <id> \"...\"` instead of ticking it — an unticked box is the honest signal.",
+      severity: "warning",
+    });
+  }
+
   // ---- 7. 协作协议是否落后于当前 CLI ----
   // agent 靠 AGENTS.md 里的受管区块知道怎么用看板。升级了 kanban 却不更新，
   // agent 会照着旧协议执行已经不存在的命令。只能提示，不能自动修。
@@ -250,18 +275,21 @@ function checkProtocol(projectRoot: string | undefined): DoctorIssue | null {
 /** 回收失联持有者的任务（progress/checklist 保留） */
 function releaseOrphans(
   db: Database,
-  tasks: Array<{ id: string; projectKey?: string }>,
+  tasks: Array<{ id: string }>,
+  projectKey: string,
   now: number,
 ): number {
   let fixed = 0;
   for (const task of tasks) {
+    // ⚠ WHERE 必须带 project_key：id 是 per-project 的（ADR-9），不带就会
+    //   连带释放别的 project 里同号的卡（而那可能正被一个健康会话拿着）。
     const result = db
       .query(
         `UPDATE tasks
             SET status = 'todo', assignee_session_id = NULL, lease_expires_at = NULL, updated_at = ?
-          WHERE id = ? AND status = 'doing'`,
+          WHERE project_key = ? AND id = ? AND status = 'doing'`,
       )
-      .run(now, task.id);
+      .run(now, projectKey, task.id);
     if (result.changes > 0) {
       fixed++;
       db.query(
@@ -270,7 +298,7 @@ function releaseOrphans(
       ).run(
         now,
         task.id,
-        task.projectKey ?? "system",
+        projectKey,
         JSON.stringify({ holder_crashed: true, fixed_by: "doctor" }),
       );
     }
@@ -289,15 +317,17 @@ function checkProjectionConsistency(db: Database, scope: Scope): DoctorIssue | n
 
   for (const task of listTasks(scope, { includeTerminal: true, limit: 5000 })) {
     // 取该任务最后一个状态变更事件
+    // ⚠ 必须带 project_key：task_id 是 per-project 的（ADR-9），不过滤会拿到
+    //   别的看板上同号卡的最后事件，据此报出来的 drift 是假的。
     const last = db
-      .query<{ type: string; data: string | null }, [string]>(
+      .query<{ type: string; data: string | null }, [string, string]>(
         `SELECT type, data FROM events
-          WHERE task_id = ? AND type IN
+          WHERE project_key = ? AND task_id = ? AND type IN
             ('task_created','task_claimed','task_blocked','task_unblocked',
              'task_review','task_done','task_cancelled','task_reopened','task_released','task_reclaimed')
           ORDER BY seq DESC LIMIT 1`,
       )
-      .get(task.id);
+      .get(scope.projectKey, task.id);
     if (!last) continue;
 
     // 终态任务不做状态比对（最后事件可能是 progress，与 status 无关）

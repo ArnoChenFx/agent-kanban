@@ -82,7 +82,30 @@ function sleepSync(ms: number): void {
 }
 
 /**
+ * 当前连接上正在进行的写事务（若有）。
+ *
+ * 用 WeakMap  keyed by Database：同一连接只能有一个事务，而不同连接互不影响。
+ * 它的存在是为了让 `withTx` **可重入**。
+ */
+const activeTx = new WeakMap<Database, TxContext>();
+
+/**
  * 在 BEGIN IMMEDIATE 事务中执行回调，瞬时竞争时自动退避重试。
+ *
+ * ## 可重入（内层加入外层，而不是再开一个）
+ *
+ * 嵌套调用时**直接复用外层的事务与 ctx**，不报 `cannot start a transaction
+ * within a transaction`。
+ *
+ * 为什么需要：core 里的函数分成「自己管事务」与「假定调用方已开事务」两类
+ * （后者签名里收 `ctx: TxContext`）。当一个「自己管事务」的函数开始被包在
+ * `withTx` 里调——比如 `createProject` 为了记审计事件而自己开了事务，
+ * 而 `ops.ts` 的 `project.create` 分支外层已经开了一个——就会撞上。
+ *
+ * 语义上等价于「内层的修改与外层的同处一个提交」，这正是调用方的意图；
+ * 而且 `emit` 出来的内层事件与外层事件同生共死，不会有「改了但没记」。
+ * 代价：内层传入的 `now` / `sessionId` / `projectKey` 不生效，以外层为准
+ * （外层的时钟才是整个事务的时钟，分裂它反而会破坏 rebuild）。
  *
  * 重要前提（重试安全的前提）：**回调内部只能做数据库操作，不能有外部副作用**
  * （发网络请求、写外部文件、累加内存变量等）。
@@ -96,6 +119,10 @@ export function withTx<T>(
   fn: (ctx: TxContext) => TxResult<T>,
   opts: { now?: () => number; sessionId?: string | null; projectKey?: string } & RetryOptions = {},
 ): T {
+  // ---- 可重入：已有事务就直接加入 ----
+  const ongoing = activeTx.get(db);
+  if (ongoing) return fn(ongoing);
+
   const nowFn = opts.now ?? Date.now;
   const maxRetries = opts.maxRetries ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? 40;
@@ -117,12 +144,15 @@ export function withTx<T>(
         emit: (event: EmitInput) =>
           insertEvent(db, event, nowFn(), opts.sessionId ?? null, projectKey),
       };
+      activeTx.set(db, ctx);
 
       const result = fn(ctx);
       db.exec("COMMIT");
       begun = false;
+      activeTx.delete(db);
       return result;
     } catch (err) {
+      activeTx.delete(db);
       if (begun) {
         try {
           db.exec("ROLLBACK");

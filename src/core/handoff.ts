@@ -149,8 +149,24 @@ export function taskHandoffs(scope: Scope, taskId: string, limit = 50): Handoff[
 }
 
 /**
- * 待接手的交接（尚未被任何人消费）。
+ * 待接手的交接（尚未被任何人消费，**且它那张卡还开着**）。
  * 按时间倒序：最新的交接最能代表当前现场。
+ *
+ * ## 为什么必须按卡片状态过滤
+ *
+ * 一条交接的用途是告诉下一个 agent「**这张卡**停在这儿，你去接」。
+ * 一旦那张卡到达终态（done / cancelled），这个建议就是错的，而且错得离谱：
+ * 看板会列出「N 条崩溃交接待接手」，而那 N 张卡全部已经 100% 完成。
+ * 实测踩到过：一次回收合成了 6 条 crash 交接，随后那 6 张卡被正常做完并标 done，
+ * 但**没有任何东西去作废它们**——于是 `context` 一直在叫 agent 去接手已完成的活，
+ * 而交接正文里的「progress 0%」与库里的 100% 直接矛盾。
+ *
+ * ## 为什么在**读侧**过滤，而不是在卡片完成时自动消费掉
+ *
+ * - 自动消费会销毁一个事实：「这张卡曾经被丢下过」。而那正是审计价值所在。
+ * - 读侧过滤**顺带修好存量**：库里已有的陈旧交接不需要迁移，界面立刻干净。
+ * - 判据用**当前状态**而不是「完成时打个标记」，所以一张被 reopen 的卡
+ *   （done → todo）它的旧交接会重新变得相关——这正是我们想要的语义。
  */
 export function pendingHandoffs(
   scope: Scope,
@@ -160,6 +176,8 @@ export function pendingHandoffs(
   const excludeSelf = opts.sessionId
     ? "AND session_id != ?"
     : "";
+  // 占位符顺序：project_key → （可选）session_id → LIMIT。
+  // EXISTS 子句里的 `t.project_key = handoffs.project_key` 是**关联引用**，不占绑定值。
   const params: Array<string | number> = [scope.projectKey];
   if (opts.sessionId) params.push(opts.sessionId);
   params.push(opts.limit ?? 20);
@@ -168,6 +186,12 @@ export function pendingHandoffs(
     .query<HandoffRow, Array<string | number>>(
       `SELECT * FROM handoffs
         WHERE project_key = ? AND consumed_by IS NULL ${excludeSelf}
+          AND EXISTS (
+            SELECT 1 FROM tasks t
+             WHERE t.project_key = handoffs.project_key
+               AND t.id = handoffs.task_id
+               AND t.status NOT IN ('done','cancelled')
+          )
         ORDER BY id DESC LIMIT ?`,
     )
     .all(...params)
@@ -381,12 +405,24 @@ export function recentHandoffs(scope: Scope, limit = 10): Handoff[] {
     .map(toHandoff);
 }
 
-/** 统计待接手数量（board 上显示提醒） */
+/**
+ * 统计待接手数量（board 上显示提醒）。
+ *
+ * ⚠ 必须与 `pendingHandoffs` 用**同一条**过滤：已完成的卡的交接不再算「待接手」。
+ * 两边口径不一致的话，角标会说「2 条待接手」而侧栏一条不列。
+ */
 export function countPendingHandoffs(scope: Scope): number {
   return (
     scope.db
       .query<{ c: number }, [string]>(
-        "SELECT COUNT(*) AS c FROM handoffs WHERE project_key = ? AND consumed_by IS NULL",
+        `SELECT COUNT(*) AS c FROM handoffs
+          WHERE project_key = ? AND consumed_by IS NULL
+            AND EXISTS (
+              SELECT 1 FROM tasks t
+               WHERE t.project_key = handoffs.project_key
+                 AND t.id = handoffs.task_id
+                 AND t.status NOT IN ('done','cancelled')
+            )`,
       )
       .get(scope.projectKey)?.c ?? 0
   );

@@ -27,7 +27,7 @@ import {
   type KanbanPaths,
 } from "../core/paths.ts";
 import { resolveLocalProject, validateProjectKey, type Project } from "../core/projects.ts";
-import { reapZombies } from "../core/sessions.ts";
+import { reapZombies, touchSession } from "../core/sessions.ts";
 import type { Actor } from "../core/tasks.ts";
 import { LocalBackend, type Backend } from "../core/backend.ts";
 import { RemoteBackend } from "../core/backend-remote.ts";
@@ -189,6 +189,18 @@ function openLocalCtx(input: {
   });
 
   if (!input.opts.skipReap) {
+    // ---- 心跳必须**先于**回收 ----
+    //
+    // 顺序是硬要求，不是风格问题：reapZombies 在**每条命令开头**都跑，
+    // 而它的判据是「last_seen_at 超过宽限期 → 判 crashed → 回收它持有的卡」。
+    // 如果先回收后刷新，一个连续工作超过宽限期（默认 10 分钟）的 agent
+    // 会被**自己这条命令**判成失联：卡回到 todo、还凭空合成一条 crash 交接
+    // 说「持有者失联 12 分钟」。agent 用来证明自己活着的命令正是杀死它的命令。
+    //
+    // touchSession 自带节流，所以大多数命令这里不产生写。
+    const sid = currentSessionId(input.paths.dir, input.sessionId);
+    if (sid) touchSession(handle.raw, sid, input.now());
+
     // 回收是全局的（会话跳 project），所以不需要 projectKey
     reapZombies(handle.raw, { graceMs: project.graceMs ?? config.graceMs, now: input.now() });
   }
@@ -202,6 +214,9 @@ function openLocalCtx(input: {
     sessionId,
     now: input.now,
     ttlMs: project.defaultTtlMs ?? config.defaultTtlMs,
+    // session.start 会记下 cwd（“agent 从哪个目录发起”），所以必须传本机的。
+    // 远程模式没有本地库，那边由 HTTP 头的 X-Kanban-Cwd 带上来。
+    cwd: input.cwd,
     // doctor 用它检查 AGENTS.md 协作协议是否落后于当前 CLI
     projectRoot: input.paths.projectRoot,
   });

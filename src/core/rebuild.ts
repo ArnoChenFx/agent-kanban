@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 从事件流重建投影（ADR-1 的正确性证明）。
  *
  * ## 为什么需要它
@@ -249,19 +249,40 @@ function applyEvent(p: Projection, event: KanbanEvent): void {
       return;
     }
 
+    // ---- backlog → todo ----
+    // ⚠ 这个事件以前**根本没有处理器**，于是重放时状态停在 backlog。
+    //   症状：`backlog → todo` 之后跑 rebuild 报 `status: db="todo" 重算="backlog"`，
+    //   而 `--force --write` 会把这张卡打回 backlog。
+    case "task_ready": {
+      const t = get(p, event.taskId);
+      if (!t) return;
+      t.status = "todo";
+      t.updated_at = ts;
+      return;
+    }
+
     // ---- 状态转移 ----
     case "task_blocked": {
       const t = get(p, event.taskId);
       if (!t) return;
       t.status = "blocked";
       t.block_reason = nullableStr(d.reason);
+      // 与 transition() 对齐：阻塞就是放手，持卡人与租约一起清。
+      // 不清的话库里会永久残留一个没人回收的幽灵持卡人（reapZombies 只管 doing）。
+      t.assignee_session_id = null;
+      t.lease_expires_at = null;
       t.updated_at = ts;
       return;
     }
+    // 解除阻塞：**回到 todo = 回到待认领池**，所以持卡人与租约一起清。
+    // 两条发这个事件的路径（transition 的 blocked→todo、notifyDependentsReady 的
+    // 自动解阻）现在对库的改动一致，所以一个处理器就对得上。
     case "task_unblocked": {
       const t = get(p, event.taskId);
       if (!t) return;
       t.status = "todo";
+      t.assignee_session_id = null;
+      t.lease_expires_at = null;
       t.block_reason = null;
       t.updated_at = ts;
       return;
@@ -296,9 +317,11 @@ function applyEvent(p: Projection, event: KanbanEvent): void {
     case "task_review": {
       const t = get(p, event.taskId);
       if (!t) return;
+      // ⚠ 这里**故意不清** assignee_session_id / lease_expires_at：
+      //   transition() 转到 review 时就不清（持卡人继续持有这张卡的归属，
+      //   评审打回时也还在他手上）。以前这里清成 null，于是最常见的
+      //   `claim → review` 就报漂移，`--force --write` 还会把持卡人抹掉。
       t.status = "review";
-      t.assignee_session_id = null;
-      t.lease_expires_at = null;
       t.updated_at = ts;
       return;
     }
@@ -318,6 +341,9 @@ function applyEvent(p: Projection, event: KanbanEvent): void {
       t.status = "cancelled";
       t.assignee_session_id = null;
       t.lease_expires_at = null;
+      // 离开 blocked 就该清掉阻塞原因（transition 对任何非 blocked 目标都这么干）。
+      // 以前漏了，于是 `blocked → cancelled` 报 block_reason 漂移。
+      t.block_reason = null;
       t.finished_at = ts;
       t.updated_at = ts;
       return;
@@ -325,10 +351,17 @@ function applyEvent(p: Projection, event: KanbanEvent): void {
     case "task_reopened": {
       const t = get(p, event.taskId);
       if (!t) return;
-      // review → doing 的打回 与 终态 → todo 的重开 都在这里，用 reason 区分不了，
-      // 只能靠“当前是否有持有者”推断：终态重开必然没有持有者。
-      t.status = t.assignee_session_id ? "doing" : "todo";
+      // 同一个事件表示两种事：「review 打回 doing」与「终态重开 todo」。
+      // 目标状态由**转移函数知道**，所以新事件直接带 `to`，不必推断。
+      // 旧事件（没有 to）退回启发式：终态重开必然已无持有者。
+      const explicit = str(d.to);
+      if (explicit) {
+        t.status = explicit as TaskStatus;
+      } else {
+        t.status = t.assignee_session_id ? "doing" : "todo";
+      }
       t.finished_at = null;
+      t.block_reason = null;
       t.updated_at = ts;
       return;
     }
@@ -615,8 +648,14 @@ function compareHandoffs(
 // =============================================================================
 
 function writeProjection(db: Database, projectKey: string, proj: Projection): void {
-  // 关外键约束：先清空再插入，避免中途触发级联顺序问题（全部在一个事务内，结束即恢复）
-  db.exec("PRAGMA foreign_keys = OFF");
+  // ⚠ 不要在这里写 `PRAGMA foreign_keys = OFF`。
+  //   SQLite 明确规定：**该 pragma 在事务里是 no-op**（“foreign key constraint
+  //   enforcement may only be enabled or disabled when there is no pending BEGIN”），
+  //   而本函数恰好是在 withTx 里跑的。旧注释写着“关外键约束”，是假的。
+  //   实际也不需要：schema.sql 里没有声明任何 FOREIGN KEY，
+  //   所以换表期间既没有约束检查、也没有级联要担心。
+  //   （同理 db.ts 的 v1→v2 换表也写了这条，它同样在 migrate 里——那处更早，
+  //     当时也没有外键，所以只是无害。但别再照抄成“它在保护什么”。）
 
   db.query("DELETE FROM task_deps WHERE project_key = ?").run(projectKey);
   db.query("DELETE FROM plans WHERE project_key = ?").run(projectKey);
@@ -724,8 +763,6 @@ function writeProjection(db: Database, projectKey: string, proj: Projection): vo
          ON CONFLICT(project_key) DO UPDATE SET next_task_num = MAX(next_task_num, ?)`,
     ).run(projectKey, maxNum + 1, maxNum + 1);
   }
-
-  db.exec("PRAGMA foreign_keys = ON");
 }
 
 // =============================================================================

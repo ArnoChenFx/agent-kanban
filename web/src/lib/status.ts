@@ -80,7 +80,8 @@ export const PRIORITY_LABEL: Record<number, string> = {
  * 避免拖完才报错。规则对齐 docs/plan/001-总体设计.md §5.2：
  *   - doing 只能由 claim 进入，拖动不算 claim
  *   - blocked / cancelled 需要 reason
- *   - review → doing 是"评审打回"，与 claim 不同路径
+ *   - review → doing 是"评审打回"，**允许**（对应 CLI 的 `task reopen`）
+ *   - done / cancelled 是终态，只能先 reopen
  */
 export function canMove(
   from: TaskStatus,
@@ -88,7 +89,12 @@ export function canMove(
   t: Translate,
 ): { ok: boolean; reason?: string } {
   if (from === to) return { ok: false, reason: t("guard.sameStatus") }
+  // 评审打回：后端 TRANSITIONS.review.doing 明确支持，ops.ts 的 hintsForTask("review")
+  // 也在推荐 `agent-kanban task reopen`。以前这里一刀切拒绝 `to === "doing"`，
+  // 于是这条合法转移在界面上做不了——**闸门要拆得准，不能整个拆掉**：
+  // doing 仍然只能由 claim 进入（拖到 doing 拿不到租约与持卡人）。
   if (to === "doing") {
+    if (from === "review") return { ok: true }
     return { ok: false, reason: t("guard.toDoing") }
   }
   if (to === "blocked" || to === "cancelled") {

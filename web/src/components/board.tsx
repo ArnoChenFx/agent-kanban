@@ -80,9 +80,10 @@ import {
   fetchProjects,
   getLastProject,
   getToken,
+  mergeBoardPages,
   setLastProject,
   setToken,
-  subscribeEvents,
+  subscribeEventsWithTicket,
   type BoardSnapshot,
   type RecoveryContext,
   type TaskItem,
@@ -201,11 +202,34 @@ export function Board() {
     reload()
   }, [reload])
 
+  // ---- 「显示更多」：拉下一页并合并 ----
+  //
+  // 为什么要单独一个状态而不是直接改 limit 重拉：直接重拉会把用户已经看到的
+  // 500 张全部重建（滚动位置、展开的卡片、拖拽状态全丢）。
+  // 泳道是按优先级全局排序后切页的，同一张卡不会跨页出现，所以按 id 去重合并就够。
+  const [loadingMore, setLoadingMore] = useState(false)
+  const loadMore = useCallback(async () => {
+    if (!token || !project || !board?.truncated?.truncated || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const offset = board.truncated.offset + board.truncated.showing
+      const next = await fetchBoard(token, project, { offset })
+      setBoard((prev) => (prev ? mergeBoardPages(prev, next) : next))
+    } catch {
+      // 拉更多失败不该把整块看板弄没；保持原样，让用户再点一次
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [token, project, board, loadingMore])
+
   // ---- SSE：收到事件就防抖重拉 ----
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!token || !project) return
-    const handle = subscribeEvents(
+    // 用带票据的版本：token 不进 URL（见 lib/api.ts 的说明），
+    // 且服务端会在凭据失效时主动推 auth_expired —— 那时要把登录态清掉，
+    // 否则界面会一直显示「在线」却收不到任何事件。
+    const handle = subscribeEventsWithTicket(
       token,
       project,
       board?.head_seq ?? 0,
@@ -215,6 +239,10 @@ export function Board() {
         reloadTimer.current = setTimeout(reload, 400)
       },
       setOnline,
+      () => {
+        setTokenState(null)
+        setToken(null)
+      },
     )
     return () => {
       handle.close()
@@ -512,6 +540,27 @@ export function Board() {
                   )
                 })}
               </div>
+              {/* 截断提示 + 「显示更多」。
+                  后端一次只取 limit 张（默认 500），但 counts 是全量的。
+                  以前不说一声，用户看到「计数 620 / 只列出 500」会以为卡丢了。 */}
+              {board.truncated?.truncated && (
+                <div className="flex items-center justify-center gap-3 px-4 pb-4">
+                  <span className="text-xs text-muted-foreground">
+                    {t("board.truncated.hint", {
+                      showing: board.truncated.showing,
+                      total: board.truncated.total,
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded-md border px-3 py-1 text-xs hover:bg-accent"
+                    disabled={loadingMore}
+                    onClick={() => void loadMore()}
+                  >
+                    {loadingMore ? t("board.truncated.loading") : t("board.truncated.more")}
+                  </button>
+                </div>
+              )}
               {/* 拖拽中的浮层：让用户看清自己拖的是哪张卡 */}
               <DragOverlay>
                 {dragging && (

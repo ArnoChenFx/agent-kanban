@@ -81,10 +81,10 @@ export async function cmdContext(argv: string[]): Promise<ExitCodeValue> {
 async function contextCommand(argv: string[]): Promise<ExitCodeValue> {
   const args = parseArgs(argv, {
     booleans: ["json", "help", "no-consume"],
-    strings: ["task", "session", "tail", "db", "server", "project", "key"],
+    strings: ["task", "session", "db", "server", "project", "key"],
     short: { j: "json", h: "help", t: "task" },
   });
-  assertKnownOptions(args, ["json", "help", "no-consume", "task", "session", "tail", "db", "server", "project", "key"]);
+  assertKnownOptions(args, ["json", "help", "no-consume", "task", "session", "db", "server", "project", "key"]);
   const json = getBool(args, "json");
   const out = createOutput(json);
   const ctx = openCtx(ctxOptions(args, json));
@@ -98,7 +98,6 @@ async function contextCommand(argv: string[]): Promise<ExitCodeValue> {
     const op: Op = {
       kind: "context.get",
       params: {
-        tail: getInt(args, "tail") ?? 20,
         // 默认**消费**交接（标记为已读）；--no-consume 只读预览
         consume: !getBool(args, "no-consume"),
       },

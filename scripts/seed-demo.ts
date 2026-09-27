@@ -1199,9 +1199,9 @@ withTx(
       .query(
         `UPDATE tasks
             SET status = 'todo', assignee_session_id = NULL, lease_expires_at = NULL, updated_at = ?
-          WHERE id = ? AND status = 'doing'`,
+          WHERE project_key = ? AND id = ? AND status = 'doing'`,
       )
-      .run(CRASH_AT, CRASH_TASK);
+      .run(CRASH_AT, projectKey, CRASH_TASK);
     ctx.emit({
       type: "task_reclaimed",
       taskId: CRASH_TASK,
@@ -1263,12 +1263,12 @@ for (const task of listTasks({ db: raw, projectKey }, { status: "doing" })) {
  * 之所以不绕开勾选功能：带勾选状态的 checklist 正是截图里最想看到的东西。
  */
 const localized = raw
-  .query<{ n: number }, [string, string, string, string, string]>(
+  .query<{ n: number }, [string, string, string, string, string, string]>(
     `UPDATE events
         SET data = replace(replace(data, ?, ?), ?, ?)
-      WHERE type = 'task_note' AND data LIKE ?`,
+      WHERE project_key = ? AND type = 'task_note' AND data LIKE ?`,
   )
-  .run("检查项更新（", "Checklist updated (", " 完成）", " done)", "%检查项更新（%");
+  .run("检查项更新（", "Checklist updated (", " 完成）", " done)", projectKey, "%检查项更新（%");
 
 setMeta(raw, "demo_seeded_at", String(NOW));
 setMeta(raw, "demo_seeded_count", String(Object.keys(id).length));

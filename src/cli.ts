@@ -303,14 +303,21 @@ function cmdServe(argv: string[]): ExitCodeValue {
       `Usage: agent-kanban serve [--host 127.0.0.1] [--port 7788] [--reap-interval 30]
 
 Run this on the machine that hosts the server. One server hosts many projects (ADR-9),
-and each project is isolated by its own API key (ADR-11).
+and each project is isolated by the token model in ADR-13: an admin token reaches every
+project, a project-scoped token reaches only the projects on its allowlist.
 
-Companion commands:
-  agent-kanban project add <key>    Create a project and generate its API key (shown once)
-  agent-kanban project list         List all projects
+Server-side commands (run on the server machine):
+  agent-kanban admin project add <key>   Create a project
+  agent-kanban admin project list        List all projects
+  agent-kanban admin token create --project <key> --name "CI runner"
+  agent-kanban admin token list          List tokens (shows the reference, not the secret)
+  agent-kanban admin token revoke <token-ref>
 
-Client setup:
-  agent-kanban remote set <url> --project <key> --key k_xxx
+An admin token is generated on first start and printed once; it is also written to
+.kanban/config.toml under [server] admin_token. The admin page is at http://127.0.0.1:7788/admin.
+
+Client setup (any machine):
+  agent-kanban config init --server http://host:7788 --project <key> --key k_xxx
   agent-kanban task list           # no repeated arguments afterwards
 
 Note: binds to 127.0.0.1 only by default. Put it behind a TLS reverse proxy for remote access.\n`,

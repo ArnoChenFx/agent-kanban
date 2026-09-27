@@ -17,10 +17,22 @@ import type { BoardSnapshot, Task, TaskStatus } from "./types.ts";
 /** board 泳道顺序：与人的心智模型一致（想做的 → 在做的 → 卡住的 → 做完了） */
 export const LANE_ORDER: TaskStatus[] = ["backlog", "todo", "doing", "blocked", "review", "done"];
 
+/**
+ * 泳道一次最多取多少张卡。
+ *
+ * 曾经这里是写死的 500 且**静默截断**：一个 620 张卡的 project，界面计数显示 620
+ * （`counts` 来自全量 `countByStatus`），但只渲染 500，**没有任何提示**。
+ * 看着像“卡丢了”。
+ *
+ * 现在：截断一定会随快照一起报出去（`truncated`），且 `board.get` Op 支持
+ * `limit` / `offset`，前端可以拉下一页。
+ */
+export const BOARD_PAGE_SIZE = 500;
+
 /** 构建看板快照（强制按 project 过滤） */
 export function buildBoard(
   scope: Scope,
-  opts: { now?: number; includeTerminal?: boolean; graceMs?: number } = {},
+  opts: { now?: number; includeTerminal?: boolean; graceMs?: number; limit?: number; offset?: number } = {},
 ): BoardSnapshot {
   const now = opts.now ?? Date.now();
   const db = scope.db;
@@ -36,10 +48,13 @@ export function buildBoard(
   };
   const graceMs = project.graceMs ?? opts.graceMs ?? config.graceMs;
 
+  const limit = opts.limit ?? BOARD_PAGE_SIZE;
+  const offset = opts.offset ?? 0;
   const tasks = listTasks(scope, {
     includeTerminal: opts.includeTerminal ?? true,
     sort: "priority",
-    limit: 500,
+    limit,
+    offset,
   });
 
   const lanes = Object.fromEntries(
@@ -48,6 +63,12 @@ export function buildBoard(
 
   // cancelled 不进泳道（无信息量），但计数里保留
   const counts = countByStatus(scope);
+
+  // 截断信息：**必须报出去**，否则「计数 620 / 只显示 500」看着像卡丢了。
+  // total 是所有非终态泳道卡的总数（不含 cancelled，与 lanes 的口径一致）。
+  const totalInLanes = LANE_ORDER.reduce((sum, s) => sum + counts[s], 0);
+  const showing = tasks.length;
+  const truncated = offset === 0 && showing < totalInLanes;
 
   // 会话视图：会话跳 project，所以这里不做 project 过滤——
   // 需要知道"是谁持有本 project 的卡"，而持有人可能是跨项目工作的 agent
@@ -58,6 +79,11 @@ export function buildBoard(
     counts,
     lanes,
     sessions,
+    /**
+     * 截断信息。`truncated` 只在**首页**（offset=0）为真——
+     * 翻页时它当然也不完整，但那时调用方是「主动在翻」，不是在看完整看板。
+     */
+    truncated: { total: totalInLanes, showing, limit, offset, truncated },
     headSeq: headSeq(db, scope.projectKey),
   };
 }

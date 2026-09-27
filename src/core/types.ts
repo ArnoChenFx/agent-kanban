@@ -68,6 +68,13 @@ export const EVENT_TYPES = [
   // 计划
   "plan_created",
   "plan_superseded",
+  // 凭据与项目的**审计**事件（不是 rebuild 的输入，见下方注释）
+  "token_issued",
+  "token_revoked",
+  "token_updated",
+  "project_created",
+  "project_renamed",
+  "project_key_rotated",
   // 交接
   "handoff_created",
   "handoff_consumed",
@@ -78,6 +85,23 @@ export const EVENT_TYPES = [
   "protocol_installed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
+
+/**
+ * ⚠ 关于上面新增的 token_* / project_* 事件：**它们是审计，不是投影**。
+ *
+ * ADR-1 说「events 是唯一事实来源，tasks/plans/handoffs 都是它的投影」，
+ * 但 `tokens` 与 `projects` **不在这个范围里**，而且不应该在：
+ *
+ *   - `tokens.key_hash` 是凭据的哈希。把它写进事件流，就等于在事件表里
+ *     多存一份凭据材料——而事件表会被 `export` 成 JSONL 落到磁盘、被备份、
+ *     被 `import` 重放。凭据材料的暴露面应当**只有** tokens 表一处。
+ *   - `rebuild --write` 会按事件流**重写投影表**。若 token 是投影，
+ *     一条缺哈希的历史事件就会把一个可用的 token 变成不可用（或反之）。
+ *
+ * 所以这六类事件只回答「谁在什么时候改了什么」，**rebuild 刻意不消费它们**
+ * （`applyEvent` 的 default 分支忽略）。这一点必须写清楚，否则下一个人的
+ * 直觉是「事件里有就该重建」，然后把凭据哈希塞进事件流。
+ */
 
 /** checklist 子项：进度双表示中的细粒度部分（ADR-8） */
 export interface ChecklistItem {
@@ -197,6 +221,20 @@ export interface BoardSnapshot {
   sessions: SessionView[];
   /** 最新事件序号，SSE 起点（已按 project 过滤） */
   headSeq: number;
+  /**
+   * 截断信息：看板一次只取 `limit` 张，但 `counts` 是全量的。
+   * 不报出去的话「计数 620 / 只显示 500」看着像卡丢了。
+   */
+  truncated: {
+    /** 泳道里的卡总数（与 counts 口径一致，不含 cancelled） */
+    total: number;
+    /** 本次实际返回的条数 */
+    showing: number;
+    limit: number;
+    offset: number;
+    /** 只在首页（offset=0）为真：还有卡没显示 */
+    truncated: boolean;
+  };
 }
 
 /** 会话视图：在原始会话上附加新鲜度与持有任务，便于人和 agent 判断"谁能动" */

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Op 执行层（ADR-10）：本地与远程一致性的关键。
  *
  * 为什么不直接让命令层调 core 函数？因为那样远程模式就得把 core 的每个函数
@@ -41,8 +41,9 @@ import {
   type Actor,
   type ListFilter,
 } from "./tasks.ts";
+import { TASK_STATUSES } from "./types.ts";
 import { buildBoard } from "./board.ts";
-import { closeSession, createSession, listSessions, toSessionView } from "./sessions.ts";
+import { closeSession, createSession, listSessions, toSessionView, touchSession } from "./sessions.ts";
 import { getConfig } from "./db.ts";
 import { countEvents, queryEvents, taskRecentEvents } from "./events.ts";
 import {
@@ -187,11 +188,11 @@ export type Op =
   | { kind: "session.heartbeat"; params: Record<string, never> }
   | { kind: "session.list"; params: { include_closed?: boolean } }
   // ---- 看板 / 事件 ----
-  | { kind: "board.get"; params: { include_done?: boolean } }
+  | { kind: "board.get"; params: { include_done?: boolean; limit?: number; offset?: number } }
   | { kind: "events.list"; params: { after_seq?: number; limit?: number } }
   | { kind: "events.tail"; params: { task_id: string; tail?: number } }
   // ---- 崩溃恢复（ADR-7）----
-  | { kind: "context.get"; params: { tail?: number; consume?: boolean } }
+  | { kind: "context.get"; params: { consume?: boolean } }
   | { kind: "handoff.list"; params: { task_id: string; limit?: number } }
   | { kind: "handoff.create"; params: { task_id: string; summary: string; next_step?: string; blockers?: string[]; open_questions?: string[] } }
   | { kind: "resume.task"; params: { task_id: string; force?: boolean; tail?: number } }
@@ -246,6 +247,8 @@ export interface ListTaskParams {
   include_terminal?: boolean;
   sort?: "priority" | "created" | "updated" | "id";
   limit?: number;
+  /** 翻页起点。底层 listTasks 一直支持，这里补上对外参数（与 board.get 一致） */
+  offset?: number;
 }
 
 export interface ProgressParams {
@@ -267,6 +270,13 @@ export interface OpContext {
   now: () => number;
   /** 默认租约时长 */
   ttlMs?: number;
+  /**
+   * 调用方的工作目录。
+   *
+   * 远程模式下 **server** 的 `process.cwd()` 是 server 的目录，与调用方无关；
+   * CLI 侧会传自己的。所以 `session.start` 记录的是这个，而不是 `process.cwd()`。
+   */
+  cwd?: string;
   /**
    * 项目根目录（.kanban 的父目录）。
    * 存在时 `doctor.check` 才会检查 AGENTS.md 协作协议是否落后。
@@ -290,6 +300,16 @@ export interface OpMeta {
  */
 export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions: string[] } {
   validateOp(op);
+  // ---- 心跳：任何 Op 执行都算「本会话还活着」 ----
+  //
+  // 失联判据是 sessions.last_seen_at，而它必须由**普通调用**刷新，
+  // 否则一个连续干活超过宽限期的 agent 会被 reapZombies 判成 crashed、
+  // 自己的卡被回收回 todo。放在这里而不是命令层，是为了本地与远程同源
+  // （ADR-10：两端走同一段代码，行为一致性是结构保证）——
+  // 远程模式下 client 没有数据库，只有 server 端能刷。
+  //
+  // 自带节流（TOUCH_THROTTLE_MS），所以这不是「每条命令一次写」。
+  if (ctx.sessionId) touchSession(ctx.db, ctx.sessionId, ctx.now());
   const actor: Actor = {
     sessionId: ctx.sessionId,
     now: ctx.now(),
@@ -339,6 +359,8 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         includeTerminal: p.include_terminal,
         sort: p.sort,
         limit: p.limit ?? 200,
+        // validateOp 已把 offset 钳制过；这里传下去（listTasks 一直支持）
+        offset: p.offset ?? 0,
       });
       return { data: tasks.map((t) => taskToJson(t)), nextActions: [] };
     }
@@ -543,7 +565,13 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         createSession(tx, {
           agentName: requireString(op.params.agent_name, "agent_name"),
           harness: op.params.harness ?? null,
-          cwd: ctx.db ? process.cwd() : process.cwd(),
+          // ⚠ 曾经是 `cwd: ctx.db ? process.cwd() : process.cwd()` —— 三元两边一样。
+          //   实质问题在**远程模式**：这时 process.cwd() 是 **server 的**工作目录，
+          //   而这个字段的用途是「agent 从哪个目录发起」，记成 server 的目录没有意义
+          //   （会让人以为持有者就在那个目录里）。
+          //   远程客户端应通过 `X-Kanban-Cwd` 头（或 config）带上自己的工作目录；
+          //   没带就存 null 而不是猜一个——猜出来的值比没有更坏。
+          cwd: (op.params as { cwd?: string }).cwd ?? reqCwd(ctx) ?? undefined,
           pid: process.pid,
           id: op.params.id,
         }),
@@ -625,7 +653,16 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
     // ================= 看板 / 事件 =================
     case "board.get": {
       const now = ctx.now();
-      const snapshot = buildBoard(scope, { now, includeTerminal: op.params.include_done ?? true });
+      // limit/offset 必须钳制：server 直接吃未经验证的 JSON（见 #13），
+      // 而这里一旦传个 limit: 1e9 就是把整库塞进一个 HTTP 响应。
+      const limit = clampInt(op.params.limit, 1, 2000, 500);
+      const offset = clampInt(op.params.offset, 0, 1_000_000, 0);
+      const snapshot = buildBoard(scope, {
+        now,
+        includeTerminal: op.params.include_done ?? true,
+        limit,
+        offset,
+      });
       // 批量取“未完成依赖”（避免逐卡查询的 N+1）
       const waiting = getWaitingDepsMap(scope);
       return {
@@ -633,6 +670,8 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
           project: snapshot.project,
           counts: snapshot.counts,
           head_seq: snapshot.headSeq,
+          // 截断信息原样透出：前端靠它决定要不要显示「还有 N 张」
+          truncated: snapshot.truncated,
           lanes: Object.fromEntries(
             Object.entries(snapshot.lanes).map(([status, tasks]) => [
               status,
@@ -683,19 +722,27 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         now: ctx.now(),
         graceMs,
         sessionId: ctx.sessionId,
-        tail: op.params.tail ?? 20,
-        consumeHandoffs: op.params.consume ?? false,
       });
-      // 消费模式：把待接手交接标记为已读，避免下次重复提醒
+
+      // 消费模式：把**本次返回的**待接手交接标记为已读。
+      //
+      // ⚠ 关键：只消费 result.pending_handoffs 里那几条，不再自己查一遍
+      //   pendingHandoffs。旧实现是「读完 context → 再查一次 → 消费那批」，
+      //   两次查询之间新到的交接会被「消费掉但 agent 从没看到过」——
+      //   既没人读过，也不再挂着，等于凭空丢一条。
+      //
+      // 为什么不需要把读+消费放进同一个事务：`consumeHandoff` 对已消费的
+      // 交接是 no-op（不报错），所以两个 session 同时 consume 最多是
+      // 「都以为自己消费了」，而**真正的互斥靠租约**——resume 会走
+      // claimTask，租约有效时后到的那位拿到 CONFLICT。
+      // 交接的 consumed_by 只是「已有人看过」的提示，不承担排他职责。
       if (op.params.consume && ctx.sessionId) {
-        const toConsume = pendingHandoffs(scope, { sessionId: ctx.sessionId, limit: 20 });
+        const ids = result.pending_handoffs.map((h) => h.id);
         withOp(ctx, (tx) => {
-          for (const h of toConsume) {
-            consumeHandoff(tx, h.id, ctx.sessionId!);
-          }
+          for (const id of ids) consumeHandoff(tx, id, ctx.sessionId!);
         });
-        // 记为操作结果而不是“建议”——建议里混进系统反馈会干扰 agent 判断
-        (result as { consumed_count?: number }).consumed_count = toConsume.length;
+        // 记为操作结果而不是"建议"——建议里混进系统反馈会干扰 agent 判断
+        (result as { consumed_count?: number }).consumed_count = ids.length;
       }
       return { data: result, nextActions: result.next_actions };
     }
@@ -950,41 +997,56 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
 
     case "project.create": {
       // 只在 server 端（或本地库直接操作）执行；远程调用会被 server 的鉴权层拦住
-      const project = withTx(
-        ctx.db,
-        (tx) => {
-          const created = createProject(tx.db, {
-            key: op.params.key,
-            name: op.params.name,
-            rootPath: op.params.root_path ?? null,
-            apiKeyHash: op.params.api_key ? hashApiKey(op.params.api_key) : null,
-            now: ctx.now(),
-          });
-          tx.emit({
-            type: "board_exported",
-            projectKey: created.key,
-            data: { action: "project_created", key: created.key },
-            sessionId: "system",
-          });
-          return created;
-        },
-        { now: ctx.now, sessionId: "system", projectKey: op.params.key },
-      );
+      // createProject 自己会开事务并记 project_created 审计事件（withTx 可重入，
+      // 所以外层这个 withTx 不会报嵌套事务）
+      const project = createProject(ctx.db, {
+        key: op.params.key,
+        name: op.params.name,
+        rootPath: op.params.root_path ?? null,
+        apiKeyHash: op.params.api_key ? hashApiKey(op.params.api_key) : null,
+        now: ctx.now(),
+      });
       return { data: project, nextActions: [] };
     }
 
     case "project.rename": {
       const project = requireProject(ctx.db, op.params.key);
-      ctx.db.query("UPDATE projects SET name = ? WHERE key = ?").run(op.params.name, project.key);
+      // 改名与审计事件在同一事务（曾经是裸 UPDATE，没有任何痕迹）
+      withTx(
+        ctx.db,
+        (tx) => {
+          tx.db.query("UPDATE projects SET name = ? WHERE key = ?").run(op.params.name, project.key);
+          tx.emit({
+            type: "project_renamed",
+            projectKey: project.key,
+            sessionId: ctx.sessionId,
+            data: { from: project.name, to: op.params.name },
+          });
+        },
+        { now: ctx.now, sessionId: ctx.sessionId, projectKey: project.key },
+      );
       return { data: requireProject(ctx.db, project.key), nextActions: [] };
     }
 
     case "project.rotate_key": {
       const project = requireProject(ctx.db, op.params.key);
       const apiKey = generateApiKey();
-      ctx.db
-        .query("UPDATE projects SET api_key_hash = ? WHERE key = ?")
-        .run(hashApiKey(apiKey), project.key);
+      // ⚠ 事件里**不写明文 key**（只写发生了什么），理由同 tokens.ts 的 auditWrite
+      withTx(
+        ctx.db,
+        (tx) => {
+          tx.db
+            .query("UPDATE projects SET api_key_hash = ? WHERE key = ?")
+            .run(hashApiKey(apiKey), project.key);
+          tx.emit({
+            type: "project_key_rotated",
+            projectKey: project.key,
+            sessionId: ctx.sessionId,
+            data: { rotated_at: ctx.now() },
+          });
+        },
+        { now: ctx.now, sessionId: ctx.sessionId, projectKey: project.key },
+      );
       return {
         data: { project: project.key, api_key: apiKey },
         nextActions: [`**Save this key right now, it is only shown once**: ${apiKey}`],
@@ -1097,6 +1159,15 @@ function parseTtl(input: string): number | undefined {
   }
 }
 
+/**
+ * 优先用 OpContext 里带的调用方工作目录；没有就返回 undefined
+ * （而不是退回 `process.cwd()`——远程时那是 server 的目录）。
+ */
+function reqCwd(ctx: OpContext): string | null {
+  const v = ctx.cwd;
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
 /** 必填字符串校验（server 端不可信输入，必须校验） */
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -1110,32 +1181,92 @@ function requireString(value: unknown, field: string): string {
 }
 
 /**
- * Op 结构校验。
+ * 整数钳制（server 端不可信输入）。
  *
- * 远程模式下 params 来自网络，**绝不能信任**：
- * 少一个字段就让 executeOp 报 "cannot read property of undefined" 是糟糕的体验，
- * 应该在边界处给出可操作的错误。
+ * 存在的理由：`limit` 这类参数直接进 SQL 的 LIMIT，而 SQLite 里
+ * `LIMIT -1` 是**不限长**、`LIMIT 1e9` 会真的去扫那么多行。
+ * 没有上下界的话，一个手滑或恶意的请求就能把整库塞进一个 HTTP 响应。
+ */
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  if (value === undefined || value === null) return fallback;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+/**
+ * Op 的**最低限度**边界校验。
+ *
+ * ## 这里的诚实说法（曾经写着「会对每个字段做类型/范围校验」，但实际只校验了 pct）
+ *
+ * 真正做到的事：
+ *   1. op 本身是个 `{kind, params}` 对象；
+ *   2. `params` 不是 null / 非对象；
+ *   3. `task.progress` 的 `pct` 在 0..100。
+ *
+ * **没有**做到的事（交给各分支自己兜，或靠 SQLite 报错）：
+ *   - 字符串长度、标题非空（`createTask` 会 trim 后存空串，**这是一个已知缺口**）；
+ *   - `task.list` 的 `limit` / `offset`（已在 `board.get` 钳制，`task.list` 没有）；
+ *   - `status` 是否在 `TASK_STATUSES` 里（`listTasks` 直接拼进 SQL，靠参数化挡住注入，
+ *     但非法值会查出空列表而不是报错）；
+ *   - 依赖是否成环（`addDependency` 自己查）。
+ *
+ * ## 为什么不给每个 Op 写一套参数 schema
+ *
+ * 那是一整套新机制（新文件 + 生成式类型 + 与 Op 联合类型的同步），而当前
+ * server 面前已经是「未信任的 JSON」。真正要紧的那几条（`limit` 会变成
+ * `LIMIT -1` / `1e9`、token 格式）已经在**使用点**钳制了，
+ * 比在入口统一校验更贴近实际风险。
+ *
+ * 所以这里只做三件事，并且把「没做什么」写清楚——
+ * 一句诚实的注释比一句做不到的承诺有用。
+ * ⚠ 若要扩到每个字段，请同时更新上面这段清单，别让它再次漂移。
  */
 function validateOp(op: Op): void {
-  if (!op || typeof op !== "object" || typeof op.kind !== "string") {
+  if (!op || typeof op !== "object" || typeof (op as { kind?: unknown }).kind !== "string") {
     throw KanbanError.usage(
       "an op must be a { kind, params } object",
       `Got: ${JSON.stringify(op)}`,
       { reason: "invalid_op" },
     );
   }
-  if (op.params !== undefined && (typeof op.params !== "object" || op.params === null)) {
+  const params = (op as { params?: unknown }).params;
+  if (params !== undefined && (typeof params !== "object" || params === null || Array.isArray(params))) {
     throw KanbanError.usage(`the params of op ${op.kind} must be an object`, undefined, {
       reason: "invalid_op_params",
     });
   }
   // 进度范围预检
   if (op.kind === "task.progress") {
-    const pct = (op.params as ProgressParams).pct;
-    if (pct !== undefined && (typeof pct !== "number" || pct < 0 || pct > 100)) {
+    const pct = (params as ProgressParams | undefined)?.pct;
+    if (pct !== undefined && (typeof pct !== "number" || !Number.isFinite(pct) || pct < 0 || pct > 100)) {
       throw KanbanError.usage(`--pct must be between 0 and 100`, `Got: ${JSON.stringify(pct)}`, {
         reason: "invalid_progress",
       });
+    }
+  }
+  // task.list 的 limit/offset：这里钳制而不是放行。
+  // SQLite 里 `LIMIT -1` 是**不限长**，`1e9` 会真的去扫那么多行 ——
+  // 一个手滑的客户端就能把整库拉进一个响应。
+  if (op.kind === "task.list") {
+    const p = params as ListTaskParams | undefined;
+    if (p) {
+      p.limit = clampInt(p.limit, 1, 2000, 200);
+      p.offset = clampInt(p.offset, 0, 1_000_000, 0);
+    }
+  }
+  // status 非法值：明确报错而不是静默返回空列表
+  if (op.kind === "task.list") {
+    const p = params as ListTaskParams | undefined;
+    const bad = (Array.isArray(p?.status) ? p!.status : p?.status ? [p!.status] : []).filter(
+      (s) => !(s as string) || !TASK_STATUSES.includes(s as TaskStatus),
+    );
+    if (bad.length > 0) {
+      throw KanbanError.usage(
+        `unknown task status: ${bad.map((s) => JSON.stringify(s)).join(", ")}`,
+        `One of: ${TASK_STATUSES.join(", ")}`,
+        { reason: "invalid_status", got: bad },
+      );
     }
   }
 }

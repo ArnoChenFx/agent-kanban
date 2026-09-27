@@ -284,7 +284,8 @@ is deliberate: *forbidden* means "valid token, wrong role, go get another one", 
 
 If the frontend was never built, `serve` falls back to a built-in placeholder page that lists the
 API surface instead of pretending to be a board: `GET /api/health` (no auth), `POST /api/op`
-(needs `X-Kanban-Key` or `Authorization: Bearer`), `GET /api/stream`, and `/admin`.
+(needs `X-Kanban-Key` or `Authorization: Bearer`), `POST /api/stream-ticket` + `GET /api/stream`
+(SSE), and `/admin`.
 
 ### Before you expose it
 
@@ -520,14 +521,29 @@ Poor fit:
 **The database is not in git. Is that safe?**
 
 Yes, and losing it is recoverable. `.kanban/kanban.db` is a SQLite file: a build
-artifact, full of token hashes, and awkward to merge. It is not in `.gitignore` by
-accident.
+artifact, awkward to merge. It is not in `.gitignore` by accident.
+
+That file holds **only token hashes**, never a token itself: the `id` column is an
+independent random reference (`t_…`) used for addressing in the admin API, and
+authentication compares `sha256(token)` against `key_hash`. An older version stored
+the token in `id` itself, which meant any copy of the database — a backup, an
+`export`, a screenshot — handed out every live credential. If you are upgrading from
+that version, re-issue your tokens.
 
 What *is* in git is `.kanban/journal/` — the append-only event log, one JSON line per
 change, grouped into daily files. Since events are the source of truth and the board is
 just a projection, replaying that log on a fresh machine reproduces everything: tasks,
 checklists, plans, handoffs, dependencies, the lot. `agent-kanban rebuild --write` does exactly
 that, which is the same mechanism that lets it prove its own consistency.
+
+**The journal records token lifecycle but never credentials.** Issuing, revoking and
+re-granting a token each write an event, because "who changed access, and when" is
+exactly the kind of question an audit log exists to answer. Those events carry the
+token's *reference*, role and project allowlist — never the token and never its hash.
+This is deliberate and it is why `tokens` and `projects` are **not** rebuilt from the
+event stream: a replayable projection has to be reconstructible from the log, and a
+credential hash should not have a second home in a file that gets exported, backed up
+and copied around.
 
 ```bash
 # on the old machine

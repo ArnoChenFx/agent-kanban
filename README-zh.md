@@ -275,7 +275,7 @@ Web 和 CLI 走同一条数据通路。浏览器里能做的，agent 在 shell �
 
 前端没构建过时，`serve` 会退回内置占位页，把 API 面板列出来而不是假装那是个看板：
 `GET /api/health`（免鉴权）、`POST /api/op`（需 `X-Kanban-Key` 或 `Authorization: Bearer`）、
-`GET /api/stream`、`/admin`。
+`POST /api/stream-ticket` + `GET /api/stream`（SSE）、`/admin`。
 
 ### 暴露出去之前
 
@@ -505,12 +505,24 @@ skill 实体放在本仓库的 `skills/` 下，所以任何项目都能装，不
 **数据库不入 git，这样安全吗？**
 
 安全，而且丢了能恢复。`.kanban/kanban.db` 是个 SQLite 文件：它本来就是构建产物、
-里面全是 token 哈希、合并也麻烦。不入 git 是刻意的。
+合并也麻烦。不入 git 是刻意的。
+
+这个文件里**只有 token 的哈希、没有 token 本身**：`id` 列是一个独立的随机引用
+（`t_…`），只用来在 admin 接口里寻址；鉴权时拿 `sha256(token)` 跟 `key_hash` 比对。
+旧版本把 token 本身存在 `id` 里，于是**任何一份数据库副本**——备份、`export` 产物、
+截图——都等于把全部在用的凭据送出去。从那个版本升级上来的，请重新签发 token。
 
 **入 git 的是 `.kanban/journal/`** —— 只追加的事件流，每次变更一行 JSON，按天分文件。
 既然事件是事实来源、看板只是投影，那么在新机器上重放这个日志就能完整重建：
 任务、检查项、计划、交接、依赖，一个不少。`agent-kanban rebuild --write` 干的正是这件事，
 和它用来自证一致的是同一套机制。
+
+**journal 会记录 token 的生命周期，但绝不记录凭据。** 签发、吊销、改白名单都会写事件——
+「谁在什么时候改了访问权限」正是审计日志存在的理由。这些事件里只有 token 的
+**引用**、角色与授权的 project 列表，既没有 token 也没有它的哈希。
+这是刻意的，也正因为如此 `tokens` / `projects` **不是**从事件流重建的：
+一个可重放的投影必须能从日志重建，而凭据的哈希不该在一个会被 export、备份、到处复制的
+文件里拥有第二个家。
 
 ```bash
 # 旧机器上

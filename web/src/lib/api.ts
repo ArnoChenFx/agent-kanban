@@ -144,13 +144,71 @@ export async function executeOp<T>(
   return { data, nextActions: env.next_actions ?? [] }
 }
 
-/** 拉取看板快照 */
-export async function fetchBoard(token: string, project: string): Promise<BoardSnapshot> {
-  const res = await fetch(`/api/board?project=${encodeURIComponent(project)}`, {
+/** 拉取看板快照（可分页：`offset` + `limit`，见后端 board.get） */
+export async function fetchBoard(
+  token: string,
+  project: string,
+  page?: { offset?: number; limit?: number },
+): Promise<BoardSnapshot> {
+  const q = new URLSearchParams({ project })
+  if (page?.offset) q.set("offset", String(page.offset))
+  if (page?.limit) q.set("limit", String(page.limit))
+  const res = await fetch(`/api/board?${q.toString()}`, {
     headers: authHeaders(token),
   })
   const env = (await res.json()) as Envelope<BoardSnapshot>
   return throwIfError(env)
+}
+
+/**
+ * 泳道里的卡总数（与后端 `truncated.total` 口径一致：不含 cancelled）。
+ *
+ * 为什么要这个而不是直接用 `truncated.total`：前端要在**合并两页**时重算，
+ * 而新一页的 `truncated.total` 是可信的、老服务端可能没有这个字段——所以两条路都得能走。
+ */
+function totalFromCounts(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((n, c) => n + c, 0) - (counts.cancelled ?? 0)
+}
+
+/**
+ * 合并两页看板（用于「显示更多」）。
+ *
+ * 为什么需要：泳道是按优先级全局排序后切页的，所以**同一张卡不会跨页出现**，
+ * 直接按 id 去重就够，不必重新排序——顺序已经由后端保证。
+ */
+export function mergeBoardPages(base: BoardSnapshot, next: BoardSnapshot): BoardSnapshot {
+  const lanes: BoardSnapshot["lanes"] = {}
+  const statuses = new Set([
+    ...Object.keys(base.lanes ?? {}),
+    ...Object.keys(next.lanes ?? {}),
+  ])
+  for (const s of statuses) {
+    const seen = new Set<string>()
+    const merged: TaskItem[] = []
+    for (const t of [...(base.lanes?.[s] ?? []), ...(next.lanes?.[s] ?? [])]) {
+      if (seen.has(t.id)) continue
+      seen.add(t.id)
+      merged.push(t)
+    }
+    lanes[s as TaskStatus] = merged
+  }
+  // ⚠ 截断信息必须**重算**，不能直接用 next 的：
+  //   next 的 offset > 0，所以它的 `truncated` 恒为 false——
+  //   直接透传会让「显示更多」之后提示条消失，而后面可能还有页。
+  // 合并后的语义变成「你手上的完整视图」：offset 归 0，showing 是已加载总数。
+  const showing = Object.values(lanes).reduce((n, l) => n + (l ?? []).length, 0)
+  const total = next.truncated?.total ?? totalFromCounts(next.counts)
+  return {
+    ...next, // counts / head_seq / project 取新的一页
+    lanes,
+    truncated: {
+      total,
+      showing,
+      limit: next.truncated?.limit ?? 500,
+      offset: 0,
+      truncated: showing < total,
+    },
+  }
 }
 
 /** 当前 token 能访问的 project 列表 */
@@ -366,40 +424,111 @@ export interface StreamHandle {
 }
 
 /**
- * 订阅事件流。
- *
- * 服务端实现是 1s 轮询 events 表（零 IPC 复杂度，跨进程也能工作），
- * 前端只做一件事：收到事件就标记"有更新"，由调用方决定何时重新拉看板。
- *
- * EventSource 不能带自定义 header，所以 token 走 query 参数（服务端已支持）。
+ * ⚠ 这里**曾经**有一个 `subscribeEvents(token, ...)`，它把 token 拼进
+ * `/api/stream?...&key=k_xxx`。已删除（见 `subscribeEventsWithTicket`）：
+ * URL 会进浏览器历史、反代 access log、容器日志与 Referer。
+ * 留一个「参数收下但不用」的死函数只会让人以为它还能用。
  */
-export function subscribeEvents(
+
+/**
+ * **同步**拼出 SSE 的 URL（token 除外）。
+ *
+ * ⚠ 为什么不把 token 直接拼进去（以前是 `&key=k_xxx`）：URL 会进浏览器历史、
+ *   反代 access log、容器日志与 Referer，等于把凭据到处留一份。
+ *   浏览器的事件流只能用 `EventSource`（不能设 header），所以先换一张
+ *   **60 秒一次性**的票——URL 里出现的是一个用完即废的随机串。
+ *   能设 header 的客户端（如 core/backend-remote.ts）直接用 header，连票都不用换。
+ */
+function makeStreamUrl(project: string, afterSeq: number): string {
+  return `/api/stream?project=${encodeURIComponent(project)}&after=${afterSeq}`
+}
+
+/** 换一张 SSE 票（`POST /api/stream-ticket`，token 走 header） */
+async function fetchStreamTicket(token: string, project: string): Promise<string | null> {
+  try {
+    const res = await fetch("/api/stream-ticket", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ project }),
+    })
+    if (!res.ok) return null
+    const env = (await res.json()) as Envelope<{ ticket: string }>
+    return env.data?.ticket ?? null
+  } catch {
+    // 换票失败不该让整个看板跟着挂：退回「不订阅实时更新」，
+    // 页面仍然能用（只是要手动刷新）
+    return null
+  }
+}
+
+/**
+ * 订阅事件流（带一次性票据）。
+ *
+ * 返回的 handle 可以在换票后重连：EventSource 自己会按服务端给的 `retry:` 重连，
+ * 但**重连时那张票已经用过了**（一次性），所以要重建一条带新票的连接。
+ */
+export function subscribeEventsWithTicket(
   token: string,
   project: string,
   afterSeq: number,
   onEvent: (event: KanbanEvent) => void,
   onStateChange?: (connected: boolean) => void,
+  onAuthExpired?: () => void,
 ): StreamHandle {
-  // URL 参数 ?static=1 时不建连接。
-  // 用途：无头浏览器截图时，SSE 长连接会让 Chrome 的 virtual-time 永不结束
-  // （虚拟时间等的是"网络空闲"，EventSource 一直 pending）。
   if (typeof window !== "undefined" && new URL(window.location.href).searchParams.get("static") === "1") {
     onStateChange?.(false)
     return { close: () => {} }
   }
 
-  const url = `/api/stream?project=${encodeURIComponent(project)}&after=${afterSeq}&key=${encodeURIComponent(token)}`
-  const source = new EventSource(url)
-  source.onopen = () => onStateChange?.(true)
-  source.onerror = () => onStateChange?.(false)
-  source.onmessage = (e) => {
-    try {
-      onEvent(JSON.parse(e.data) as KanbanEvent)
-    } catch {
-      // 心跳等非 JSON 负载直接忽略
+  let source: EventSource | null = null
+  let closed = false
+
+  const connect = async () => {
+    if (closed) return
+    const ticket = await fetchStreamTicket(token, project)
+    if (closed) return
+    if (!ticket) {
+      // 换不到票就不建连接（不把 token 塞进 URL 退而求其次）
+      onStateChange?.(false)
+      return
+    }
+    source = new EventSource(`${makeStreamUrl(project, afterSeq)}&ticket=${encodeURIComponent(ticket)}`)
+    source.onopen = () => onStateChange?.(true)
+    source.onerror = () => {
+      onStateChange?.(false)
+      // 票是一次性的，原连接被服务端关掉后不会自动重连成功 → 换新票重连
+      if (!closed) setTimeout(() => void connect(), 3000)
+    }
+    // 凭据在长连接期间失效：服务端会主动发这个事件（见 handleSse 的复验逻辑）
+    source.addEventListener("auth_expired", (e) => {
+      const detail = (() => {
+        try {
+          return JSON.parse((e as MessageEvent).data) as { reason?: string }
+        } catch {
+          return {} as { reason?: string }
+        }
+      })()
+      closed = true
+      source?.close()
+      onAuthExpired?.()
+      void detail
+    })
+    source.onmessage = (e) => {
+      try {
+        onEvent(JSON.parse(e.data) as KanbanEvent)
+      } catch {
+        // 心跳等非 JSON 负载直接忽略
+      }
     }
   }
-  return { close: () => source.close() }
+
+  void connect()
+  return {
+    close: () => {
+      closed = true
+      source?.close()
+    },
+  }
 }
 
 // =============================================================================
@@ -459,6 +588,19 @@ export interface BoardSnapshot {
   head_seq: number
   lanes: Partial<Record<TaskStatus, TaskItem[]>>
   sessions: SessionItem[]
+  /**
+   * 截断信息（后端 v? 起提供；**必须容错缺失**，老服务端没有这个字段）。
+   *
+   * 之前 `counts` 是全量、lanes 却被硬截到 500，界面不说一声——
+   * 看着就像「卡丢了」。有了它才画得出「还有 N 张未显示」。
+   */
+  truncated?: {
+    total: number
+    showing: number
+    limit: number
+    offset: number
+    truncated: boolean
+  }
 }
 
 export interface HandoffItem {

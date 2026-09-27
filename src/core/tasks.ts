@@ -409,10 +409,16 @@ export function editTask(ctx: TxContext, taskId: string, input: EditTaskInput): 
   if (input.priority !== undefined) values.push(input.priority);
   if (input.labels !== undefined) values.push(JSON.stringify(input.labels));
   if (input.estimateMs !== undefined) values.push(input.estimateMs);
-  values.push(ctx.now(), id);
+  // 末尾三个绑定值的顺序必须与下面的 WHERE 占位符顺序一致：
+  // updated_at / project_key / id
+  values.push(ctx.now(), ctx.projectKey, id);
 
   sets.push("updated_at = ?");
-  ctx.db.query(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  // ⚠ WHERE 必须带 project_key：id 是 **per-project** 的（ADR-9），
+  //   只按 id 匹配会把同号兄弟一起改掉。单 project 的库永远暴露不了这个 bug。
+  ctx.db
+    .query(`UPDATE tasks SET ${sets.join(", ")} WHERE project_key = ? AND id = ?`)
+    .run(...values);
   // 注意：fields 里存的是**新值**（不是旧值），rebuild 直接用它重放即可。
   // 不用记 diff：edit 的语义就是“把这些字段设成这些值”，快照比 diff 更好重放。
   ctx.emit({ type: "task_updated", taskId: id, data: { fields } });
@@ -476,7 +482,7 @@ export function claimTask(
     if (!leaseExpired && !handedOver && !consumedByMe) {
       // 租约有效、未交接、我也还没读过 → 冲突。
       // buildConflictError 会附上 holder 进度/心跳/最后动作
-      throw buildConflictError(db, before, actor, now);
+      throw buildConflictError(db, before, actor, now, ctx.projectKey);
     }
     // 租约已过期，或持有者已交接，或本会话已读走交接：走条件 UPDATE
   } else if (before.status !== "todo") {
@@ -487,6 +493,13 @@ export function claimTask(
   // 条件 UPDATE：只有满足"无人持有 / 原持有者已僵死 / 自己持有"才写入成功。
   // 这里的 status = 'todo' 条件对“租约过期的 doing 卡”不成立，
   // 所以这种情况单独用一条 SQL 处理（见下方），保持两条路径的语义清晰。
+  //
+  // ⚠ 两条语句的 WHERE 都必须带 project_key。id 是 per-project 的（ADR-9），
+  //   漏掉它不只是“改到别人的卡”，而是**直接摧毁原子性**：
+  //   另一个 project 里同号的 doing 卡会跟着一起被抢，于是
+  //   `before` 读到的是 A 项目的行、UPDATE 改的是 A+B 两行，
+  //   两条路径的判定彻底对不上（实测：在 pb 里根本抢不到 pb 自己的 T-0002，
+  //   报 CONFLICT「being worked on by sA」）。
   const result =
     before.status === "todo"
       ? db
@@ -498,20 +511,22 @@ export function claimTask(
                     started_at = COALESCE(started_at, ?),
                     finished_at = NULL,
                     updated_at = ?
-              WHERE id = ?
+              WHERE project_key = ?
+                AND id = ?
                 AND status = 'todo'
                 AND (assignee_session_id IS NULL
                      OR lease_expires_at IS NULL
                      OR lease_expires_at <= ?
                      OR assignee_session_id = ?)`,
           )
-          .run(actor.sessionId, now + ttl, now, now, id, now, actor.sessionId)
+          .run(actor.sessionId, now + ttl, now, now, ctx.projectKey, id, now, actor.sessionId)
       : // 接管理由已过期持有者（或已让位的持有者）留下的 doing 卡
         db
           .query(
             `UPDATE tasks
                 SET status = 'doing', assignee_session_id = ?, lease_expires_at = ?, updated_at = ?
-              WHERE id = ?
+              WHERE project_key = ?
+                AND id = ?
                 AND status = 'doing'
                 AND (lease_expires_at IS NULL
                      OR lease_expires_at <= ?
@@ -523,6 +538,7 @@ export function claimTask(
             actor.sessionId,
             now + ttl,
             now,
+            ctx.projectKey,
             id,
             now,
             actor.sessionId,
@@ -536,12 +552,19 @@ export function claimTask(
   if (Number(result.changes) === 0) {
     // 条件不成立 → 有人正在做。构造带 holder 详情的冲突错误，让 agent 能改道
     const current = requireTask(scopeOf(ctx), id);
-    throw buildConflictError(db, current, actor, now);
+    throw buildConflictError(db, current, actor, now, ctx.projectKey);
   }
 
   ctx.emit({
     type: "task_claimed",
     taskId: id,
+    // 显式带上 actor 的 sessionId，不靠 ctx 兜底：
+    // 投影的 assignee 来自 actor，而重放时读的是**事件**的 session_id。
+    // 两者若不一致（ctx.sessionId 与 actor.sessionId 不同），库里写着 A、
+    // 事件流里是 B，rebuild 立刻报漂移。这在现有 API 下不会发生
+    // （runTaskCommand / withOp 都从同一个 sessionId 构造），但让它们
+    // 结构性一致比「靠调用方守纪律」可靠。
+    sessionId: actor.sessionId,
     data: {
       prev_assignee: before.assigneeSessionId,
       prev_status: before.status,
@@ -625,12 +648,13 @@ function forceClaim(ctx: TxContext, before: Task, actor: Actor, ttl: number): Ta
     .query(
       `UPDATE tasks
           SET status = 'doing', assignee_session_id = ?, lease_expires_at = ?, updated_at = ?
-        WHERE id = ?`,
+        WHERE project_key = ? AND id = ?`,
     )
-    .run(actor.sessionId, now + ttl, now, before.id);
+    .run(actor.sessionId, now + ttl, now, ctx.projectKey, before.id);
   ctx.emit({
     type: "task_reclaimed",
     taskId: before.id,
+    sessionId: actor.sessionId,
     data: {
       forced: true,
       prev_assignee: before.assigneeSessionId,
@@ -641,6 +665,8 @@ function forceClaim(ctx: TxContext, before: Task, actor: Actor, ttl: number): Ta
   ctx.emit({
     type: "task_claimed",
     taskId: before.id,
+    // 与 claimTask 同一个理由：投影写 actor，事件就得写 actor
+    sessionId: actor.sessionId,
     data: { prev_assignee: before.assigneeSessionId, ttl_ms: ttl, forced: true },
   });
   return requireTask(scopeOf(ctx), before.id);
@@ -652,9 +678,10 @@ export function renewLease(ctx: TxContext, taskId: string, actor: Actor, ttl?: n
   const actualTtl = ttl ?? actor.ttlMs ?? FALLBACK_TTL_MS;
   ctx.db
     .query(
-      `UPDATE tasks SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND assignee_session_id = ?`,
+      `UPDATE tasks SET lease_expires_at = ?, updated_at = ?
+        WHERE project_key = ? AND id = ? AND assignee_session_id = ?`,
     )
-    .run(actor.now + actualTtl, actor.now, id, actor.sessionId);
+    .run(actor.now + actualTtl, actor.now, ctx.projectKey, id, actor.sessionId);
   return requireTask(scopeOf(ctx), id);
 }
 
@@ -666,7 +693,13 @@ export function renewLease(ctx: TxContext, taskId: string, actor: Actor, ttl?: n
  * - last_event：他最后做了什么（判断是"正在活跃工作"还是"卡住不动了"）
  * - hint：明确建议换任务，而不是 --force 硬抢
  */
-function buildConflictError(db: Database, current: Task, actor: Actor, now: number): KanbanError {
+function buildConflictError(
+  db: Database,
+  current: Task,
+  actor: Actor,
+  now: number,
+  projectKey: string,
+): KanbanError {
   const holderSessionId = current.assigneeSessionId;
 
   // 查询持有者会话信息（表里没有对应行时容错：可能数据被手工改过）
@@ -683,12 +716,16 @@ function buildConflictError(db: Database, current: Task, actor: Actor, now: numb
   }
 
   // 持有者最后一条事件：让人和 agent 判断"在干活"还是"卡住了"
+  // ⚠ 必须带 project_key：会话是跨 project 的（ADR-9），不过滤会拿到
+  //   持有者在**别的**看板上的最后一个动作，agent 据此做的判断会完全错位。
   const lastEvent = holderSessionId
     ? (db
-        .query<{ seq: number; ts: number; type: string; data: string | null }, [string]>(
-          "SELECT seq, ts, type, data FROM events WHERE session_id = ? AND type != 'session_heartbeat' ORDER BY seq DESC LIMIT 1",
+        .query<{ seq: number; ts: number; type: string; data: string | null }, [string, string]>(
+          `SELECT seq, ts, type, data FROM events
+            WHERE project_key = ? AND session_id = ? AND type != 'session_heartbeat'
+            ORDER BY seq DESC LIMIT 1`,
         )
-        .get(holderSessionId) ?? null)
+        .get(projectKey, holderSessionId) ?? null)
     : null;
 
   const leaseLeftMin = current.leaseExpiresAt
@@ -762,7 +799,7 @@ export function updateProgress(
 
   // 持有者校验：非持有者写进度会造成上下文混乱（两个 agent 各写各的）
   if (before.assigneeSessionId !== null && before.assigneeSessionId !== actor.sessionId) {
-    throw buildConflictError(db, before, actor, now);
+    throw buildConflictError(db, before, actor, now, ctx.projectKey);
   }
 
   const checklist = before.checklist.map((item) => ({ ...item }));
@@ -813,17 +850,17 @@ export function updateProgress(
   }
 
   // 续租：只有持有者才续（非持有者写进度是异常情况，不应延长别人的租约）
+  // ⚠ WHERE 里的 project_key 不能少：id 是 per-project 的（ADR-9）
   if (before.assigneeSessionId === actor.sessionId) {
     db.query(
-      `UPDATE tasks SET progress = ?, checklist = ?, lease_expires_at = ?, updated_at = ? WHERE id = ?`,
-    ).run(pct, JSON.stringify(checklist), now + ttl, now, id);
+      `UPDATE tasks SET progress = ?, checklist = ?, lease_expires_at = ?, updated_at = ?
+        WHERE project_key = ? AND id = ?`,
+    ).run(pct, JSON.stringify(checklist), now + ttl, now, ctx.projectKey, id);
   } else {
-    db.query(`UPDATE tasks SET progress = ?, checklist = ?, updated_at = ? WHERE id = ?`).run(
-      pct,
-      JSON.stringify(checklist),
-      now,
-      id,
-    );
+    db.query(
+      `UPDATE tasks SET progress = ?, checklist = ?, updated_at = ?
+        WHERE project_key = ? AND id = ?`,
+    ).run(pct, JSON.stringify(checklist), now, ctx.projectKey, id);
   }
 
   if (pct !== before.progress || checklistChanged) {
@@ -869,11 +906,10 @@ export function addNote(ctx: TxContext, taskId: string, actor: Actor, text: stri
 
   // 备注同样续租：agent 思考、查资料期间可能超过租约时长
   if (before.assigneeSessionId === actor.sessionId) {
-    db.query(`UPDATE tasks SET lease_expires_at = ?, updated_at = ? WHERE id = ?`).run(
-      now + (actor.ttlMs ?? FALLBACK_TTL_MS),
-      now,
-      id,
-    );
+    db.query(
+      `UPDATE tasks SET lease_expires_at = ?, updated_at = ?
+        WHERE project_key = ? AND id = ?`,
+    ).run(now + (actor.ttlMs ?? FALLBACK_TTL_MS), now, ctx.projectKey, id);
   }
   ctx.emit({ type: "task_note", taskId: id, data: { text } });
   return requireTask(scopeOf(ctx), id);
@@ -965,7 +1001,16 @@ export function transition(
     values.push(now);
   }
   if (to === "blocked") {
-    sets.push("block_reason = ?");
+    // 阻塞 = 「我做不下去了，放手」：清掉持卡人与租约。
+    //
+    // 为什么必须清（这曾经是个真 bug）：
+    //   1. `claimTask` 不接受 blocked 状态，所以留着租约**毫无用处**；
+    //   2. `reapZombies` 只回收 `status='doing'`、doctor 的孤儿检查也只筛 `doing`，
+    //      于是 blocked 卡上的持卡人**永远不会被回收**——持有者会话行都不存在了，
+    //      界面却一直显示一个死掉的 assignee（实测过）。
+    //   3. 与本项目另一条已定下的规则一致：「回到 todo = 回到待认领池 = 清 assignee+lease」。
+    //      自动解阻（notifyDependentsReady）与手动 unblock 都已经这么做了。
+    sets.push("block_reason = ?", "assignee_session_id = NULL", "lease_expires_at = NULL");
     values.push(input.reason ?? null);
   }
   if (to !== "blocked") {
@@ -980,14 +1025,21 @@ export function transition(
     sets.push("progress = 100");
   }
 
-  values.push(id);
-  db.query(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  values.push(ctx.projectKey, id);
+  // ⚠ WHERE 里的 project_key 不能少：id 是 per-project 的（ADR-9），
+  //   而这里同时也是 autoUnblockDependents / 事件写入所依赖的那张行。
+  db.query(`UPDATE tasks SET ${sets.join(", ")} WHERE project_key = ? AND id = ?`).run(...values);
 
   // ---- 写事件 ----
   const eventData: Record<string, unknown> = {};
   if (input.note) eventData.note = input.note;
   if (input.reason) eventData.reason = input.reason;
   if (input.force) eventData.force = true;
+  // 带上面这个 `to`：同一个事件类型可能表示多种转移（task_reopened 既是
+  // 「评审打回 doing」又是「终态重开 todo」），而**目标状态转移函数自己知道**，
+  // 不该让 rebuild 去猜。以前它靠「持卡人在不在」猜，而那个字段曾被
+  // task_review 处理器错误清空，于是两个判断一起错。
+  eventData.to = to;
   if (isTerminal && before.startedAt) {
     eventData.spent_ms = now - before.startedAt;
   }
@@ -1025,8 +1077,9 @@ export function releaseTask(
   requireTask(scopeOf(ctx), id);
   db.query(
     `UPDATE tasks SET status = 'todo', assignee_session_id = NULL, lease_expires_at = NULL,
-                       block_reason = NULL, updated_at = ? WHERE id = ?`,
-  ).run(now, id);
+                       block_reason = NULL, updated_at = ?
+      WHERE project_key = ? AND id = ?`,
+  ).run(now, ctx.projectKey, id);
   ctx.emit({ type: "task_released", taskId: id, data: { reason: reason ?? null } });
   return requireTask(scopeOf(ctx), id);
 }
@@ -1290,9 +1343,18 @@ function notifyDependentsReady(ctx: TxContext, taskId: string, unlockedBy: strin
 
   const wasBlocked = task.status === "blocked";
   if (wasBlocked) {
+    // ⚠ project_key 不能少：否则会在别的 project 里凭空解阻同号的那张卡，
+    //   并在本 project 记下一条指向不存在事实的 task_unblocked 事件。
+    //
+    // 持卡人与租约一并清掉：回到 todo = 回到待认领池。
+    // 这么改还有个好处——自动解阻与**手动** `task unblock`（transition 的
+    // blocked→todo）对库的改动变得完全一致，于是 rebuild 用同一个
+    // `task_unblocked` 处理器就能算对，不必再区分「哪条路径发的」。
     db.query(
-      `UPDATE tasks SET status = 'todo', block_reason = NULL, updated_at = ? WHERE id = ? AND status = 'blocked'`,
-    ).run(ctx.now(), taskId);
+      `UPDATE tasks SET status = 'todo', assignee_session_id = NULL, lease_expires_at = NULL,
+                         block_reason = NULL, updated_at = ?
+        WHERE project_key = ? AND id = ? AND status = 'blocked'`,
+    ).run(ctx.now(), ctx.projectKey, taskId);
   }
   ctx.emit({
     type: "task_unblocked",

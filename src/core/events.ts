@@ -11,46 +11,17 @@ import type { Database } from "bun:sqlite";
 import { toEvent, type EventRow } from "./rows.ts";
 import type { EventType, KanbanEvent } from "./types.ts";
 
-/** 心跳事件的节流间隔：距上次落库不足 60s 就不再写 */
-export const HEARTBEAT_THROTTLE_MS = 60_000;
-
-/**
- * 记录心跳（带节流）。
- *
- * 为什么节流：agent 每跑一条 kanban 命令都会调用它，若每次都落库，
- * 一个上午就能产生几千条无信息量的心跳事件。60s 粒度足够判断"是否失联"。
- *
- * @returns 是否真的写入了一条事件
- */
-export function recordHeartbeat(
-  db: Database,
-  sessionId: string,
-  now: number,
-  lastRecordedAt: number | null,
-  projectKey = "default",
-): boolean {
-  if (lastRecordedAt !== null && now - lastRecordedAt < HEARTBEAT_THROTTLE_MS) {
-    // 未过节流窗口：仍然刷新 last_seen_at（这是真正的防回收依据），但不写事件
-    db.query("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now, sessionId);
-    return false;
-  }
-  db.query("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now, sessionId);
-  db.query(
-    `INSERT INTO events (ts, session_id, type, task_id, plan_id, project_key, data)
-     VALUES (?, ?, 'session_heartbeat', NULL, NULL, ?, '{}')`,
-  ).run(now, sessionId, projectKey);
-  return true;
-}
-
-/** 读某会话最近一次心跳事件的 ts（用于节流判断） */
-export function lastHeartbeatTs(db: Database, sessionId: string): number | null {
-  const row = db
-    .query<{ ts: number | null }, [string]>(
-      `SELECT ts FROM events WHERE session_id = ? AND type = 'session_heartbeat' ORDER BY seq DESC LIMIT 1`,
-    )
-    .get(sessionId);
-  return row?.ts ?? null;
-}
+// 曾有 recordHeartbeat / lastHeartbeatTs（心跳**事件**的节流写入与读取），已删除：
+// 零调用点，且 `session_heartbeat` 事件从未被写入过。
+//
+// 为什么不需要它：防误回收的承重机制是 `sessions.last_seen_at`（每次调 Op 刷新，
+// 见 sessions.ts 的 touchSession）。事件只是审计便利，而接通它只会让
+// 「每分钟一条」的心跳事件挤进事件表——而 ADR-1 说事件流是唯一事实来源，
+// 往里灌无信息量的噪声会让 rebuild / plan.at 这类按事件重放的功能变慢。
+//
+// EVENT_TYPES 里的 "session_heartbeat" 条目保留：它是已发布契约的一部分
+// （外部系统可能写过这类事件），且 buildConflictError / buildCrashSummary
+// 对它的过滤是「万一有就正确处理」，不构成依赖。
 
 /** 取任务的完整事件时间线（正序，便于阅读“从哪来”） */
 export function taskTimeline(
@@ -173,6 +144,10 @@ export function describeEvent(event: KanbanEvent): string {
       return `created task (p${d.priority ?? 2})`;
     case "task_ready":
       return "moved to todo";
+    case "task_removed":
+      return "deleted";
+    case "task_ready":
+      return "moved to todo";
     case "task_claimed":
       return d.prev_assignee ? `claimed (taken over from ${d.prev_assignee})` : "claimed";
     case "task_released":
@@ -180,7 +155,10 @@ export function describeEvent(event: KanbanEvent): string {
     case "task_reclaimed":
       return d.holder_crashed ? "holder lost contact, reclaimed automatically" : "force reclaimed";
     case "task_progress":
-      return `progress ${d.prev_pct ?? "?"}% → ${d.pct}%${d.note ? ` ${d.note}` : ""}`;
+      // ⚠ pct 也给兵底（prev_pct 已有）：事件 payload 是各写入点手写的，
+      //   漏一个字段就会在时间线上渲染出字面量 undefined（仓库明令禁止）。
+      //   当前所有写入点都带 pct，这里是防御性的。
+      return `progress ${d.prev_pct ?? "?"}% → ${d.pct ?? "?"}%${d.note ? ` ${d.note}` : ""}`;
     case "task_note":
       return `note: ${d.text ?? ""}`;
     case "task_blocked":
@@ -198,13 +176,21 @@ export function describeEvent(event: KanbanEvent): string {
     case "task_updated":
       return `updated fields: ${Object.keys(d.fields ?? {}).join(", ")}`;
     case "dep_added":
-      return `added dependency ${d.depends_on_id}`;
+      return `added dependency ${d.depends_on_id ?? "(unknown)"}`;
     case "dep_removed":
-      return `removed dependency ${d.depends_on_id}`;
+      return `removed dependency ${d.depends_on_id ?? "(unknown)"}`;
     case "plan_created":
-      return `saved plan v${d.version} (${d.scope})`;
-    case "plan_superseded":
-      return `plan ${d.old_plan_id} superseded by a new version`;
+      return `saved plan ${d.version !== undefined ? `v${d.version}` : "(unknown version)"} (${d.scope ?? "?"})`;
+    // ⚠ 字段名曾经写成 `d.old_plan_id`，而 savePlan 发的 data 里是 `id`
+    //   （以及完整的旧版本快照）。于是 `plan history` / `task show --timeline`
+    //   打出「plan undefined superseded by a new version」——
+    //   直接违反仓库自己的「输出里不许出现 undefined」规矩。
+    //   拼上 version 是因为**项目级**计划的 id 只是 `PL-0001`，区分版本靠 version。
+    case "plan_superseded": {
+      const id = d.id ?? "（未知）";
+      const v = d.version !== undefined ? ` v${d.version}` : "";
+      return `plan ${id}${v} superseded by a new version`;
+    }
     case "handoff_created":
       // ⚠ kind 藏在 data.handoff 里，不是 data.kind：handoff_created 携带**完整交接行**
       //   （rebuild 靠它重建 handoffs 表），字段都在 handoff 对象下。
@@ -212,13 +198,46 @@ export function describeEvent(event: KanbanEvent): string {
       //   「输出里不许出现 undefined」的规矩。
       return `handoff (${(d.handoff as { kind?: string } | undefined)?.kind ?? "voluntary"})`;
     case "handoff_consumed":
-      return `handoff taken over by ${d.by_session}`;
+      return `handoff taken over by ${d.by_session ?? "(unknown)"}`;
     case "session_started":
       return `session started (${d.agent_name ?? ""})`;
     case "session_closed":
       return `session closed${d.summary ? `: ${d.summary}` : ""}`;
     case "session_crashed":
       return `session lost contact (no heartbeat for ${Math.round(Number(d.grace_ms ?? 0) / 1000)}s)`;
+    case "session_started":
+      return `session started (${d.agent_name ?? ""})`;
+    case "session_closed":
+      return `session closed${d.summary ? `: ${d.summary}` : ""}`;
+    case "session_crashed":
+      return `session lost contact (no heartbeat for ${Math.round(Number(d.grace_ms ?? 0) / 1000)}s)`;
+    // 心跳事件从未写入（last_seen_at 才是防误回收的承重机制），
+    // 但旧库里可能有，补一个 case 免得退回原始事件名
+    case "session_heartbeat":
+      return "heartbeat";
+    // ---- 凭据 / 项目的审计事件（不是 rebuild 输入，见 types.ts 的注释）----
+    // ⚠ 这些只记「发生了什么」，**绝不包含 key / key_hash**。
+    case "token_issued":
+      return `issued ${d.role ?? "?"} token for ${(d.projects as string[] | undefined)?.join(", ") || "(every project)"}`;
+    case "token_revoked":
+      return `revoked token ${d.token_ref ?? ""}`.trim();
+    case "token_updated":
+      return `token ${d.token_ref ?? ""} updated (${d.field ?? ""})`;
+    case "project_created":
+      return `created project ${d.key ?? ""}`;
+    case "project_renamed":
+      return `renamed project: ${d.from ?? ""} → ${d.to ?? ""}`;
+    case "project_key_rotated":
+      return "rotated the project key";
+    // ---- 以下几类不面向用户可读的时间线，但必须有 case：缺了会退回原始事件名 ----
+    case "board_exported":
+      return "board exported";
+    case "board_imported":
+      return "board imported";
+    case "snapshot_written":
+      return "snapshot written";
+    case "protocol_installed":
+      return "collaboration protocol installed";
     default:
       return event.type;
   }

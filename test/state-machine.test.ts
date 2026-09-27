@@ -106,6 +106,42 @@ describe("任务状态机：合法转移", () => {
     expect(task.progress).toBe(40);
   });
 
+  test("doing → blocked：清掉持卡人与租约（否则幽灵持卡人永远挂着）", () => {
+    const id = makeTask();
+    t.tx((tx) => {
+      const actor = actorAt(t.now, sessionA);
+      claimTask(tx, id, actor);
+      updateProgress(tx, id, actor, { pct: 40, note: "做到一半" });
+      transition(tx, id, "blocked", actor, { reason: "等外部 API" });
+    });
+
+    const task = requireTask(t.scope, id);
+    expect(task.status).toBe("blocked");
+    expect(task.blockReason).toBe("等外部 API");
+    // 阻塞 = 放手：持卡人与租约一起清。
+    // claimTask 不接受 blocked，所以留着租约毫无用处；而 reapZombies 只回收 doing、
+    // doctor 的孤儿检查也只筛 doing ——留着就等于永久残留一个死掉的持卡人。
+    expect(task.assigneeSessionId).toBeNull();
+    expect(task.leaseExpiresAt).toBeNull();
+    // 进度与开始时间保留（与「回收保留进度」同一套哲学）
+    expect(task.progress).toBe(40);
+    expect(task.startedAt).not.toBeNull();
+  });
+
+  test("blocked → todo 仍然无主（与上面一致）", () => {
+    const id = makeTask();
+    t.tx((tx) => {
+      const actor = actorAt(t.now, sessionA);
+      claimTask(tx, id, actor);
+      transition(tx, id, "blocked", actor, { reason: "等东西" });
+      transition(tx, id, "todo", actor);
+    });
+    const task = requireTask(t.scope, id);
+    expect(task.status).toBe("todo");
+    expect(task.assigneeSessionId).toBeNull();
+    expect(task.leaseExpiresAt).toBeNull();
+  });
+
   test("doing → review → done 正常流程", () => {
     const id = makeTask();
     t.tx((tx) => {

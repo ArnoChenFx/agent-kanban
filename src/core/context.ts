@@ -45,10 +45,6 @@ export interface ContextInput {
   graceMs: number;
   /** 当前会话（用于排除"自己写的交接"） */
   sessionId?: string | null;
-  /** 时间线上取多少条 */
-  tail?: number;
-  /** 是否把待接手的交接标记为已消费（只读预览用 false） */
-  consumeHandoffs?: boolean;
 }
 
 /**
@@ -101,6 +97,14 @@ export interface NextActionItem {
   code: NextActionCode;
   args: NextActionArgs;
 }
+
+/**
+ * 待接手交接在 context 里最多列多少条。
+ *
+ * 以前写死 20；现在提成常量，因为消费侧（ops.ts）要按**同一个上限**去核对
+ * 「返回了哪些」，两边不一致就会漏或多消费。
+ */
+export const PENDING_HANDOFF_LIMIT = 20;
 
 /** 恢复上下文输出（JSON 形状，与 CLI/MCP/HTTP 共用） */
 export interface RecoveryContext {
@@ -166,7 +170,7 @@ export interface RecoveryContext {
  * 这里只给"该知道什么"，需要细节时 agent 自己调 `task.get` / `plan.show`。
  */
 export function buildContext(input: ContextInput): RecoveryContext {
-  const { scope, now, graceMs, tail = 20 } = input;
+  const { scope, now, graceMs } = input;
   const db = scope.db;
   const project: Project = getProject(db, scope.projectKey) ?? {
     key: scope.projectKey,
@@ -206,7 +210,13 @@ export function buildContext(input: ContextInput): RecoveryContext {
   }
 
   // ---- 2. 待接手的交接 ----
-  const pending = pendingHandoffs(scope, { sessionId: input.sessionId, limit: 20 });
+  //
+  // ⚠ 本函数**只读不写**：交接的消费由调用方（ops.ts 的 context.get）负责，
+  //   而且只能消费**本次返回的这些**。以前这里是另一回事：
+  //   调用方读完 context 之后又调了一次 pendingHandoffs 去消费，
+  //   两次查询之间新到的交接会被「消费掉但 agent 从没看到过」——
+  //   既没有交接被读，也没有交接还挂着，等于凭空丢一条。
+  const pending = pendingHandoffs(scope, { sessionId: input.sessionId, limit: PENDING_HANDOFF_LIMIT });
   const pending_handoffs: RecoveryContext["pending_handoffs"] = pending.map((h) => {
     const task = getTask(scope, h.taskId);
     return {
@@ -501,17 +511,20 @@ export function resumeTask(
     : null;
 
   // 已被系统回收 = 原持有者崩溃过（事件里有痕迹）
+  // ⚠ 必须带 project_key：task_id 是 per-project 的（ADR-9），不过滤会拿到
+  //   别的看板上同号卡的回收事件，把 reclaimed 报成一个不存在的事实。
   const wasReclaimed =
     (
       db
-        .query<{ n: number }, [string, string, string]>(
+        .query<{ n: number }, [string, string, string, string, string]>(
           `SELECT COUNT(*) AS n FROM events
-            WHERE task_id = ? AND type = 'task_reclaimed' AND seq > (
+            WHERE project_key = ? AND task_id = ? AND type = 'task_reclaimed' AND seq > (
               SELECT COALESCE(MAX(seq), 0) FROM events
-               WHERE task_id = ? AND type = 'task_claimed' AND session_id = ?
+               WHERE project_key = ? AND task_id = ? AND type = 'task_claimed' AND session_id = ?
             )`,
         )
-        .get(before.id, before.id, previousHolder?.session_id ?? "")?.n ?? 0
+        .get(ctx.projectKey, before.id, ctx.projectKey, before.id, previousHolder?.session_id ?? "")
+          ?.n ?? 0
     ) > 0;
 
   // ---- 抢占（内部复用 claimTask 的原子逻辑）----
@@ -547,12 +560,14 @@ export function resumeTask(
   }));
 
   // ---- 当前计划 ----
+  // ⚠ 必须带 project_key：plan id 是 per-project 计数的（ids.ts），
+  //   任务上的 plan_id 只在本 project 内有意义。不过滤会读出别的看板的计划。
   const plan = task.planId
     ? db
-        .query<{ id: string; title: string; version: number }, [string]>(
-          "SELECT id, title, version FROM plans WHERE id = ?",
+        .query<{ id: string; title: string; version: number }, [string, string]>(
+          "SELECT id, title, version FROM plans WHERE project_key = ? AND id = ?",
         )
-        .get(task.planId) ?? null
+        .get(ctx.projectKey, task.planId) ?? null
     : null;
 
   const remaining = task.checklist.filter((c) => !c.done).map((c) => c.text);
@@ -627,6 +642,9 @@ function describeEventBrief(event: KanbanEvent): string {
   const d = event.data;
   switch (event.type) {
     case "task_created": return "created task";
+    case "task_ready": return "moved to todo";
+    case "task_removed": return "deleted";
+    case "task_progress": return `progress ${d.prev_pct ?? "?"}% → ${d.pct ?? "?"}%${d.note ? `: ${d.note}` : ""}`;
     case "task_claimed": return d.prev_assignee ? `taken over from ${d.prev_assignee}` : "claimed";
     case "task_progress": return `progress ${d.prev_pct ?? "?"}% → ${d.pct}%${d.note ? `: ${d.note}` : ""}`;
     case "task_note": return `note: ${String(d.text ?? "").slice(0, 50)}`;
@@ -640,11 +658,33 @@ function describeEventBrief(event: KanbanEvent): string {
     case "task_reopened": return "reopened";
     // kind 在 data.handoff 里（事件携带的是完整交接行），见 events.describeEvent 同处注释
     case "handoff_created": return `handoff written (${(d.handoff as { kind?: string } | undefined)?.kind ?? "voluntary"})`;
-    case "handoff_consumed": return `handoff taken over by ${d.by_session}`;
-    case "dep_added": return `added dependency ${d.depends_on_id}`;
-    case "dep_removed": return `removed dependency ${d.depends_on_id}`;
-    case "plan_created": return `saved plan v${d.version}`;
+    case "dep_added": return `added dependency ${d.depends_on_id ?? "(unknown)"}`;
+    case "dep_removed": return `removed dependency ${d.depends_on_id ?? "(unknown)"}`;
+    case "plan_created": return `saved plan ${d.version !== undefined ? `v${d.version}` : "(unknown)"}`;
+    // ⚠ 字段名与 events.describeEvent 保持一致：savePlan 发的是 `id`，不是 old_plan_id
+    case "plan_superseded": {
+      const id = d.id ?? "（未知）";
+      const v = d.version !== undefined ? ` v${d.version}` : "";
+      return `plan ${id}${v} superseded by a new version`;
+    }
     case "task_updated": return "updated fields";
+    case "handoff_consumed": return `handoff taken over by ${d.by_session ?? "(unknown)"}`;
+    // ---- 以下几类不出现在任务时间线里，但必须有 case：缺了会退回原始事件名 ----
+    // 凭据 / 项目的审计事件（不是 rebuild 输入，见 types.ts 的注释）
+    case "token_issued": return `issued ${d.role ?? "?"} token`;
+    case "token_revoked": return `revoked token ${d.token_ref ?? ""}`.trim();
+    case "token_updated": return `token updated (${d.field ?? ""})`;
+    case "project_created": return `created project ${d.key ?? ""}`;
+    case "project_renamed": return `renamed project → ${d.to ?? ""}`;
+    case "project_key_rotated": return "project key rotated";
+    case "session_started": return "session started";
+    case "session_heartbeat": return "heartbeat";
+    case "session_closed": return "session closed";
+    case "session_crashed": return "session lost contact";
+    case "board_exported": return "board exported";
+    case "board_imported": return "board imported";
+    case "snapshot_written": return "snapshot written";
+    case "protocol_installed": return "collaboration protocol installed";
     default: return event.type;
   }
 }

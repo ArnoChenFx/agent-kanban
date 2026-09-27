@@ -31,3 +31,10 @@ skills-lock.json
 # 那是预期的，不必提交。
 .mcp.json
 .qoder
+
+# ---- PPT 工程 ----
+# docs/ppt/** 的 PPTD 源文件（几十 KB）值得入库，但预览图是中间产物：
+# 一次 pptd_to_png.py 就会产生 12 张全分辨率 PNG + 一张 2.5MB 的 overview.jpg。
+docs/ppt/**/.preview/
+docs/note/images
+docs/ppt

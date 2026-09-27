@@ -21,7 +21,7 @@ import type { Database } from "bun:sqlite";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { getSchemaVersion, migrate, openDb, setInitialConfig, type Db } from "../src/core/db.ts";
+import { getSchemaVersion, migrate, openDb, setInitialConfig, SCHEMA_VERSION, type Db } from "../src/core/db.ts";
 import { createProject } from "../src/core/projects.ts";
 import {
   addDependency,
@@ -301,7 +301,10 @@ describe("v3 → v4 迁移：给 task_deps 回填 project_key", () => {
 
   test("回填按任务实际所属的 project 归位，主键换成含 project 的三元组", () => {
     expect(getSchemaVersion(handle)).toBe(3);
-    expect(migrate(handle)).toEqual({ from: 3, to: 4 });
+    // migrate 一次跑到当前最新版本（v5 又补了 plans 的 project 隔离），
+    // 所以终点是 SCHEMA_VERSION 而不是当时的 4
+    expect(migrate(handle)).toEqual({ from: 3, to: SCHEMA_VERSION });
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(4);
 
     const rows = handle.raw
       .query<{ project_key: string; task_id: string; depends_on_id: string }, []>(
@@ -333,9 +336,9 @@ describe("v3 → v4 迁移：给 task_deps 回填 project_key", () => {
   test("重复跑 migrate 是幂等的（不会二次回填、不会重复建索引报错）", () => {
     migrate(handle);
     const first = handle.raw.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM task_deps").get()!.n;
-    expect(getSchemaVersion(handle)).toBe(4);
+    expect(getSchemaVersion(handle)).toBe(SCHEMA_VERSION);
     // 版本已是最新，migrate 直接空转
-    expect(migrate(handle)).toEqual({ from: 4, to: 4 });
+    expect(migrate(handle)).toEqual({ from: SCHEMA_VERSION, to: SCHEMA_VERSION });
     expect(handle.raw.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM task_deps").get()!.n).toBe(
       first,
     );

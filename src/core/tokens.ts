@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Token 领域逻辑与鉴权（ADR-13）。
  *
  * 权限模型（用户需求）：
@@ -19,6 +19,7 @@
 
 import type { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
+import { withTx, type TxContext } from "./tx.ts";
 import { KanbanError } from "./errors.ts";
 import { getProject, validateProjectKey } from "./projects.ts";
 
@@ -27,8 +28,17 @@ export type TokenRole = "project" | "admin";
 
 /** token 领域对象 */
 export interface AccessToken {
-  /** token id（k_ + 32 hex）。注意：这也是**明文** key 的一部分，
-   *  但库里只存 hash；此字段仅在"刚签发"时可得 */
+  /**
+   * token 的引用标识（`t_` + 32 hex），**不是密钥本身**。
+   *
+   * ⚠ 曾经这里是**明文 key 本身**（`const id = plaintext;`），
+   *   而文件头与 schema.sql 都写着「库里只存 key_hash」——于是任何能读到
+   *   kanban.db 的人（备份、export 产物、误提交、只读挂载的运维脚本）
+   *   都拿到全部在用的 token。现在 id 是独立的随机值，鉴权一律走 key_hash。
+   *
+   * 它是 admin API 的寻址依据（`/api/admin/tokens/:id/...`），所以可以安全地
+   * 显示在界面与日志里。
+   */
   id: string;
   /** 人类可读名（admin 界面与审计用） */
   name: string | null;
@@ -52,12 +62,26 @@ export type AuthResult =
   | { ok: true; token: AccessToken; role: TokenRole }
   | { ok: false; reason: "missing" | "invalid" | "revoked" | "expired" | "forbidden"; tokenId?: string };
 
-/** token 前缀 */
+/** token 前缀（**密钥**用这个） */
 export const TOKEN_PREFIX = "k_";
+
+/** token 引用前缀（**非密钥**，是 admin API 的寻址依据） */
+export const TOKEN_REF_PREFIX = "t_";
 
 /** 生成 token 明文：k_ + 32 hex（128 bit 熵） */
 export function generateToken(): string {
   return TOKEN_PREFIX + randomBytes(16).toString("hex");
+}
+
+/**
+ * 生成 token 引用（库里存的那一列）：`t_` + 32 hex。
+ *
+ * 为什么需要它：明文不能进库，但 admin 界面需要一个稳定的句柄去
+ * 「吊销这个 token」「改它的白名单」。这个引用不承担鉴权职责
+ * （鉴权一律按 key_hash 查），所以它可以明晃晃地显示。
+ */
+export function generateTokenRef(): string {
+  return TOKEN_REF_PREFIX + randomBytes(16).toString("hex");
 }
 
 /** 计算 token 哈希（SHA-256 十六进制） */
@@ -122,6 +146,34 @@ export interface IssueTokenInput {
   createdBy?: string | null;
 }
 
+/**
+ * 在写事务里执行一次 token / project 变更，并记一条**审计**事件。
+ *
+ * ## 为什么这两类东西要包事务
+ *
+ * ADR-1 的核心不变量是「改投影 + 写事件在同一事务里」，而 tokens / projects
+ * 曾经是**裸 db.query**：无事务、无事件。后果不是「数据错了」而是
+ * 「没人知道发生过」——吊销了一个 token，事件流里没有痕迹；
+ * 改了白名单，那次变更无法回溯。
+ *
+ * 用法：`auditWrite(db, now, (ctx) => { /* 改 *\/ ctx.emit({...}) })`
+ * ——mutation 与 emit 都在同一个 BEGIN IMMEDIATE 里，所以不会出现
+ * 「改了但没记」或「记了但没改」的中间态。
+ *
+ * ## 为什么事件只是审计，不是 rebuild 的输入
+ *
+ * 见 `types.ts` 里 `EVENT_TYPES` 下方那段注释：`key_hash` 不能进事件流
+ * （事件表会被 export / 备份 / 重放），而 `rebuild --write` 也不能拿
+ * 一条缺哈希的事件去重建 token 行。
+ *
+ * `projectKey` 固定用 `"system"`：一个 admin token 可以跨全部 project，
+ * 一个 project 级的也可能同时管几个，归属不到某一个看板——与
+ * `session_*` 事件同一个理由。
+ */
+function auditWrite<T>(db: Database, now: number, fn: (ctx: TxContext) => T): T {
+  return withTx(db, fn, { now: () => now, sessionId: "system", projectKey: "system" });
+}
+
 /** 签发结果：token 对象 + **明文 key（只此一次可见）** */
 export interface IssuedToken {
   token: AccessToken;
@@ -153,25 +205,45 @@ export function issueToken(
   }
 
   const plaintext = generateToken();
-  const id = plaintext; // token 的 id 就是 key 本身（便于用 key 直接查）
+  // ⚠ 库里存的必须是**引用**，不是明文。见 AccessToken.id 的说明。
+  const id = generateTokenRef();
   const keyHash = hashToken(plaintext);
   const expiresAt = input.expiresInMs ? now + input.expiresInMs : null;
 
-  db.query(
-    `INSERT INTO tokens (id, name, role, projects, key_hash, created_at, created_by, last_used_at,
-                          revoked_at, expires_at, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
-  ).run(
-    id,
-    input.name ?? null,
-    input.role,
-    JSON.stringify(projects),
-    keyHash,
-    now,
-    input.createdBy ?? null,
-    expiresAt,
-    input.note ?? null,
-  );
+  // INSERT 与审计事件在同一事务：不会出现「发了 token 但没记」或反之。
+  // ⚠ 事件里**不写 key / key_hash**（见 auditWrite 的注释）
+  auditWrite(db, now, (ctx) => {
+    ctx.db
+      .query(
+        `INSERT INTO tokens (id, name, role, projects, key_hash, created_at, created_by, last_used_at,
+                              revoked_at, expires_at, note)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      )
+      .run(
+        id,
+        input.name ?? null,
+        input.role,
+        JSON.stringify(projects),
+        keyHash,
+        now,
+        input.createdBy ?? null,
+        expiresAt,
+        input.note ?? null,
+      );
+    ctx.emit({
+      type: "token_issued",
+      projectKey: "system",
+      sessionId: "system",
+      data: {
+        token_ref: id,
+        role: input.role,
+        projects,
+        name: input.name ?? null,
+        expires_at: expiresAt,
+        by: input.createdBy ?? null,
+      },
+    });
+  });
 
   return {
     token: toToken(
@@ -181,7 +253,7 @@ export function issueToken(
   };
 }
 
-/** 按 id（= key）取 token */
+/** 按 id（= 引用）取 token。仅供 admin API 寻址，**不能用来鉴权**。 */
 export function getToken(db: Database, tokenId: string): AccessToken | null {
   const row = db.query<TokenRow, [string]>("SELECT * FROM tokens WHERE id = ?").get(tokenId);
   return row ? toToken(row) : null;
@@ -215,9 +287,9 @@ export function updateTokenProjects(
 ): AccessToken {
   const token = getToken(db, tokenId);
   if (!token) {
-    throw KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+    throw KanbanError.state(`token not found: ${describeTokenRef(tokenId)}`, {
       reason: "token_not_found",
-      token: maskToken(tokenId),
+      token: describeTokenRef(tokenId),
       hint: "Run `agent-kanban admin token list` to see the existing tokens",
     });
   }
@@ -236,8 +308,16 @@ export function updateTokenProjects(
       { reason: "token_requires_project" },
     );
   }
-  db.query("UPDATE tokens SET projects = ? WHERE id = ?").run(JSON.stringify(validated), tokenId);
-  void now;
+  // 白名单变更：UPDATE 与审计事件在同一事务（只记引用与新范围，不记 token）
+  auditWrite(db, now, (ctx) => {
+    ctx.db.query("UPDATE tokens SET projects = ? WHERE id = ?").run(JSON.stringify(validated), tokenId);
+    ctx.emit({
+      type: "token_updated",
+      projectKey: "system",
+      sessionId: "system",
+      data: { token_ref: tokenId, field: "projects", value: validated },
+    });
+  });
   return getToken(db, tokenId)!;
 }
 
@@ -245,19 +325,28 @@ export function updateTokenProjects(
 export function revokeToken(db: Database, tokenId: string, now: number = Date.now()): AccessToken {
   const token = getToken(db, tokenId);
   if (!token) {
-    throw KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+    throw KanbanError.state(`token not found: ${describeTokenRef(tokenId)}`, {
       reason: "token_not_found",
-      token: maskToken(tokenId),
+      token: describeTokenRef(tokenId),
     });
   }
   if (token.revokedAt !== null) {
     throw KanbanError.state(`token already revoked (${new Date(token.revokedAt).toISOString()})`, {
       reason: "token_already_revoked",
-      token: maskToken(tokenId),
+      token: describeTokenRef(tokenId),
       hint: "Revoking cannot be undone; issue a new token if you need access back",
     });
   }
-  db.query("UPDATE tokens SET revoked_at = ? WHERE id = ?").run(now, tokenId);
+  // 吊销是安全事件，必须有痕迹：UPDATE 与审计事件在同一事务
+  auditWrite(db, now, (ctx) => {
+    ctx.db.query("UPDATE tokens SET revoked_at = ? WHERE id = ?").run(now, tokenId);
+    ctx.emit({
+      type: "token_revoked",
+      projectKey: "system",
+      sessionId: "system",
+      data: { token_ref: tokenId, role: token.role, projects: token.projects },
+    });
+  });
   return getToken(db, tokenId)!;
 }
 
@@ -270,9 +359,9 @@ export function updateTokenMeta(
 ): AccessToken {
   const token = getToken(db, tokenId);
   if (!token) {
-    throw KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+    throw KanbanError.state(`token not found: ${describeTokenRef(tokenId)}`, {
       reason: "token_not_found",
-      token: maskToken(tokenId),
+      token: describeTokenRef(tokenId),
     });
   }
 
@@ -286,6 +375,20 @@ export function updateTokenMeta(
     const expiresAt = patch.expiresAtMs === null ? null : now + patch.expiresAtMs;
     db.query("UPDATE tokens SET expires_at = ? WHERE id = ?").run(expiresAt, tokenId);
   }
+  // 元信息变更的审计（名字/备注/有效期）。与上面三条 UPDATE 同事务。
+  auditWrite(db, now, (ctx) => {
+    const changed: string[] = [];
+    if (patch.name !== undefined) changed.push("name");
+    if (patch.note !== undefined) changed.push("note");
+    if (patch.expiresAtMs !== undefined) changed.push("expires_at");
+    if (changed.length === 0) return;
+    ctx.emit({
+      type: "token_updated",
+      projectKey: "system",
+      sessionId: "system",
+      data: { token_ref: tokenId, field: changed.join(","), role: token.role },
+    });
+  });
   return getToken(db, tokenId)!;
 }
 
@@ -349,18 +452,18 @@ function authenticateInternal(
 ): AuthResult {
   if (!tokenId || tokenId.length === 0) return { ok: false, reason: "missing" };
 
-  const row = db.query<TokenRow, [string]>("SELECT * FROM tokens WHERE id = ?").get(tokenId);
-  if (!row) {
-    // 用哈希兜底查：兼容"id 与 key 不一致"的旧数据
-    const byHash = db
-      .query<TokenRow, [string]>("SELECT * FROM tokens WHERE key_hash = ?")
-      .get(hashToken(tokenId));
-    if (!byHash) return { ok: false, reason: "invalid" };
-    return evaluate(byHash, projectKey, now, checkProject);
-  }
+  // ⚠ **只按 key_hash 查**。库里不存明文（见 issueToken），所以拿明文去匹配 id
+  //   是不可能的；而反过来若先按 id 查，就会出现「拿 token 的**引用**也能鉴权」
+  //   ——引用是给 admin 界面寻址用的，不是凭据。
+  //
+  //   「id 与 key 不一致的旧数据」那条兼容分支已删：旧行的 key_hash 本来就是对的，
+  //   所以旧 token **继续可用**——这就是本改动不需要迁移的原因。
+  const row = db
+    .query<TokenRow, [string]>("SELECT * FROM tokens WHERE key_hash = ?")
+    .get(hashToken(tokenId));
+  if (!row) return { ok: false, reason: "invalid" };
   return evaluate(row, projectKey, now, checkProject);
 }
-
 function evaluate(
   row: TokenRow,
   projectKey: string,
@@ -390,7 +493,8 @@ function evaluate(
 
 /** 鉴权失败 → HTTP 错误（401 无效 / 403 无权） */
 export function authFailure(result: Extract<AuthResult, { ok: false }>, projectKey?: string): KanbanError {
-  const tokenLabel = result.tokenId ? maskToken(result.tokenId) : "";
+  // result.tokenId 是**引用**（t_…），不是密钥，直接显示有助于排查
+  const tokenLabel = result.tokenId ? describeTokenRef(result.tokenId) : "";
 
   switch (result.reason) {
     case "missing":
@@ -442,12 +546,29 @@ export function authFailure(result: Extract<AuthResult, { ok: false }>, projectK
   }
 }
 
-/** 掩码 token：k_1a2b…（避免在日志/admin 列表里泄漏完整 token） */
+/**
+ * 掩码**密钥**（`k_…`）：避免在日志/admin 列表里泄漏完整 token。
+ *
+ * ⚠ 只对密钥用。token 的**引用**（`t_…`）不承担鉴权职责，可以直接显示——
+ *   曾经 admin 页把掩码后的 id 发回给 `/api/admin/tokens/:id/revoke`，
+ *   于是「吊销」与「移除授权」两个按钮 100% 失败（见 tokenToJson）。
+ */
 export function maskToken(tokenId: string): string {
   if (!tokenId.startsWith(TOKEN_PREFIX) || tokenId.length <= 12) {
     return tokenId.slice(0, 4) + "…";
   }
   return `${tokenId.slice(0, 6)}…${tokenId.slice(-4)}`;
+}
+
+/**
+ * 回显一个 token 标识（引用或密钥）到错误信息里。
+ *
+ * 规则：**看着像密钥（`k_` 开头）就掩码，否则原样显示。**
+ * 因为 admin API 的 `:id` 段理论上该收引用，但如果有人误把密钥塞进去，
+ * 原样回显就会把它写进日志与浏览器控制台。
+ */
+export function describeTokenRef(value: string): string {
+  return value.startsWith(TOKEN_PREFIX) ? maskToken(value) : value;
 }
 
 /** token → 对外 JSON（admin 列表/界面用；不含明文 key） */
@@ -459,7 +580,10 @@ export function tokenToJson(token: AccessToken, now: number = Date.now()): Recor
         ? "expired"
         : "active";
   return {
-    id: maskToken(token.id),
+    // 引用不是密钥，直接给全——admin 界面要靠它做吊销/改白名单，掩码了就用不了。
+    // （曾经这里返回 maskToken(id)，而那时 id 就是明文密钥；
+    //   改成引用后如果还掩码，admin 页的按钮会继续 100% 失败。）
+    id: token.id,
     name: token.name,
     role: token.role,
     // 项目级 token 才有限制；admin 为 null 表示"全部"

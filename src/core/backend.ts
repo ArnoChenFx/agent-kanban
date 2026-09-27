@@ -54,6 +54,15 @@ export interface LocalBackendOptions {
   ttlMs?: number;
   /** 项目根目录；用于 doctor 检查 AGENTS.md 协作协议 */
   projectRoot?: string;
+  /**
+   * **调用方**的工作目录。
+   *
+   * `session.start` 会把它记进 `sessions.cwd`（“agent 从哪个目录发起”）。
+   * 以前那行写的是 `ctx.db ? process.cwd() : process.cwd()` —— 三元两边一样，
+   * 而远程模式下 `process.cwd()` 是 **server** 的目录，记成那个会让人以为
+   * 持有者就在 server 的目录里。所以由调用方显式传，缺省就不填（不猜）。
+   */
+  cwd?: string;
 }
 
 /** LocalBackend：同进程直调 core */
@@ -65,6 +74,8 @@ export class LocalBackend implements Backend {
   private readonly nowFn: () => number;
   private readonly ttlMs: number | undefined;
   private readonly projectRoot: string | undefined;
+  /** 调用方的工作目录（见 LocalBackendOptions.cwd） */
+  private readonly cwd: string | undefined;
   /** 原始构造参数：withSession 重建时复用，避免字段拆成一堆平行私有成员 */
   private readonly opts: LocalBackendOptions;
 
@@ -75,12 +86,14 @@ export class LocalBackend implements Backend {
     this.nowFn = opts.now ?? Date.now;
     this.ttlMs = opts.ttlMs;
     this.projectRoot = opts.projectRoot;
+    this.cwd = opts.cwd;
     this.opts = {
       db: this.db,
       projectKey: this.projectKey,
       sessionId: this.sessionId,
       now: this.nowFn,
       ttlMs: this.ttlMs,
+      cwd: this.cwd,
       projectRoot: this.projectRoot,
     };
   }
@@ -103,6 +116,7 @@ export class LocalBackend implements Backend {
       sessionId: this.sessionId,
       now: this.nowFn,
       ttlMs: this.ttlMs,
+      cwd: this.cwd,
       projectRoot: this.projectRoot,
     };
     return executeOp(op, ctx);

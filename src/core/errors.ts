@@ -187,12 +187,32 @@ export function toKanbanError(err: unknown): KanbanError {
     );
   }
 
-  // 唯一约束冲突：通常是并发下重复分配 ID（正常竞争，可安全重试）
+  // 唯一约束冲突：**不一定是并发竞争**。
+  //
+  // 曾经这里一律映射成「usually a normal race under concurrency, safe to retry once」，
+  // 而真实原因可能是「两条记录在业务上永久冲突」——比如 plans 主键是全局的、
+  // 但计划号按 project 分配，于是第二个 project 存第一份计划就撞。
+  // 那种情况下**重试一万次也一样失败**，而这句话会把 agent 引进死循环。
+  //
+  // 所以改成中性文案：让调用方自己去读 details 里的表名/列名判断，
+  // 至少不再承诺「重试就能好」。
   if (rawCode === "SQLITE_CONSTRAINT_UNIQUE" || /UNIQUE constraint failed/i.test(message)) {
-    return KanbanError.conflict("unique constraint failed (usually a normal race under concurrency), safe to retry once", {
-      reason: "unique_constraint",
-      sqlite_code: rawCode ?? null,
-    });
+    // 把 "UNIQUE constraint failed: plans.id, plans.version" 里的表/列抠出来
+    const m = /UNIQUE constraint failed:\s*([^\n]+)/i.exec(message);
+    const target = m?.[1]?.trim() ?? null;
+    return KanbanError.conflict(
+      target
+        ? `unique constraint violated on ${target}; retrying will not help unless the conflicting row is gone`
+        : "unique constraint violated; retrying will not help unless the conflicting row is gone",
+      {
+        reason: "unique_constraint",
+        sqlite_code: rawCode ?? null,
+        constraint_target: target,
+        hint: target
+          ? `Look at the rows already in ${target.split(".")[0]}: the value being written already exists there. If this happened under concurrency, one retry is worth trying; otherwise fix the data or the id allocation.`
+          : "Check whether the value being written already exists in the target table.",
+      },
+    );
   }
 
   return new KanbanError(ExitCode.INTERNAL, ErrorName.INTERNAL, message, {

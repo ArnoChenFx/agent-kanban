@@ -105,11 +105,31 @@ export function createProject(
       hint: `To rotate its API key: agent-kanban project key ${key} --rotate`,
     });
   }
-  const now = input.now ?? Date.now();
-  db.query(
-    `INSERT INTO projects (key, name, root_path, api_key_hash, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(key, input.name ?? key, input.rootPath ?? null, input.apiKeyHash ?? null, now);
+  // INSERT 与审计事件在同一事务（withTx 可重入：被包在调用方的事务里就加入它）。
+  // ⚠ 事件里**不写 api_key_hash / 明文 key**（理由见 tokens.ts 的 auditWrite）
+  //
+  // projectKey 用 **这个 project 自己**而不是 "system"：它确实归属某个 project，
+  // 这样它的审计事件会跟着那个 project 一起被 compact；
+  // 丢进 'system' 桶就意味着永远不会被裁剪。
+  withTx(
+    db,
+    (ctx) => {
+      const now = ctx.now();
+      ctx.db
+        .query(
+          `INSERT INTO projects (key, name, root_path, api_key_hash, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(key, input.name ?? key, input.rootPath ?? null, input.apiKeyHash ?? null, now);
+      ctx.emit({
+        type: "project_created",
+        projectKey: key,
+        sessionId: "system",
+        data: { key, name: input.name ?? key, root_path: input.rootPath ?? null },
+      });
+    },
+    { now: () => input.now ?? Date.now(), sessionId: "system", projectKey: key },
+  );
   return requireProject(db, key);
 }
 

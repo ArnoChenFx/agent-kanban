@@ -41,6 +41,7 @@ import {
   type TomlObject,
 } from "./toml.ts";
 import { hashApiKey } from "./projects.ts";
+import { generateTokenRef } from "./tokens.ts";
 
 /**
  * 归一化 server URL：补全协议、去掉尾部斜杠。
@@ -373,19 +374,23 @@ function ensureAdminTokenRegistered(
   now: number,
   source: "env" | "config" | "generated",
 ): void {
+  // ⚠ 幂等判据从「id = 明文」改成「key_hash = 该 token 的哈希」：
+  //   库里不再存明文，所以不能再拿 token 去匹配 id。
+  const hash = hashApiKey(token);
   const existing = db
-    .query<{ id: string }, [string]>("SELECT id FROM tokens WHERE id = ?")
-    .get(token);
+    .query<{ id: string }, [string]>("SELECT id FROM tokens WHERE key_hash = ?")
+    .get(hash);
   if (existing) return;
 
+  // id 是**引用**（随机值），不是密钥；明文只留在 config.toml / 环境变量里
   db.query(
     `INSERT INTO tokens (id, name, role, projects, key_hash, created_at, created_by,
                          last_used_at, revoked_at, expires_at, note)
      VALUES (?, ?, 'admin', NULL, ?, ?, NULL, NULL, NULL, NULL, ?)`,
   ).run(
-    token,
+    generateTokenRef(),
     "server admin",
-    hashApiKey(token),
+    hash,
     now,
     `first created by ${source === "generated" ? "auto-generation" : source}`,
   );

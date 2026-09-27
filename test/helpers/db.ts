@@ -49,7 +49,17 @@ export function createTestDb(opts: { now?: number; projectKey?: string } = {}): 
 
   // 创建默认 project（API 侧本地模式行为：自动派生一个）
   const projectKey = opts.projectKey ?? "test";
-  createProject(db, { key: projectKey, name: "test-project", rootPath: dir, apiKeyHash: null });
+  // ⚠ now 必须透传：createProject 不传就取 Date.now()（真实时间），
+  //   而本文件用的是注入的逻辑时钟。两者混用会让 project_created 事件
+  //   带一个「未来」的时间戳——compact / 时间旅行查询那些按 ts 过滤的用例会
+  //   莫名其妙地失准（第一版就是在 backup-compact 里撞上的）。
+  createProject(db, {
+    key: projectKey,
+    name: "test-project",
+    rootPath: dir,
+    apiKeyHash: null,
+    now: opts.now,
+  });
 
   // 固定起点，避免依赖真实时间
   let clock = opts.now ?? 1_700_000_000_000;

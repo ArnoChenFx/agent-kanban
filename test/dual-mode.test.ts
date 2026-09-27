@@ -125,12 +125,16 @@ describe("Backend 抽象", () => {
     expect(remoteBackend(projectToken).mode).toBe("remote");
   });
 
-  test("健康检查免鉴权可用", async () => {
+  test("健康检查免鉴权可用，且只回 liveness", async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; projects: number };
+    const body = (await res.json()) as { ok: boolean; version: string; projects?: number };
     expect(body.ok).toBe(true);
-    expect(body.projects).toBe(2);
+    expect(typeof body.version).toBe("string");
+    // 免鉴权端点不得回 project 数量 / 全局事件水位：
+    // 那是信息不是健康检查，而任何能碰到端口的人都能免费拿到。
+    expect(body).not.toHaveProperty("projects");
+    expect(body).not.toHaveProperty("head_seq");
   });
 });
 
@@ -352,7 +356,8 @@ describe("token 权限模型（ADR-13）", () => {
     });
     expect(okRes.status).toBe(200);
 
-    revokeToken(handle.raw, temp.plaintext, FIXED_NOW);
+    // 按**引用**（t_…）寻址，不是明文。库里不存明文（见 tokens.ts 的 AccessToken.id）
+  revokeToken(handle.raw, temp.token.id, FIXED_NOW);
 
     const afterRes = await fetch(`${baseUrl}/api/op?project=${PROJECT}`, {
       method: "POST",
@@ -419,7 +424,7 @@ describe("token 权限模型（ADR-13）", () => {
     expect(before.status).toBe(401);
 
     // 管理员加白名单
-    updateTokenProjects(handle.raw, temp.plaintext, [PROJECT, OTHER_PROJECT], FIXED_NOW);
+    updateTokenProjects(handle.raw, temp.token.id, [PROJECT, OTHER_PROJECT], FIXED_NOW);
 
     // 之后可以访问
     const after = await fetch(`${baseUrl}/api/op?project=${OTHER_PROJECT}`, {
@@ -506,10 +511,13 @@ describe("SSE 事件流（§4.3）", () => {
     await localBackend(OTHER_PROJECT).execute({ kind: "task.create", params: { title: "别的 project 的事件" } });
 
     const controller = new AbortController();
-    const res = await fetch(
-      `${baseUrl}/api/stream?project=${PROJECT}&key=${projectToken}&after=0`,
-      { signal: controller.signal },
-    );
+    // ⚠ 走 header 而不是 `?key=`：URL 里不再接受 token（会进 access log / Referer）。
+    //   浏览器那边因为 EventSource 不能设 header，改用 POST /api/stream-ticket 换一张
+    //   60 秒一次性票（见 test/sse-security.test.ts）。
+    const res = await fetch(`${baseUrl}/api/stream?project=${PROJECT}&after=0`, {
+      headers: { "X-Kanban-Key": projectToken, Accept: "text/event-stream" },
+      signal: controller.signal,
+    });
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/event-stream");
 
@@ -595,11 +603,69 @@ describe("admin API（/api/admin/*）", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { token: string; id: string; warning: string } };
     expect(body.data.token).toMatch(/^k_[0-9a-f]{32}$/);
-    // 列表里只有掩码，没有明文
+    // id 是**引用**，不是密钥：它要能直接显示、且能被 admin API 寻址
+    // （曾经这里断言「列表里只有掩码」——而那正是 admin 页吊销/移除授权
+    //   两个按钮 100% 失败的根因：掩码后的 id 发回去必然 404）
+    expect(body.data.id).toMatch(/^t_[0-9a-f]{32}$/);
+    expect(body.data.id).not.toBe(body.data.token);
+
     const listRes = await adminCall("/tokens");
     const listBody = (await listRes.json()) as { data: Array<{ id: string }> };
-    expect(listBody.data.some((t) => t.id.includes("…"))).toBe(true);
+    // 列表里给的是**完整引用**，且能用它直接寻址
+    expect(listBody.data.some((t) => t.id === body.data.id)).toBe(true);
+    expect(listBody.data.every((t) => !t.id.includes("…"))).toBe(true);
+    // 明文不出现在列表里
     expect(JSON.stringify(listBody)).not.toContain(body.data.token);
+
+    // 拿着列表里的引用就能吊销（这正是之前坏掉的那条链路）
+    const revoke = await adminCall(`/tokens/${body.data.id}/revoke`, { method: "POST" });
+    expect(revoke.status).toBe(200);
+    const after = await fetch(`${baseUrl}/api/op?project=api-created`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Kanban-Key": body.data.token },
+      body: JSON.stringify({ project: "api-created", op: { kind: "task.list", params: {} } }),
+    });
+    expect(after.status).toBe(401);
+  });
+
+  test("admin 页的「移除单个授权」按钮链路：拿列表里的 ref 改白名单", async () => {
+    createProject(handle.raw, { key: "p-extra", name: "多一个" });
+    const issued = issueToken(
+      handle.raw,
+      { role: "project", projects: ["api-created", "p-extra"], name: "两个授权" },
+      FIXED_NOW,
+    );
+    // 列表里给的是完整引用（不是掩码）
+    const listBody = (await (await adminCall("/tokens")).json()) as { data: Array<{ id: string; projects: string[] | null }> };
+    const listed = listBody.data.find((t) => t.id === issued.token.id);
+    expect(listed).toBeDefined();
+    expect(listed!.id).not.toContain("…");
+
+    // admin 页的「×」按钮就是拿这个 id 去 PATCH（以前必然 404）
+    const patch = await adminCall(`/tokens/${listed!.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ projects: ["api-created"] }),
+    });
+    expect(patch.status).toBe(200);
+    const patched = (await patch.json()) as { data: { projects: string[] } };
+    expect(patched.data.projects).toEqual(["api-created"]);
+
+    // 改完立刻生效：p-extra 不再可达
+    const after = await fetch(`${baseUrl}/api/op?project=p-extra`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Kanban-Key": issued.plaintext },
+      body: JSON.stringify({ project: "p-extra", op: { kind: "task.list", params: {} } }),
+    });
+    expect(after.status).toBe(401);
+  });
+
+  test("拿明文当 :id 会被掩码回显（不能把它写进日志）", async () => {
+    const key = `k_${"a".repeat(32)}`;
+    const res = await adminCall(`/tokens/${key}`);
+    expect(res.status).toBe(404);
+    const text = await res.text();
+    expect(text).not.toContain(key);
+    expect(text).toContain("…");
   });
 
   test("删除有任务的 project 需要 force 确认", async () => {
@@ -620,7 +686,7 @@ describe("admin API（/api/admin/*）", () => {
     const token = issueToken(handle.raw, { role: "project", projects: ["to-delete", PROJECT] }, FIXED_NOW);
     await adminCall("/projects/to-delete?force=1", { method: "DELETE" });
 
-    const after = getToken(handle.raw, token.plaintext);
+    const after = getToken(handle.raw, token.token.id);
     expect(after?.projects).not.toContain("to-delete");
     expect(after?.projects).toContain(PROJECT);
   });

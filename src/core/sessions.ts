@@ -24,6 +24,30 @@ import type { Session, SessionStatus, SessionView, Task, TaskStatus } from "./ty
 /** 默认失联宽限：10 分钟（远大于 agent 单次操作间隔，避免误判） */
 export const DEFAULT_GRACE_MS = 10 * 60 * 1000;
 
+/**
+ * 刷新 last_seen_at 的节流间隔。
+ *
+ * ## 为什么需要节流
+ *
+ * 「任何 CLI/MCP 调用都算一次心跳」是本项目的核心前提（ADR-4 L1），
+ * 所以刷新点在**每条命令**上。但刷新是写操作，agent 跑脚本时一分钟能调几十次，
+ * 不节流就等于把写锁抢成了常态。60s 粒度对判据完全够用：
+ * 失联宽限默认 10 分钟，是它的 10 倍。
+ *
+ * ## 曾经的 bug（为什么这行注释这么长）
+ *
+ * `touchSession` 曾经**零调用点**——函数与注释都在，但没人调它，
+ * `last_seen_at` 只在 `session start` 与显式 `session heartbeat` 时更新。
+ * 后果是：一个连续工作 30 分钟、每 3 分钟调一次 `task progress` 的 agent，
+ * 在第 12 分钟被判 crashed、自己的卡被回收回 todo、还被合成了一条
+ * **造假的** crash 交接说"持有者失联 12 分钟"。而 `reapZombies` 是在
+ * **每条命令开头**跑的——agent 用来证明自己活着的命令正是杀死它的命令。
+ * 触发门槛只是「干活超过宽限期」，也就是最正常的用法。
+ *
+ * 回归测试在 `test/session-heartbeat.test.ts`。
+ */
+export const TOUCH_THROTTLE_MS = 60_000;
+
 /** 会话接口 */
 export interface CreateSessionInput {
   agentName: string;
@@ -85,9 +109,25 @@ export function requireSession(db: Database, sessionId: string): Session {
   return session;
 }
 
-/** 刷新心跳（不写事件，事件由 events.recordHeartbeat 节流写入） */
-export function touchSession(db: Database, sessionId: string, now: number): void {
+/**
+ * 刷新心跳（不写事件）。
+ *
+ * 带节流：距上次刷新不足 `TOUCH_THROTTLE_MS` 就不写。
+ * 幂等且安全——少写一次只意味着 `last_seen_at` 最多落后 60s，
+ * 远小于任何合理的失联宽限。
+ *
+ * @returns 是否真的写了一次
+ */
+export function touchSession(db: Database, sessionId: string, now: number): boolean {
+  const row = db
+    .query<{ last_seen_at: number | null }, [string]>("SELECT last_seen_at FROM sessions WHERE id = ?")
+    .get(sessionId);
+  // 会话行不存在（库被重建过 / 手填的 session id）：不静默造一行，
+  // 让调用方的 requireSession 路径去报那句可操作的错
+  if (!row) return false;
+  if (row.last_seen_at !== null && now - row.last_seen_at < TOUCH_THROTTLE_MS) return false;
   db.query("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now, sessionId);
+  return true;
 }
 
 /** 关闭会话：其持有的 doing 任务自动释放为 todo（保留进度，跨 project） */
@@ -110,11 +150,13 @@ export function closeSession(
 
   const now = ctx.now();
   for (const row of heldRows) {
+    // ⚠ WHERE 必须带 project_key：id 是 per-project 的（ADR-9），不带就会
+    //   连带释放别的 project 里同号的卡（而那可能正被另一个会话拿着）。
     db.query(
       `UPDATE tasks SET status = 'todo', assignee_session_id = NULL, lease_expires_at = NULL,
                          block_reason = NULL, updated_at = ?
-        WHERE id = ?`,
-    ).run(now, row.id);
+        WHERE project_key = ? AND id = ?`,
+    ).run(now, row.project_key, row.id);
     ctx.emit({
       type: "task_released",
       taskId: row.id,
@@ -180,6 +222,25 @@ export function reapZombies(
   const graceMs = opts.graceMs ?? DEFAULT_GRACE_MS;
   const result: ReapResult = { crashedSessions: [], reclaimedTasks: [] };
 
+  // ---- 快路径：先只读探测，确认真的有僵尸才开写事务 ----
+  //
+  // 为什么值得：reapZombies 在**每条命令开头**都跑，包括 `task list`、`board`
+  // 这类纯读命令。而 withTx 是 BEGIN IMMEDIATE —— 哪怕一个僵尸都没有，
+  // 每个 agent 的每次读命令也要抢一次全库写锁，多 agent 并发时全部串行化
+  // （busy_timeout 会把压力转成退出码 4 而不是报错，所以表现是「变慢」不是「坏掉」，
+  //  但规模上去后读性能被写锁拖住）。
+  //
+  // 下面事务内会**用同一判据重新查一次**，所以这里只是优化，不引入竞态：
+  // 探测与开事务之间新出现的僵尸仍会被事务内那一次捞到。
+  const hasZombie = db
+    .query<{ n: number }, [number]>(
+      `SELECT 1 AS n FROM sessions
+        WHERE status IN ('active','idle') AND last_seen_at < ?
+        LIMIT 1`,
+    )
+    .get(now - graceMs);
+  if (!hasZombie) return result;
+
   withTx(
     db,
     (ctx) => {
@@ -218,6 +279,10 @@ export function reapZombies(
           .all(sessionId);
 
         for (const task of held) {
+          // ⚠ WHERE 必须带 project_key：id 是 per-project 的（ADR-9）。
+          //   这条曾经只按 id 匹配，后果是**回收崩溃会话时会连带释放另一个
+          //   健康会话正在做的同号卡**——实测 sA 崩溃把 sB 手里 40% 的卡抢走。
+          //   而整套租约机制存在的理由就是防这个（重复劳动）。
           ctx.db
             .query(
               `UPDATE tasks
@@ -225,9 +290,9 @@ export function reapZombies(
                       assignee_session_id = NULL,
                       lease_expires_at = NULL,
                       updated_at = ?
-                WHERE id = ? AND status = 'doing'`,
+                WHERE project_key = ? AND id = ? AND status = 'doing'`,
             )
-            .run(now, task.id);
+            .run(now, task.project_key, task.id);
           // 注意：progress 与 checklist 都不动 —— 恢复现场的关键
           ctx.emit({
             type: "task_reclaimed",

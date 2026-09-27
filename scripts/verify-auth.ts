@@ -104,6 +104,10 @@ try {
   check("admin token create 成功", issued.code === 0, issued.err);
   const projectToken = /k_[0-9a-f]{32}/.exec(issued.out)?.[0] ?? "";
   check("拿到项目级 token 明文", Boolean(projectToken));
+  // 库里不存明文，admin 的吊销/grant 靠**引用**（t_…）寻址，所以要把引用也抽出来。
+  // （曾经这里直接拿明文当 tokenId —— 那只在「id 就是明文」的老模型下成立。）
+  const projectTokenRef = /t_[0-9a-f]{32}/.exec(issued.out)?.[0] ?? "";
+  check("拿到项目级 token 引用", Boolean(projectTokenRef), issued.out.slice(0, 200));
 
   // ---- 6. 多 project token ----
   step(6, "一个 token 授权多个 project");
@@ -113,7 +117,9 @@ try {
     { cwd: clientDir },
   );
   const multiToken = /k_[0-9a-f]{32}/.exec(multi.out)?.[0] ?? "";
+  const multiTokenRef = /t_[0-9a-f]{32}/.exec(multi.out)?.[0] ?? "";
   check("签发多项目 token 成功", Boolean(multiToken));
+  check("拿到多项目 token 引用", Boolean(multiTokenRef), multi.out.slice(0, 200));
 
   // 验证它能访问 web
   const webList = await run(["task", "list", "--json"], {
@@ -139,7 +145,7 @@ try {
 
   // ---- 9. 吊销 ----
   step(9, "吊销 token 后立即失效");
-  const revoke = await run(["admin", "token", "revoke", projectToken], {
+  const revoke = await run(["admin", "token", "revoke", projectTokenRef], {
     cwd: clientDir,
     env: { KANBAN_KEY: adminToken, KANBAN_PROJECT: "demo" },
   });
@@ -149,7 +155,7 @@ try {
 
   // ---- 10. grant 加权限 ----
   step(10, "grant 给已有 token 增加 project 授权");
-  const grant = await run(["admin", "token", "grant", multiToken, "--project", "demo"], {
+  const grant = await run(["admin", "token", "grant", multiTokenRef, "--project", "demo"], {
     cwd: clientDir,
     env: { KANBAN_KEY: adminToken, KANBAN_PROJECT: "demo" },
   });

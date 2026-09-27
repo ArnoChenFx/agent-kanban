@@ -1,4 +1,4 @@
-/**
+﻿/**
  * HTTP + SSE server（Bun.serve）。
  *
  * 设计要点：
@@ -11,6 +11,7 @@
  */
 
 import { existsSync, mkdirSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Database } from "bun:sqlite";
@@ -23,6 +24,7 @@ import {
   authenticate,
   authenticateTokenOnly,
   authFailure,
+  describeTokenRef,
   getToken,
   issueToken,
   listTokens,
@@ -40,6 +42,7 @@ import { reapZombies } from "../core/sessions.ts";
 import { queryEvents } from "../core/events.ts";
 import { eventToJson, toEvent } from "../core/rows.ts";
 import { style } from "../core/format.ts";
+import { readPackageVersion } from "../core/version.ts";
 import { renderAdminPage } from "../server/admin-page.ts";
 import { EMBEDDED_ASSETS, EMBEDDED_BYTES, EMBEDDED_COUNT } from "./assets.generated.ts";
 
@@ -77,6 +80,7 @@ export function startServer(opts: ServeOptions): {
   const handle: Db = openDb(opts.dbPath);
   migrate(handle);
   const db = handle.raw;
+  const tickets = new SseTicketStore();
   const host = opts.host ?? "127.0.0.1";
   const port = opts.port ?? 7788;
   const version = readVersion();
@@ -136,7 +140,7 @@ export function startServer(opts: ServeOptions): {
     idleTimeout: 0, // SSE 长连接需要关掉空闲超时
     async fetch(req) {
       try {
-        return await handleRequest(req, db, version, nowFn, webDir);
+        return await handleRequest(req, db, version, nowFn, webDir, tickets);
       } catch (err) {
         const error = toKanbanError(err);
         return jsonError(error, statusForCode(error.code));
@@ -169,6 +173,7 @@ async function handleRequest(
   version: string,
   nowFn: () => number,
   webDir: string | null = null,
+  tickets: SseTicketStore = new SseTicketStore(),
 ): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
@@ -176,12 +181,12 @@ async function handleRequest(
 
   // ---- 免鉴权：健康检查（用于探活/负载均衡）----
   if (path === "/api/health") {
-    return json({
-      ok: true,
-      version,
-      projects: db.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM projects").get()?.c ?? 0,
-      head_seq: db.query<{ s: number | null }, []>("SELECT MAX(seq) AS s FROM events").get()?.s ?? 0,
-    });
+    // ⚠ **只回 liveness 需要的字段。**
+    //   这里曾是 `{ok, version, projects, head_seq}` —— projects 是全库 project 数、
+    //   head_seq 是全局事件水位。两者都是**信息**而不是健康检查，而这是**免鉴权**端点：
+    //   任何能碰到这个端口的人都能免费拿到「这台服务器管着几个项目、事件写到哪了」。
+    //   消费方（compose healthcheck、verify-auth、verify-binary）只读 `ok`。
+    return json({ ok: true, version });
   }
 
   // ---- 管理界面（页面本身不需鉴权，进去后所有数据请求都要管理员 token）----
@@ -193,7 +198,7 @@ async function handleRequest(
 
   // ---- SSE 事件流 ----
   if (path === "/api/stream") {
-    return handleSse(req, db, url, nowFn);
+    return handleSse(req, db, url, nowFn, tickets);
   }
 
   // ---- token 提取：优先 header，其次 query（SSE 用后者）----
@@ -235,6 +240,34 @@ async function handleRequest(
   // ---- 静态前端 ----
   if (!path.startsWith("/api/")) {
     return await serveStatic(path, webDir ?? null);
+  }
+
+  // ---- SSE 一次性 ticket（换取不带 token 的 SSE URL）----
+  // 鉴权走常规流程（header 优先，所以 token 也不进 URL）。
+  // 位置：必须在「静态前端」之后、「project 参数检查」之前——因为换票这一步
+  // 用的是 **body 里的** project，而常规鉴权（authenticate）发生在它之后，
+  // 靠 targetProject 鉴权会误判（body 说 A、URL 没 project 时 targetProject 就是 A，
+  // 看似能过，但 URL 说 B 时就会被无谓地拒掉）。所以这里自己鉴权。
+  if (path === "/api/stream-ticket" && req.method === "POST") {
+    const body = (await req.json().catch(() => ({}))) as { project?: string };
+    const project = body.project ?? url.searchParams.get("project") ?? "";
+    if (project.length === 0) {
+      return jsonError(
+        KanbanError.usage("the stream ticket requires a project", undefined, {
+          reason: "sse_ticket_project_missing",
+          hint: 'Usage: POST /api/stream-ticket with body {"project":"<key>"} and the X-Kanban-Key header',
+        }),
+        400,
+      );
+    }
+    // 这个 token 是否真的有权访问该 project
+    const ticketAuth = authenticate(db, providedToken, project, now);
+    if (!ticketAuth.ok) return jsonError(authFailure(ticketAuth, project), 401);
+    const value = tickets.issue(providedToken!, project, now);
+    return json({
+      ok: true,
+      data: { ticket: value, expires_in_ms: TICKET_TTL_MS, project },
+    });
   }
 
   // ---- 业务接口：从 URL 或 body 取 project（Op 路径下在 body 里）----
@@ -312,6 +345,9 @@ async function handleRequest(
         sessionId,
         now: nowFn,
         ttlMs: project.defaultTtlMs ?? getConfig(db).defaultTtlMs,
+        // 客户端自己的工作目录：OpContext.cwd 的用途就是它（见 ops.ts 里 session.start 的注释）。
+        // 远程模式下 process.cwd() 是 **server** 的目录，所以必须由客户端带上来。
+        cwd: req.headers.get("X-Kanban-Cwd") ?? undefined,
       });
       return json({ ok: true, data, next_actions: nextActions });
     } catch (err) {
@@ -327,12 +363,21 @@ async function handleRequest(
   // 注：`/api/projects` 已提前到 project 参数检查之前处理（它不需要指定 project）
 
   if (path === "/api/board") {
-    const { data } = executeOp({ kind: "board.get", params: { include_done: true } }, {
-      db,
-      projectKey: targetProject,
-      sessionId: null,
-      now: nowFn,
-    });
+    // 分页参数（看板一次只取 limit 张，超出部分由前端「显示更多」拉取）。
+    // 必须钳制：SQLite 里 LIMIT -1 是不限长，直接透传会变成「把整库塞进一个响应」。
+    const rawLimit = Number(url.searchParams.get("limit") ?? "");
+    const rawOffset = Number(url.searchParams.get("offset") ?? "");
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(2000, Math.floor(rawLimit)) : 500;
+    const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.min(1_000_000, Math.floor(rawOffset)) : 0;
+    const { data } = executeOp(
+      { kind: "board.get", params: { include_done: true, limit, offset } },
+      {
+        db,
+        projectKey: targetProject,
+        sessionId: null,
+        now: nowFn,
+      },
+    );
     return json({ ok: true, data });
   }
 
@@ -483,11 +528,17 @@ async function handleAdminApi(
     }
 
     // 先删依赖（子表），再删各表
+    //
+    // ⚠ task_deps 的删除必须带 project_key 谓词：子查询 `SELECT id FROM tasks
+    //   WHERE project_key = ?` 返回的是**本 project 的 T 编号**，而 T 编号
+    //   是 per-project 的（ADR-9），不写 `project_key = ?` 就会把别的 project
+    //   里同号任务的依赖边一起删掉。
     db.query(
       `DELETE FROM task_deps
-        WHERE task_id IN (SELECT id FROM tasks WHERE project_key = ?)
-           OR depends_on_id IN (SELECT id FROM tasks WHERE project_key = ?)`,
-    ).run(key, key);
+        WHERE project_key = ?
+          AND (task_id IN (SELECT id FROM tasks WHERE project_key = ?)
+               OR depends_on_id IN (SELECT id FROM tasks WHERE project_key = ?))`,
+    ).run(key, key, key);
     for (const table of ["tasks", "events", "plans", "handoffs", "project_counters"]) {
       db.query(`DELETE FROM ${table} WHERE project_key = ?`).run(key);
     }
@@ -546,22 +597,30 @@ async function handleAdminApi(
     });
   }
 
-  // ---- POST /api/admin/tokens/:id/revoke：吊销 ----
-  if (sub.startsWith("/tokens/") && sub.endsWith("/revoke") && method === "POST") {
-    const tokenId = decodeURIComponent(sub.slice("/tokens/".length, -"/revoke".length));
+  // ---- DELETE /api/admin/tokens/:id：吊销 token（契约 §4.2 写的就是这个）
+  //
+  // 契约里写的是 DELETE，实现曾经只有 `POST /api/admin/tokens/:id/revoke`
+  // ——两边对不上，且**没有任何测试能发现**（文档类事实没有硬覆盖）。
+  // 现在按契约实现 DELETE；POST /revoke 保留为别名（见下），两者共用同一段实现，
+  // 并有测试断言它们行为一致，所以不会各自漂移。
+  const isTokenTarget = sub.startsWith("/tokens/");
+  if (isTokenTarget && (method === "DELETE" || sub.endsWith("/revoke"))) {
+    const tokenId = decodeURIComponent(
+      sub.replace("/revoke", "").slice("/tokens/".length),
+    );
     const revoked = revokeToken(db, tokenId, now);
     return json({ ok: true, data: tokenToJson(revoked, now) });
   }
 
   // ---- GET /api/admin/tokens/:id：查单个 token（grant 前需要先读当前白名单）----
-  if (sub.startsWith("/tokens/") && !sub.endsWith("/revoke") && method === "GET") {
+  if (isTokenTarget && method === "GET") {
     const tokenId = decodeURIComponent(sub.slice("/tokens/".length));
     const token = getToken(db, tokenId);
     if (!token) {
       return jsonError(
-        KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+        KanbanError.state(`token not found: ${describeTokenRef(tokenId)}`, {
           reason: "token_not_found",
-          token: maskToken(tokenId),
+          token: describeTokenRef(tokenId),
         }),
         404,
       );
@@ -570,14 +629,14 @@ async function handleAdminApi(
   }
 
   // ---- PATCH /api/admin/tokens/:id：改白名单/元信息 ----
-  if (sub.startsWith("/tokens/") && method === "PATCH") {
+  if (isTokenTarget && method === "PATCH") {
     const tokenId = decodeURIComponent(sub.slice("/tokens/".length));
     const existing = getToken(db, tokenId);
     if (!existing) {
       return jsonError(
-        KanbanError.state(`token not found: ${maskToken(tokenId)}`, {
+        KanbanError.state(`token not found: ${describeTokenRef(tokenId)}`, {
           reason: "token_not_found",
-          token: maskToken(tokenId),
+          token: describeTokenRef(tokenId),
         }),
         404,
       );
@@ -634,30 +693,151 @@ function projectInfo(project: Project, db: Database, projectKey: string): Record
 }
 
 /**
+ * SSE 一次性 ticket。
+ *
+ * ## 为什么需要它
+ *
+ * 浏览器的事件流只能用 `EventSource`，而它**不能设自定义 header**。
+ * 于是 token 只能进 URL query——而 URL 会进浏览器历史、反代 access log、
+ * 容器日志与 `Referer`。项目自己的 `consumeUrlLogin` 注释就很担心 token 泄漏，
+ * 但 SSE 每条连接都在这么干。
+ *
+ * 做法：先用一个**普通的 header 鉴权**请求换一张 ticket，再用 ticket 连 SSE。
+ * 于是 URL 里出现的是一个 60 秒后失效、且**只能用一次**的随机串——
+ * 就算整条 URL 被记进日志，也换不到任何可用的凭据。
+ *
+ * ## 为什么不放数据库
+ *
+ * ticket 是纯易失的：进程重启后失效无害（客户端重新换一张即可），
+ * 而放进 tokens 表会给免鉴权面开一个「读表即可拿到凭据」的新口子。
+ * 所以只在内存里，并定期清理。
+ */
+interface SseTicket {
+  /** 换取到的真 token（只在内存里） */
+  token: string;
+  /** 该 ticket 被限定在这个 project */
+  projectKey: string;
+  expiresAt: number;
+}
+
+const TICKET_TTL_MS = 60_000;
+/** 内存里最多留多少张票（防「疯狂换票」把内存吃满） */
+const TICKET_MAX = 1000;
+/** 随机串长度（base64url，够长即可：它 60 秒后就作废） */
+function newTicketValue(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+/**
+ * 签发并核销 ticket。
+ *
+ * 核销是**一次性**的：取出即删。这样即使 URL 被记录并重放，也只能用第一次。
+ */
+class SseTicketStore {
+  private readonly map = new Map<string, SseTicket>();
+
+  issue(token: string, projectKey: string, now: number): string {
+    this.prune(now);
+    // 满了就丢掉最早的一张（ticket 60 秒就过期，丢哪张都无所谓）
+    if (this.map.size >= TICKET_MAX) {
+      const oldest = this.map.keys().next().value as string | undefined;
+      if (oldest) this.map.delete(oldest);
+    }
+    const value = newTicketValue();
+    this.map.set(value, { token, projectKey, expiresAt: now + TICKET_TTL_MS });
+    return value;
+  }
+
+  /** 取出并作废；无效/过期返回 null */
+  redeem(value: string, now: number): SseTicket | null {
+    const hit = this.map.get(value);
+    if (!hit) return null;
+    // 一次性：无论成功与否都从表里移除
+    this.map.delete(value);
+    if (hit.expiresAt <= now) return null;
+    return hit;
+  }
+
+  private prune(now: number): void {
+    for (const [k, v] of this.map) {
+      if (v.expiresAt <= now) this.map.delete(k);
+    }
+  }
+}
+
+/**
  * SSE：按 project 推送事件。
  *
  * 实现：轮询 events 表（1s 间隔），游标 = seq。
  * 为什么不用 EventEmitter/IPC：CLI 往往在**另一个进程**里写库，
  * 轮询是唯一跨进程都可靠的方案，且实现最简。
+ *
+ * ## 鉴权
+ *
+ * 两种方式，**都不接受 URL 里的 token**：
+ *   1. `?ticket=` —— 浏览器 `EventSource` 专用（不能设 header），票 60 秒一次性。
+ *      换取方式：`POST /api/stream-ticket`（正常 header 鉴权）。
+ *   2. `X-Kanban-Key` / `Authorization` header —— 能设 header 的客户端
+ *      （如 core/backend-remote.ts 的 `streamEvents`）直接用，不必换票。
+ *
+ * 以前这里接受 `?key=k_xxx`，那等于把 token 写进日志，已删除。
+ *
+ * ## 复验
+ *
+ * 长连接建立后**不再重新鉴权**——token 中途被吊销，已建立的连接会继续推事件
+ * 直到客户端重连。所以 pump 里定期（默认 30s）重验一次，失效就通知客户端并关流。
  */
-function handleSse(req: Request, db: Database, url: URL, nowFn: () => number): Response {
+function handleSse(
+  req: Request,
+  db: Database,
+  url: URL,
+  nowFn: () => number,
+  tickets: SseTicketStore,
+): Response {
   const projectKey = url.searchParams.get("project") ?? "";
-  const providedToken =
-    url.searchParams.get("key") ?? req.headers.get("X-Kanban-Key") ?? undefined;
-  // SSE 也走同一套鉴权（token 有效 + 有权访问该 project）
-  const auth = authenticate(db, providedToken, projectKey, nowFn());
+  const now0 = nowFn();
+
+  // 解析凭据：先换票（浏览器路径），再试 header（fetch 路径）
+  const ticketValue = url.searchParams.get("ticket");
+  let token: string | undefined;
+  let tokenProject = projectKey;
+  if (ticketValue) {
+    const redeemed = tickets.redeem(ticketValue, now0);
+    if (redeemed) {
+      token = redeemed.token;
+      // 票与 project 绑定：拿 A 的票去连 B 会被这里挡住
+      tokenProject = redeemed.projectKey;
+    }
+  } else {
+    token =
+      req.headers.get("X-Kanban-Key") ??
+      req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "") ??
+      undefined;
+  }
+  if (tokenProject !== projectKey) {
+    return jsonError(
+      KanbanError.auth("this ticket is for a different project", {
+        reason: "sse_ticket_project_mismatch",
+        hint: "Request a new ticket with POST /api/stream-ticket for the project you want to watch",
+      }),
+      403,
+    );
+  }
+
+  // 鉴权：走与普通接口同一套（未吊销 / 未过期 / project 白名单）
+  const auth = authenticate(db, token, projectKey, now0);
   if (!auth.ok) {
     return jsonError(authFailure(auth, projectKey), 401);
   }
 
   // 断线续传：优先用 Last-Event-ID（EventSource 自动带），其次 after 参数
   const lastEventId = req.headers.get("Last-Event-ID");
-  let cursor = Number(
-    lastEventId ?? url.searchParams.get("after") ?? "0",
-  );
+  let cursor = Number(lastEventId ?? url.searchParams.get("after") ?? "0");
   if (!Number.isFinite(cursor) || cursor < 0) cursor = 0;
 
   const encoder = new TextEncoder();
+  /** 多久重验一次凭据（秒） */
+  const REAUTH_INTERVAL_S = 30;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -675,8 +855,25 @@ function handleSse(req: Request, db: Database, url: URL, nowFn: () => number): R
       // 先告诉客户端断线后多久重连
       send("retry: 3000\n\n");
 
+      let lastAuthCheckAt = now0;
+      const reauthIfDue = () => {
+        const now = nowFn();
+        // 用墙钟而非 tick 计数：机器卡顿时也不至于把复验窗口拉长
+        if (now - lastAuthCheckAt < REAUTH_INTERVAL_S * 1000) return true;
+        lastAuthCheckAt = now;
+        const again = authenticate(db, token, projectKey, now);
+        if (again.ok) return true;
+        // 凭据已失效：明确告诉客户端「重连也没用，先重新登录」
+        send(
+          `event: auth_expired\ndata: ${JSON.stringify({ reason: again.reason })}\n\n`,
+        );
+        cleanup();
+        return false;
+      };
+
       const pump = () => {
         if (closed) return;
+        if (!reauthIfDue()) return;
         try {
           const rows = queryEvents(db, { projectKey, sinceSeq: cursor, order: "asc", limit: 100 });
           for (const row of rows) {
@@ -696,12 +893,8 @@ function handleSse(req: Request, db: Database, url: URL, nowFn: () => number): R
         send(`: keepalive ${Date.now()}\n\n`);
       };
 
-      pump();
-      const timer = setInterval(pump, 1000);
-      // 心跳注释帧单独发（15s）
-      const keepaliveTimer = setInterval(() => send(`: keepalive ${Date.now()}\n\n`), 15_000);
-
       const cleanup = () => {
+        if (closed) return;
         closed = true;
         clearInterval(timer);
         clearInterval(keepaliveTimer);
@@ -711,6 +904,12 @@ function handleSse(req: Request, db: Database, url: URL, nowFn: () => number): R
           // 已关闭
         }
       };
+
+      pump();
+      const timer = setInterval(pump, 1000);
+      // 心跳注释帧单独发（15s）
+      const keepaliveTimer = setInterval(() => send(`: keepalive ${Date.now()}\n\n`), 15_000);
+
       req.signal.addEventListener("abort", cleanup);
     },
   });
@@ -882,9 +1081,17 @@ function jsonError(error: KanbanError, status: number, extraHeaders: Record<stri
   return json({ ok: false, error: payload.error }, status, extraHeaders);
 }
 
-/** 当前 CLI 版本（M5 阶段改为读 package.json） */
+/**
+ * 当前 CLI 版本。
+ *
+ * 从 `package.json` 读，与 `--version` 同源（core/version.ts）。
+ * 曾经在这里硬编码 `"0.1.0"` 并注释着「M5 阶段改为读 package.json」——
+ * 而 `package.json` 早已是 0.1.x，所以 `/api/health` 一直报一个**假版本**。
+ * 版本号只能有一个来源（CI 在打 tag 时校验 `package.json.version === tag`），
+ * 这里再写一份就多了一个会漂移的真相。
+ */
 function readVersion(): string {
-  return "0.1.0";
+  return readPackageVersion();
 }
 
   /** 临时占位页（未构建前端时使用）
@@ -912,7 +1119,7 @@ li{margin:5px 0}</style></head>
 <ul>
 <li><code>GET /api/health</code> health check (no auth)</li>
 <li><code>POST /api/op</code> run an op (needs <code>X-Kanban-Key</code>)</li>
-<li><code>GET /api/stream</code> SSE event stream</li>
+<li><code>POST /api/stream-ticket</code> then <code>GET /api/stream</code> SSE event stream</li>
 <li><code>/admin</code> admin page (projects and tokens)</li>
 </ul>
 </div></body></html>`;

@@ -115,7 +115,10 @@ async function main() {
 
   const list = await rpc("tools/list", {});
   const tools = list?.result?.tools ?? [];
-  check("tools/list 返回 20 个工具", tools.length === 20, `${tools.length} 个`);
+  // 工具数量写死是故意的：**加工具时这条会红**，提醒你同时更新 MCP 文档
+// （README / docs/plan/002 §3.4 列了工具清单）与下面的 CANCELLED 集合。
+// 曾经它写的是 20，而实际有 20 个；现在补了 9 个工作流必需的工具。
+check("tools/list 返回 29 个工具", tools.length === 29, `${tools.length} 个`);
 
   // 每个工具都必须有描述与 schema——没有描述的模型不会用
   const noDesc = tools.filter((t: { description?: string }) => !t.description);
