@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BOARD_PAGE_SIZE, buildBoard } from "../src/core/board.ts";
-import { executeOp, type OpContext } from "../src/core/ops.ts";
+import { executeOp, clampInt, type OpContext } from "../src/core/ops.ts";
 import { createTask } from "../src/core/tasks.ts";
 import { withTx } from "../src/core/tx.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -106,9 +106,9 @@ describe("board.get：limit/offset 必须被钳制", () => {
     seedTasks(20);
     const { data } = executeOp({ kind: "board.get", params: { limit: -1 } }, opCtx());
     const snap = data as { lanes: Record<string, unknown[]>; truncated: { limit: number; showing: number } };
-    // 被钳到下界 1，而不是「返回全部」
-    expect(snap.truncated.limit).toBe(1);
-    expect(snap.truncated.showing).toBe(1);
+    // 退回默认页大小（500），而不是「返回全部」，也不是只给 1 张
+    expect(snap.truncated.limit).toBe(500);
+    expect(snap.truncated.showing).toBe(20);
   });
 
   test("limit=1e9 被钳到上限（否则等于把整库塞进一个响应）", () => {
@@ -136,12 +136,39 @@ describe("board.get：limit/offset 必须被钳制", () => {
     }
   });
 
-  test("小于 1 的 limit 钳到下界 1（不是回默认，也不是「全给」）", () => {
+  test("空串与非数字一样按「没给」处理（`?limit=` 在 URL 里就是这么出现的）", () => {
+    // REST 层的 limit 来自 query：`?limit=` → `url.searchParams.get()` 返回 ""。
+    // `Number("")` 是 0 而不是 NaN，所以「认不出来就退回默认」那条判据抓不住它，
+    // 必须单独处理，否则空串会被当成一个数去钳（而 0 会被抬成 1 → 只给一张卡）。
+    for (const bad of ["", "   "]) {
+      expect(clampInt(bad, 1, 2000, 500)).toBe(500);
+    }
+    // offset 的下界是 0，0 就是它的默认值——不能被「非正数退回」误伤
+    expect(clampInt(0, 0, 1_000_000, 0)).toBe(0);
+    expect(clampInt("0", 0, 1_000_000, 0)).toBe(0);
+    // 上界仍然生效
+    expect(clampInt(1e9, 1, 2000, 500)).toBe(2000);
+  });
+
+  test("小于 1 的 limit 退回默认页大小（不是只给 1 张）", () => {
+    // ⚠ 这条曾经断言「钳到下界 1」。而 `?limit=`（空串）、`?limit=0`、`?limit=-1`
+    //   全都会落在这条路径上：`Number("")` 是 0，被 `Math.max(0, 1)` 抬成 1，
+    //   于是「没给页大小」变成「只给 1 张卡」——而响应里 truncated 又是 true，
+    //   界面会显示「共 N 张，当前只列出前 1 张」，看起来像分页坏了。
+    // 「只给 1 张」不是任何调用方的意思；退回默认才是。
     seedTasks(5);
-    const { data } = executeOp({ kind: "board.get", params: { limit: -5 } }, opCtx());
-    const snap = data as { truncated: { limit: number; showing: number } };
-    expect(snap.truncated.limit).toBe(1);
-    expect(snap.truncated.showing).toBe(1);
+    for (const bad of [-5, 0]) {
+      const { data } = executeOp(
+        { kind: "board.get", params: { limit: bad } },
+        opCtx(),
+      );
+      const snap = data as { truncated: { limit: number; showing: number } };
+      expect({ bad, limit: snap.truncated.limit, showing: snap.truncated.showing }).toEqual({
+        bad,
+        limit: 500,
+        showing: 5,
+      });
+    }
   });
 
   test("truncated 字段原样出现在 Op 的返回里（Web 靠它）", () => {

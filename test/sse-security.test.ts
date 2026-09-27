@@ -8,7 +8,8 @@
  *    反代 access log、容器日志与 `Referer`。项目自己的 `consumeUrlLogin` 注释
  *    就很担心 token 泄漏，但 SSE 每条连接都在写。
  *    现在：浏览器先换一张 **60 秒一次性**的票；能设 header 的客户端直接用 header。
- *    **服务端的 `?key=` 已删除**，不留后门。
+ *    **服务端的 `?key=` 已删除**（不留后角）：不只 SSE，其余每个端点也都不收
+ *    —— URL 会进 access log / Referer / 浏览器历史，只堵 SSE 那一条等于漏洞还在。
  *
  * 2. **长连接不重新鉴权**：token 中途被吊销，已建立的连接会继续推事件直到客户端重连。
  *    现在 pump 里定期重验，失效就推 `auth_expired` 并关流。
@@ -163,7 +164,40 @@ describe("SSE：URL 里不再有 token", () => {
     await res.body?.cancel();
   });
 
-  test("header 鉴权可以连上（fetch 客户端的路径）", async () => {
+  test("其余端点同样不认 ?key=（只删 SSE 那一条等于没删）", async () => {
+    // 这几个端点就是本文件头里那个「已删除」曾经只对 SSE 成立的地方：
+    // handleSse 自己在函数体里解析凭据，而 handleRequest 的全局提取里
+    // 还有一个 `url.searchParams.get("key")`，对下面每个端点都是活的。
+    const probes: Array<[string, RequestInit]> = [
+      [`/api/board?project=${PROJECT}&key=${token}`, {}],
+      [
+        `/api/op?key=${token}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // 凭据只在 query 里，body 里连 project 都不给：必须 401
+          body: JSON.stringify({ op: { kind: "task.list", params: {} } }),
+        },
+      ],
+      [`/api/admin/tokens?key=${token}`, {}],
+      [`/api/projects?key=${token}`, {}],
+    ];
+    for (const [path, init] of probes) {
+      const res = await fetch(`${base}${path}`, init);
+      expect({ path, status: res.status }).toEqual({ path, status: 401 });
+      await res.body?.cancel();
+    }
+  });
+
+  test("header 鉴权在普通端点上照常可用（不是把门焊死了）", async () => {
+    const res = await fetch(`${base}/api/board?project=${PROJECT}`, {
+      headers: { "X-Kanban-Key": token },
+    });
+    expect(res.status).toBe(200);
+    await res.body?.cancel();
+  });
+
+  test("header 鉴权可以连上 SSE（fetch 客户端的路径）", async () => {
     const r = await readSse(
       `${base}/api/stream?project=${PROJECT}&after=0`,
       { headers: { "X-Kanban-Key": token, Accept: "text/event-stream" } },
@@ -228,7 +262,7 @@ describe("SSE：URL 里不再有 token", () => {
     expect(res.status).toBe(401);
   });
 
-  test("源码里不再有把 token 拼进 SSE URL 的地方", () => {
+  test("源码里不再有把 token 拼进 URL 的地方", () => {
     // Web 端
     const api = code("web/src/lib/api.ts");
     expect(api).not.toMatch(/api\/stream\?[^"']*key=/);
@@ -236,11 +270,14 @@ describe("SSE：URL 里不再有 token", () => {
     // 远程 backend（fetch，可以直接用 header）
     const remote = code("src/core/backend-remote.ts");
     expect(remote).not.toMatch(/searchParams\.set\("key"/);
-    // 服务端不接受 ?key=
+    // 服务端：整个 http.ts 都不该再从 query 里取凭据。
+    //
+    // ⚠ 曾经的守卫只切 `handleSse(` 到 `return new Response(stream` 之间的**函数体**，
+    //   所以它永远看不见 handleRequest 里那个全局的 `url.searchParams.get("key")`——
+    //   而那才是让 `/api/op?key=`、`/api/admin/*?key=` 全部可用的那一处。
+    //   判据必须是「整个文件里没有从 query 取凭据」，不是「某个函数体里没有」。
     const http = code("src/server/http.ts");
-    const start = http.indexOf("function handleSse(");
-    const body = http.slice(start, http.indexOf("\n  return new Response(stream", start));
-    expect(body).not.toContain('searchParams.get("key")');
+    expect(http).not.toMatch(/searchParams\.get\(\s*["'`]key["'`]\s*\)/);
   });
 });
 
@@ -409,11 +446,22 @@ describe("Op 边界校验：validateOp 说清楚做到了什么（#13）", () =>
     db.close();
   }
 
+  /** 批量造卡（要区分「退回默认页大小 200」与「不限长」时用） */
+  function seedOne(title: string): void {
+    const db = openServerDb();
+    withTx(db, (c) => createTask(c, { title }), { now: () => Date.now(), projectKey: PROJECT });
+    db.close();
+  }
+
   test("task.list 的 limit 被钳制（-1 在 SQLite 里是不限长）", () => {
-    seedTwo();
+    // ⚠ 这条曾断言「-1 钳到下界 1」。而 `?limit=`（空串）/ `0` / `-1` 全在同一路径上：
+    //   「没给页大小」不应该变成「只给 1 条」——那看起来像个合法请求。
+    //   现在的契约是：非正数与非数字一样按「没给」处理（用默认页大小 200）。
+    // 断言必须能区分「退回默认」与「不限长」，所以造的卡要比默认页大小多。
+    for (let i = 0; i < 250; i++) seedOne(`t-${String(i).padStart(4, "0")}`);
     const { data } = executeOp({ kind: "task.list", params: { limit: -1 } }, opCtx());
-    // 钳到下界 1：返回 1 张而不是「全部 2 张」
-    expect((data as unknown[]).length).toBe(1);
+    // 有界（200），而不是「全部 252 条」；也不是 1
+    expect((data as unknown[]).length).toBe(200);
   });
 
   test("task.list 的非法 status 明确报错，而不是静默返回空列表", () => {
@@ -557,6 +605,51 @@ describe("session cwd：不再把 server 的目录当成 agent 的（#12 附带�
     expect(ctx).toMatch(/cwd: input\.cwd/);
     const http = code("src/server/http.ts");
     expect(http).toMatch(/X-Kanban-Cwd/);
+  });
+
+  test("createSession 不再拿 process.cwd() 猜（那一层是上一条守卫的盲区）", () => {
+    // ⚠ 上一条只查了 ops.ts 与 http.ts，而**真正把 server 目录写进库的是
+    //   sessions.ts 的 `input.cwd ?? process.cwd()`：ops.ts 已经老老实实传了
+    //   undefined，却在下一层被猜回来。探针实测：不带 X-Kanban-Cwd 调 session.start，
+    //   库里与响应 JSON 都是 server 进程目录。
+    const sessions = code("src/core/sessions.ts");
+    expect(sessions).not.toMatch(/input\.cwd\s*\?\?\s*process\.cwd\(\)/);
+    // 反向：缺省必须是空串（列是 NOT NULL，空串是这里唯一诚实的“未知”）
+    expect(sessions).toMatch(/input\.cwd\s*\?\?\s*""/);
+  });
+
+  test("远程 backend 真的把 X-Kanban-Cwd 发出去（这条通道以前是死的）", () => {
+    const remote = code("src/core/backend-remote.ts");
+    expect(remote).toMatch(/"X-Kanban-Cwd"/);
+    // 缺省取**本机** process.cwd()，不是某个写死的值
+    expect(remote).toMatch(/this\.cwd = opts\.cwd \?\? process\.cwd\(\)/);
+    // withSession 重建时也要带着它（否则换会话身份就把 cwd 丢了）
+    expect(remote).toMatch(/cwd: this\.cwd/);
+  });
+
+  test("远程 session.start 记的是客户端目录；客户端不带时是空串（行为层）", async () => {
+    const start = async (cwd?: string) => {
+      const res = await fetch(`${base}/api/op`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Kanban-Key": token,
+          ...(cwd ? { "X-Kanban-Cwd": cwd } : {}),
+        },
+        body: JSON.stringify({
+          project: PROJECT,
+          op: { kind: "session.start", params: { agent_name: "probe", harness: "test" } },
+        }),
+      });
+      return (await res.json()) as { data?: { id?: string; cwd?: string } };
+    };
+
+    const withCwd = await start("C:\\client\\side");
+    expect(withCwd.data?.cwd).toBe("C:\\client\\side");
+    const without = await start();
+    expect(without.data?.cwd).toBe("");
+    // 关键：绝不是 server 进程的目录
+    expect(without.data?.cwd).not.toBe(process.cwd());
   });
 });
 

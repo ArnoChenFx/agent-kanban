@@ -52,6 +52,18 @@ export const TOUCH_THROTTLE_MS = 60_000;
 export interface CreateSessionInput {
   agentName: string;
   harness?: string | null;
+  /**
+   * 启动时的工作目录（“agent 从哪个目录发起”）。
+   *
+   * ⚠ **没传就存空串，绝不退回 `process.cwd()`。**
+   *   远程模式下 `process.cwd()` 是 **server** 的目录，而这里曾经正是那行兜底：
+   *   `ops.ts` 已经很小心地「客户端不带就传 undefined 而不是猜」，
+   *   下一层的 `input.cwd ?? process.cwd()` 又把 server 的目录猜了回来——
+   *   探针实测：不带 `X-Kanban-Cwd` 调 `session.start`，库里与**响应 JSON** 里
+   *   记的都是 server 进程的目录。一条比空值更坏的信息：它看起来像真的。
+   *   调用方要自己决定：本地走 `LocalBackend`（传本机 cwd），远程由
+   *   `RemoteBackend` 带上 `X-Kanban-Cwd` 头。
+   */
   cwd?: string;
   pid?: number | null;
   /** 显式指定 session id（测试用） */
@@ -71,7 +83,9 @@ export function createSession(ctx: TxContext, input: CreateSessionInput): Sessio
       id,
       input.agentName,
       input.harness ?? null,
-      input.cwd ?? process.cwd(),
+      // 空串 = “客户端没带”，见 CreateSessionInput.cwd 的注释。
+      // 列是 NOT NULL，所以空串是这里唯一诚实的“未知”。
+      input.cwd ?? "",
       input.pid ?? process.pid ?? null,
       now,
       now,

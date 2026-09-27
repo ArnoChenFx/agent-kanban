@@ -125,6 +125,34 @@ describe("Backend 抽象", () => {
     expect(remoteBackend(projectToken).mode).toBe("remote");
   });
 
+  test("远程 session.start 记的是**客户端**的 cwd（整条链：发头 → server 读 → 落库）", async () => {
+    // 这条盯的是**两端都在**的那个状态。以前 server 端读得到 `X-Kanban-Cwd`，
+    // 却没有任何客户端发它（通道是死的），而 `createSession` 的 `?? process.cwd()`
+    // 又把 **server** 的目录记成了 agent 的——两端各错一半，谁也不会发现。
+    // 只查其中一端（现在 sse-security.test.ts 的两条静态守卫）的测试抓不住它。
+    const clientDir = mkdtempSync(join(tmpdir(), "ak-client-"));
+    const backend = new RemoteBackend({
+      server: baseUrl,
+      projectKey: PROJECT,
+      apiKey: projectToken,
+      now: () => FIXED_NOW,
+      cwd: clientDir,
+    });
+    const data = await backend.execute<{ id: string; cwd: string }>({
+      kind: "session.start",
+      params: { agent_name: "dual-mode", harness: "test" },
+    });
+
+    expect(data.cwd).toBe(clientDir);
+    // 库里也是同一个值：不是 server 目录，也不是空串
+    const row = handle.raw
+      .query<{ cwd: string }, [string]>("SELECT cwd FROM sessions WHERE id = ?")
+      .get(data.id);
+    expect(row?.cwd).toBe(clientDir);
+    expect(row?.cwd).not.toBe(process.cwd());
+    rmSync(clientDir, { recursive: true, force: true });
+  });
+
   test("健康检查免鉴权可用，且只回 liveness", async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.status).toBe(200);

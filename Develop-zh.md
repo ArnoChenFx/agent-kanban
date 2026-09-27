@@ -90,6 +90,16 @@ docs/note/            实施记录与踩坑笔记
 
 **一律用 `BEGIN IMMEDIATE`。** 写事务一开始就拿写锁，避开中途升级，这能防住租约回收协程与正常流量之间的 `SQLITE_BUSY` 死锁。
 
+**凭据：库里只放哈希，journal 里连哈希都不放。** `tokens.id` 是独立的随机引用（`t_…`），
+不是密钥；鉴权拿 `sha256(token)` 跟 `key_hash` 比对。凡是要显示 token 的地方都过一遍
+`describeTokenRef`，看着像密钥（`k_` 开头）就掩码——它同时挡住两件事：admin 界面不回显明文，
+以及**老版本写下的行**（那些行的 `id` 本身就是 token，而这里刻意不做迁移：`key_hash` 一直就算对了，
+那些 token 照常可用）。
+token 的生命周期**有**审计：签发、吊销、改白名单各写一条事件，只带引用、角色与授权的 project 列表，
+既没有 token 也没有它的哈希。也正因为如此 `tokens` / `projects` **不**从事件流重建：
+可重放的投影必须能从日志重建，而凭据的哈希不该在一个会被 export、备份、到处复制的文件里
+拥有第二个家。接缝是 `src/core/tokens.ts` 的 `auditWrite`——mutation 与它的事件同事务。
+
 ## 环境准备
 
 ```bash

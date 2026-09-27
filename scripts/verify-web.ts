@@ -223,8 +223,8 @@ const trans = await op("task.transition", { task_id: newId, to: "blocked", reaso
 
   console.log("\n=== 6. SSE 实时流 ===");
   const ctrl = new AbortController();
-  // ⚠ token 走 header，**不进 URL**（服务端已不接受 ?key=；浏览器那边改用
-  //   POST /api/stream-ticket 换一次性票，见 test/sse-security.test.ts）。
+  // ⚠ token 走 header，**不进 URL**（服务端任何端点都不接受 ?key=，SSE 也不例外；
+  //   浏览器那边改用 POST /api/stream-ticket 换一次性票，见 test/sse-security.test.ts）。
   //   这里能设 header，因为这是 fetch 而不是 EventSource。
   const ssePromise = fetch(`${BASE}/api/stream?project=web-demo&after=0`, {
     headers: { Accept: "text/event-stream", "X-Kanban-Key": token },

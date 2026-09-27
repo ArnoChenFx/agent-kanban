@@ -373,6 +373,14 @@ If you expose it, put it behind a TLS terminator. **Without TLS, tokens travel i
 
 When it comes from the environment, the token is neither written to `config.toml` nor printed to the log.
 
+**No endpoint accepts a token in the URL.** Headers (`X-Kanban-Key` or `Authorization: Bearer`)
+are the only way in; browsers that cannot set headers on `EventSource` exchange a 60-second
+single-use ticket at `POST /api/stream-ticket` first. A token in a query string ends up in
+proxy access logs, container logs, `Referer`, and browser history, so `?key=` is rejected
+everywhere — including on the SSE path. The one legitimate use of `?key=` is a **shareable link**
+to the board itself (`http://host:7788/?key=…&project=…`), which the frontend reads once and
+strips from the address bar before making any API call.
+
 ## Command reference
 
 | Command | Purpose |
@@ -528,35 +536,23 @@ Poor fit:
 Yes, and losing it is recoverable. `.kanban/kanban.db` is a SQLite file: a build
 artifact, awkward to merge. It is not in `.gitignore` by accident.
 
-That file holds **only token hashes** for every token this version issues: the `id`
-column is an independent random reference (`t_…`) used for addressing in the admin
-API, and authentication compares `sha256(token)` against `key_hash`. An older version
-stored the token in `id` itself, which meant any copy of the database — a backup, an
-`export`, a screenshot — handed out every live credential.
+That file holds **only token hashes**, never a token itself — the `id` column is an
+independent random reference (`t_…`), and authentication compares `sha256(token)`
+against `key_hash`. An older version stored the token in `id` itself, which meant any
+copy of the database — a backup, an `export`, a screenshot — handed out every live
+credential.
 
-Upgrading from that version needs **no action for those tokens**: `key_hash` was
-always computed correctly, so they keep authenticating. But no migration rewrites the
-old rows, so the plaintext is still sitting in their `id` column — and anything that
-displays a token masks an `id` that looks like a key. `admin token list` and the admin
-page therefore show those rows truncated, and you cannot grant or revoke them from the
-UI. Manage them from the CLI instead (`agent-kanban admin token revoke <token>` —
-for an old row, pass the token itself, since its `id` *is* the token), or issue a new
-token and revoke the old one.
+Upgrading from that version needs **no action for those tokens** (the hash was always
+computed correctly, so they keep working), but no migration rewrites the old rows: they
+still display masked, and the admin page cannot grant or revoke them. Manage those from
+the CLI (`agent-kanban admin token revoke <token>` — for an old row its `id` *is* the
+token), or issue a new one and revoke the old. Details in [Develop.md](Develop.md).
 
 What *is* in git is `.kanban/journal/` — the append-only event log, one JSON line per
 change, grouped into daily files. Since events are the source of truth and the board is
 just a projection, replaying that log on a fresh machine reproduces everything: tasks,
 checklists, plans, handoffs, dependencies, the lot. `agent-kanban rebuild --write` does exactly
 that, which is the same mechanism that lets it prove its own consistency.
-
-**The journal records token lifecycle but never credentials.** Issuing, revoking and
-re-granting a token each write an event, because "who changed access, and when" is
-exactly the kind of question an audit log exists to answer. Those events carry the
-token's *reference*, role and project allowlist — never the token and never its hash.
-This is deliberate and it is why `tokens` and `projects` are **not** rebuilt from the
-event stream: a replayable projection has to be reconstructible from the log, and a
-credential hash should not have a second home in a file that gets exported, backed up
-and copied around.
 
 ```bash
 # on the old machine
@@ -618,8 +614,7 @@ terminator before exposing it: without TLS, tokens go over the wire in plaintext
 
 ## Documentation
 
-- [Develop.md](Develop.md) — architecture, build, release, verification
-- Need a board to illustrate the docs with? `bun run seed:demo` seeds a simulated one into `.kanban/kanban.db` — see "Demo board for screenshots" in Develop.md
+- [Develop.md](Develop.md) — architecture, data model, build, release, verification
 
 ## License
 

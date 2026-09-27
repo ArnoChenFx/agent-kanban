@@ -1184,11 +1184,31 @@ function requireString(value: unknown, field: string): string {
  * 导出给 `http.ts` 用：`/api/board` 曾经在这里之外自己写了一套
  * `Number` / `Math.min` 的钳制，于是上界与默认值各有两个真相——
  * 两边一旦不同步，REST 与 Op 对同一个 `?limit=` 的解释就会分叉。
+ *
+ * ## 「不像是想清楚的输入」一律当没给（fallback），而不是钳到 min
+ *
+ * 两种输入曾经被漏在这里，换成 clampInt 之后它们的行为变了：
+ *
+ * | 输入 | 含义 | 以前（/api/board 自己那套） | 若直接钳到 min |
+ * | --- | --- | --- | --- |
+ * | `?limit=`（空串） | 「没给页大小」 | `Number("") = 0` → 退回 500 | **1 张卡** |
+ * | `?limit=0` | 同上 | 退回 500 | **1 张卡** |
+ * | `?limit=-1` | 同上（且在 SQLite 里是「不限长」） | 退回 500 | **1 张卡** |
+ *
+ * 「只给 1 张卡」不是任何调用方的意思，而它**看起来像个合法的请求**：
+ * 响应里 `truncated.truncated` 会变成 true，于是界面显示「共 3 张，当前只列出前 1 张」，
+ * 像是分页坏了。而 `offset` 的 min 是 0，不受这条影响（0 就是它的默认值）。
  */
 export function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   if (value === undefined || value === null) return fallback;
+  // 空串 / 纯空白：URL 里 `?limit=` 是最常见的写法，而 `Number("")` 是 0——
+  // 它表示「没给」，不该被当成一个数去钳。
+  if (typeof value === "string" && value.trim() === "") return fallback;
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
+  // 非正数同理（「返回 0 张卡」从来不是意图，-1 在 SQLite 里更是「不限长」）。
+  // min > 0 才成立：offset 的下界是 0，而 0 正是它的默认值，必须放行。
+  if (n <= 0 && min > 0) return fallback;
   return Math.min(max, Math.max(min, Math.floor(n)));
 }
 

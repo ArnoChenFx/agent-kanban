@@ -242,7 +242,9 @@ export function issueToken(
       projectKey: "system",
       sessionId: "system",
       data: {
-        token_ref: id,
+        // 经 describeTokenRef：id 是我们自己发的 t_ 引用，原样即可；
+        // 这一层是为了让**四个**写入点形状一致，将来谁改错一个也能被守卫看见
+        token_ref: describeTokenRef(id),
         role: input.role,
         projects,
         name: input.name ?? null,
@@ -322,7 +324,7 @@ export function updateTokenProjects(
       type: "token_updated",
       projectKey: "system",
       sessionId: "system",
-      data: { token_ref: tokenId, field: "projects", value: validated },
+      data: { token_ref: describeTokenRef(tokenId), field: "projects", value: validated },
     });
   });
   return getToken(db, tokenId)!;
@@ -351,7 +353,7 @@ export function revokeToken(db: Database, tokenId: string, now: number = Date.no
       type: "token_revoked",
       projectKey: "system",
       sessionId: "system",
-      data: { token_ref: tokenId, role: token.role, projects: token.projects },
+      data: { token_ref: describeTokenRef(tokenId), role: token.role, projects: token.projects },
     });
   });
   return getToken(db, tokenId)!;
@@ -398,7 +400,7 @@ export function updateTokenMeta(
       type: "token_updated",
       projectKey: "system",
       sessionId: "system",
-      data: { token_ref: tokenId, field: changed.join(","), role: token.role },
+      data: { token_ref: describeTokenRef(tokenId), field: changed.join(","), role: token.role },
     });
   });
   return getToken(db, tokenId)!;
@@ -580,6 +582,15 @@ export function maskToken(tokenId: string): string {
  * 原样回显就会把它写进日志与浏览器控制台。
  *
  * 这也正是 `tokenToJson` 用它来判断存量行的依据（见那里的注释）。
+ *
+ * ## 「任何对外输出」包括事件流
+ *
+ * 四个 `token_*` 事件的 `token_ref` 也过这个函数：事件表会被 `export`、备份、
+ * `rebuild` 重放，写进去的明文会跟着库走很久。而 `token_revoked(db, tokenId)`
+ * 拿的是**调用方传入的** id——CLI 上手敲 `admin token revoke k_xxx` 完全合法，
+ * 于是密钥就进了事件流（以前 `tokenToJson` 只堵住了 HTTP/列表这一层出口）。
+ * 渲染侧（events.describeEvent / context.describeEventBrief）同样过一遍，
+ * 兜住「旧库里已经写进去的明文」这种存量。
  */
 export function describeTokenRef(value: string): string {
   return value.startsWith(TOKEN_PREFIX) ? maskToken(value) : value;

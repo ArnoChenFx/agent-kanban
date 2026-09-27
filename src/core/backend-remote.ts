@@ -28,6 +28,18 @@ export interface RemoteBackendOptions {
   now?: () => number;
   /** 请求超时（毫秒），默认 30s */
   timeoutMs?: number;
+  /**
+   * 客户端自己的工作目录，缺省 `process.cwd()`。
+   *
+   * 存在的理由：`session.start` 会把“agent 从哪个目录发起”记进 `sessions.cwd`，
+   * 而远程模式下 server 端 `process.cwd()` 是 **server** 的目录。所以这个值必须
+   * 由**客户端**带上去（请求头 `X-Kanban-Cwd`，见契约 §4.1）。
+   *
+   * ⚠ 以前这个选项不存在，于是那条通道是**死的**：server 读得到头，却没人发。
+   * 文档写着“客户端可以带上来”，实际每个真实客户端都不带（唯一能发的人不写），
+   * 最后一层 `createSession` 的 `?? process.cwd()` 把 server 目录记成了 agent 的。
+   */
+  cwd?: string;
 }
 
 export class RemoteBackend implements Backend {
@@ -38,6 +50,8 @@ export class RemoteBackend implements Backend {
   private readonly sessionId: string | null;
   private readonly nowFn: () => number;
   private readonly timeoutMs: number;
+  /** 客户端自己的工作目录（发 `X-Kanban-Cwd` 用），见 RemoteBackendOptions.cwd */
+  private readonly cwd: string;
   /** 原始构造参数：withSession 重建时复用 */
   private readonly opts: RemoteBackendOptions;
 
@@ -48,6 +62,7 @@ export class RemoteBackend implements Backend {
     this.sessionId = opts.sessionId ?? null;
     this.nowFn = opts.now ?? Date.now;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
+    this.cwd = opts.cwd ?? process.cwd();
     this.opts = {
       server: this.server,
       projectKey: this.projectKey,
@@ -55,6 +70,7 @@ export class RemoteBackend implements Backend {
       sessionId: this.sessionId,
       now: this.nowFn,
       timeoutMs: this.timeoutMs,
+      cwd: this.cwd,
     };
   }
 
@@ -134,6 +150,9 @@ export class RemoteBackend implements Backend {
         "Content-Type": "application/json",
         "X-Kanban-Key": this.apiKey,
         ...(this.sessionId ? { "X-Kanban-Session": this.sessionId } : {}),
+        // 把本机 cwd 告诉 server：只有 client 知道“agent 从哪个目录发起”。
+        // 不带的话 server 只能存空串（**不会**猜自己的目录，见 createSession）。
+        "X-Kanban-Cwd": this.cwd,
         ...(init.headers ?? {}),
       },
     });

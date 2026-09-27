@@ -363,6 +363,13 @@ Server 端：`KANBAN_HOST`、`KANBAN_PORT`、`KANBAN_WEB_DIR`、`KANBAN_ADMIN_TO
 | 项目级 token | 只能访问被显式授权的 project |
 | 管理员 token | 全部 project，外加 project 与 token 管理 |
 
+**任何端点都不接受 URL 里的 token。** 凭据只从 header 进（`X-Kanban-Key` 或
+`Authorization: Bearer`）；浏览器给 `EventSource` 没法设 header，所以先拿一张 60 秒、
+只能用一次的票（`POST /api/stream-ticket`）。URL 里的 token 会进反代 access log、容器日志、
+`Referer` 与浏览器历史，所以 `?key=` 一律拒——SSE 也不例外。`?key=` 唯一合法的用处是
+**分享链接**（`http://host:7788/?key=…&project=…`）：前端读一次就把它从地址栏抹掉，
+之后的 API 调用全走 header。
+
 ## 命令速查
 
 | 命令 | 用途 |
@@ -511,29 +518,21 @@ skill 实体放在本仓库的 `skills/` 下，所以任何项目都能装，不
 安全，而且丢了能恢复。`.kanban/kanban.db` 是个 SQLite 文件：它本来就是构建产物、
 合并也麻烦。不入 git 是刻意的。
 
-这个文件里**只有 token 的哈希**：本版本签发的每个 token，其 `id` 列都是独立的随机引用
-（`t_…`），只用来在 admin 接口里寻址；鉴权时拿 `sha256(token)` 跟 `key_hash` 比对。
-旧版本把 token 本身存在 `id` 里，于是**任何一份数据库副本**——备份、`export` 产物、
-截图——都等于把全部在用的凭据送出去。
+这个文件里**只有 token 的哈希、没有 token 本身**：`id` 列是独立的随机引用
+（`t_…`），鉴权时拿 `sha256(token)` 跟 `key_hash` 比对。旧版本把 token 本身存在
+`id` 里，于是**任何一份数据库副本**——备份、`export` 产物、截图——都等于把全部
+在用的凭据送出去。
 
-从那个版本升级上来，**这些 token 本身不需要做任何处理**：`key_hash` 一直就算对了，
-它们照常可用。但没有任何迁移会去重写那些老行，明文仍在它们的 `id` 列里；而凡是显示
-token 的地方，看着像密钥的 `id` 一律打掩码。于是 `admin token list` 与管理页会把这些行
-截断显示，**在界面上无法给它们改授权或吊销**。改用命令行处理：
-`agent-kanban admin token revoke <token>`（老行的 `id` 就是 token 本身，所以传密钥），
-或者重新签发一个、把旧的吊销掉。
+从那个版本升级上来，**这些 token 本身不需要做任何处理**（`key_hash` 一直就算对了，
+它们照常可用）。但没有迁移会去重写那些老行：它们在界面上仍然显示为掩码，
+管理页也没法给它们改授权或吊销。改用命令行处理
+（`agent-kanban admin token revoke <token>`——老行的 `id` 就是 token 本身，所以传密钥），
+或者重新签发一个、把旧的吊销掉。细节见 [Develop-zh.md](Develop-zh.md)。
 
 **入 git 的是 `.kanban/journal/`** —— 只追加的事件流，每次变更一行 JSON，按天分文件。
 既然事件是事实来源、看板只是投影，那么在新机器上重放这个日志就能完整重建：
 任务、检查项、计划、交接、依赖，一个不少。`agent-kanban rebuild --write` 干的正是这件事，
 和它用来自证一致的是同一套机制。
-
-**journal 会记录 token 的生命周期，但绝不记录凭据。** 签发、吊销、改白名单都会写事件——
-「谁在什么时候改了访问权限」正是审计日志存在的理由。这些事件里只有 token 的
-**引用**、角色与授权的 project 列表，既没有 token 也没有它的哈希。
-这是刻意的，也正因为如此 `tokens` / `projects` **不是**从事件流重建的：
-一个可重放的投影必须能从日志重建，而凭据的哈希不该在一个会被 export、备份、到处复制的
-文件里拥有第二个家。
 
 ```bash
 # 旧机器上
@@ -587,8 +586,7 @@ project key 是由目录名派生的，所以新旧机器不同。`import` 会�
 
 ## 文档
 
-- [Develop-zh.md](Develop-zh.md) —— 架构、构建、发布、验证
-- 文档配图用的演示看板：`bun run seed:demo` 会往 `.kanban/kanban.db` 灌一份模拟看板，详见 Develop-zh.md 的“演示看板（截图用）”一节
+- [Develop-zh.md](Develop-zh.md) —— 架构、数据模型、构建、发布、验证
 
 ## 许可证
 

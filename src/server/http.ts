@@ -207,11 +207,21 @@ async function handleRequest(
     return handleSse(req, db, url, nowFn, tickets);
   }
 
-  // ---- token 提取：优先 header，其次 query（SSE 用后者）----
+  // ---- token 提取：只认 header，URL 里一律不收 ----
+  //
+  // ⚠ 这里曾经还有第三个来源 `url.searchParams.get("key")`，而它上面的注释
+  //   写着「其次 query（SSE 用后者）」——**那句注释是错的**：SSE 已经在上面
+  //   return 掉了，handleSse 自己解析凭据（一次性票或 header），根本走不到这里。
+  //   于是那条 query 分支对 SSE 是死代码，对**其余每一个端点**却是活的：
+  //   `/api/board?key=`、`/api/op?key=`、`/api/admin/tokens?key=` 实测都能鉴权。
+  //   而它正是 #7 要消灭的那一类泄漏（URL 会进 access log、Referer、浏览器历史）——
+  //   只删掉 SSE 那一条并不等于「凭据不进 URL」。
+  //
+  // 分享链接（`http://host:7788/?key=…&project=…`）不受影响：那是**根路径**的
+  //   SPA 功能，前端读完就 `history.replaceState` 抹掉，之后所有 API 调用走 header。
   const providedToken =
     req.headers.get("X-Kanban-Key") ??
     req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "") ??
-    url.searchParams.get("key") ??
     undefined;
 
   // ---- admin 接口：需要管理员 token（ADR-13）----

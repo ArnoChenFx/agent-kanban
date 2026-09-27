@@ -25,6 +25,16 @@
  * `key_hash` 这一列一直算得是对的，只是 `id` 列多余地存了明文。
  * 把鉴权改成按 `key_hash` 查之后，**存量 token 自动继续可用**——
  * 它们的哈希本来就在那儿。下面「老格式的行仍然可用」那条就是证明。
+ *
+ * ## 零迁移的代价：老行的 `id` 里仍然是明文
+ *
+ * 于是「库里不出现明文」这条不变量对**新写进去的数据**成立，对存量行不成立。
+ * 这不是靠迁移解决的（迁移会把所有在用 token 一次性作废），而是靠**出口过滤**：
+ * 凡是可能把 `tokens.id` 送到别人眼前的地方都要过 `describeTokenRef`——
+ * `tokenToJson`（HTTP / admin 列表 / CLI）、四个 `token_*` 事件的 `token_ref`、
+ * 以及渲染侧（`describeEvent`）。事件流这条尤其要紧：事件表会被 export / 备份 /
+ * rebuild，明文一旦写进去就会跟着库走很久，而 `token_revoked` 收的是**调用方传入的**
+ * id，`admin token revoke k_xxx` 会把在用密钥直接送进去。
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -41,7 +51,8 @@ import {
   setMeta,
   type Db,
 } from "../src/core/db.ts";
-import { queryEvents } from "../src/core/events.ts";
+import { queryEvents, describeEvent } from "../src/core/events.ts";
+import { toEvent } from "../src/core/rows.ts";
 import { ensureAdminToken, readConfigFile } from "../src/core/config.ts";
 import { createProject } from "../src/core/projects.ts";
 import { generateApiKey } from "../src/core/projects.ts";
@@ -224,6 +235,33 @@ describe("admin 界面链路：列表里的 id 要能直接用来操作", () => 
     const fresh = issueToken(db, { role: "project", projects: ["p1"] }, NOW);
     expect(tokenToJson(fresh.token, NOW).id).toBe(fresh.token.id);
     expect(getToken(db, String(tokenToJson(fresh.token, NOW).id))).not.toBeNull();
+  });
+
+  test("事件流里也没有明文：拿密钥当 id 吊销不会把它写进事件", () => {
+    // tokenToJson 只堵住了 HTTP / 列表那一层出口，而 token_revoked 拿的是
+    // **调用方传入的** id。CLI 上手敲 `admin token revoke k_xxx` 完全合法，
+    // 密钥就顺着 token_ref 进了事件表——而事件表会被 export / 备份 / rebuild。
+    const legacyPlain = TOKEN_PREFIX + "b".repeat(32);
+    db.query(
+      `INSERT INTO tokens (id, name, role, projects, key_hash, created_at, last_used_at, revoked_at, expires_at)
+       VALUES (?, 'legacy2', 'project', ?, ?, ?, NULL, NULL, NULL)`,
+    ).run(legacyPlain, JSON.stringify(["p1"]), hashToken(legacyPlain), NOW);
+
+    revokeToken(db, legacyPlain, NOW + 1);
+    updateTokenProjects(db, legacyPlain, ["p1", "other"], NOW + 2);
+
+    // 整条事件流里都不该出现明文
+    const dump = JSON.stringify(queryEvents(db, { projectKey: "system" }));
+    expect(dump).not.toContain(legacyPlain);
+    // 但审计事实还在：掩码后的 ref 仍然指向那一行
+    const revoked = queryEvents(db, { projectKey: "system" })
+      .filter((e) => e.type === "token_revoked")
+      .at(-1)!;
+    const ref = (JSON.parse(revoked.data ?? "{}") as { token_ref: string }).token_ref;
+    expect(ref).not.toBe(legacyPlain);
+    expect(ref).toContain("…");
+    // 渲染面（describeEvent）同样不念明文
+    expect(describeEvent(toEvent(revoked))).not.toContain(legacyPlain);
   });
 
   test("updateTokenMeta：改的字段与审计事件记的字段严格一致", () => {

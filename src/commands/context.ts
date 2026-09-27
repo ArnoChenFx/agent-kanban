@@ -278,6 +278,9 @@ function openRemoteCtx(input: {
     apiKey: input.key,
     sessionId,
     now: input.now,
+    // 本机工作目录：session.start 会把它记进 sessions.cwd，而 server 端
+    // 拿不到客户端的 cwd（它只有 process.cwd()，那是 server 的目录）。
+    cwd: input.cwd,
   });
 
   // 远程模式没有本地 db；config 用默认值（真实配置在 server 上）

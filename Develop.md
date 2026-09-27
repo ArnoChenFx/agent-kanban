@@ -91,6 +91,20 @@ Five ideas worth knowing before you touch anything:
 
 **`BEGIN IMMEDIATE`, always.** Writers take the write lock up front rather than upgrading mid-transaction, which avoids `SQLITE_BUSY` deadlocks between the lease reaper and normal traffic.
 
+**Credentials: the database holds hashes, the journal holds neither.** `tokens.id` is an
+independent random reference (`t_…`), not a secret; authentication compares `sha256(token)`
+against `key_hash`. Anything that displays a token runs it through `describeTokenRef`, which masks
+anything shaped like a key (`k_` prefix) — that both keeps the plaintext out of the admin UI and
+handles rows written by an older version, where `id` *was* the token (there is deliberately no
+migration: `key_hash` was always correct, so those tokens keep authenticating).
+
+Token lifecycle *is* audited — issuing, revoking and re-granting each write an event carrying the
+token's reference, role and project allowlist, never the token and never its hash. That is also why
+`tokens` and `projects` are **not** rebuilt from the event stream: a replayable projection has to be
+reconstructible from the log, and a credential hash should not get a second home in a file that
+gets exported, backed up and copied around. `auditWrite` in `src/core/tokens.ts` is the seam — the
+mutation and its event share one transaction.
+
 ## Setup
 
 ```bash

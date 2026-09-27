@@ -10,6 +10,10 @@
 import type { Database } from "bun:sqlite";
 import { toEvent, type EventRow } from "./rows.ts";
 import type { EventType, KanbanEvent } from "./types.ts";
+// 渲染凭据事件的唯一出口：掩码规则住在 tokens.ts，这里不自己抄一份。
+// （依赖方向 events → tokens 是单向的：tokens.ts 只 import errors/tx/projects/rows/types，
+//   那几个都不 import events.ts，所以不会成环。）
+import { describeTokenRef } from "./tokens.ts";
 
 // 曾有 recordHeartbeat / lastHeartbeatTs（心跳**事件**的节流写入与读取），已删除：
 // 零调用点，且 `session_heartbeat` 事件从未被写入过。
@@ -209,12 +213,17 @@ export function describeEvent(event: KanbanEvent): string {
       return "heartbeat";
     // ---- 凭据 / 项目的审计事件（不是 rebuild 输入，见 types.ts 的注释）----
     // ⚠ 这些只记「发生了什么」，**绝不包含 key / key_hash**。
+    //
+    // `token_ref` 也过一遍 describeTokenRef：零迁移策略下老库的 `tokens.id`
+    // 就是明文密钥（见 tokens.ts 文件头），而事件表会被 export / 备份 / 重放。
+    // 写侧（tokens.ts 四个 emit）已经过滤过一遍，这里是渲染侧的兜底——
+    // 旧库里可能已经躺着写了明文的 token_ref 事件，渲染时不能把它原样念出来。
     case "token_issued":
       return `issued ${d.role ?? "?"} token for ${(d.projects as string[] | undefined)?.join(", ") || "(every project)"}`;
     case "token_revoked":
-      return `revoked token ${d.token_ref ?? ""}`.trim();
+      return `revoked token ${describeTokenRef(String(d.token_ref ?? ""))}`.trim();
     case "token_updated":
-      return `token ${d.token_ref ?? ""} updated (${d.field ?? ""})`;
+      return `token ${describeTokenRef(String(d.token_ref ?? ""))} updated (${d.field ?? ""})`;
     case "project_created":
       return `created project ${d.key ?? ""}`;
     case "project_renamed":

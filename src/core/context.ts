@@ -17,6 +17,8 @@ import { getConfig } from "./db.ts";
 import { getProject, type Project } from "./projects.ts";
 import { isStale, listSessions, toSessionView } from "./sessions.ts";
 import { taskRecentEvents } from "./events.ts";
+// 凭据事件的掩码规则与 events.ts / tokens.ts 同源（老库里 token_ref 可能是明文密钥）
+import { describeTokenRef } from "./tokens.ts";
 import {
   consumeHandoff,
   countPendingHandoffs,
@@ -671,7 +673,7 @@ function describeEventBrief(event: KanbanEvent): string {
     // ---- 以下几类不出现在任务时间线里，但必须有 case：缺了会退回原始事件名 ----
     // 凭据 / 项目的审计事件（不是 rebuild 输入，见 types.ts 的注释）
     case "token_issued": return `issued ${d.role ?? "?"} token`;
-    case "token_revoked": return `revoked token ${d.token_ref ?? ""}`.trim();
+    case "token_revoked": return `revoked token ${describeTokenRef(String(d.token_ref ?? ""))}`.trim();
     case "token_updated": return `token updated (${d.field ?? ""})`;
     case "project_created": return `created project ${d.key ?? ""}`;
     case "project_renamed": return `renamed project → ${d.to ?? ""}`;
