@@ -548,6 +548,10 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
           id: op.params.id,
         }),
       );
+      // `written_session_file` 不在这里下结论：写身份文件是**命令层**的动作
+      // （cmdSession 才知道 --no-write），它拿到返回值后会覆写这个字段。
+      // 曾经硬编码 false，而本地模式下其实写了——一个永远说谎的字段没人会看，
+      // 正是它让“远程模式下到底写没写”这个问题拖了很久才发现。
       return {
         data: sessionToJson(session, { written_session_file: false }),
         nextActions: [

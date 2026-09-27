@@ -19,7 +19,7 @@ import {
 import { createOutput } from "./output.ts";
 
 const USAGE = `Usage:
-  agent-kanban session start --agent <name> [--harness <name>] [--id s-xxx]
+  agent-kanban session start --agent <name> [--harness <name>] [--id s-xxx] [--no-write]
   agent-kanban session list [--all] [--json]
   agent-kanban session heartbeat [--session <id>]
   agent-kanban session end [--summary "what you did"] [--session <id>]
@@ -27,6 +27,9 @@ const USAGE = `Usage:
 Notes:
   start writes session_id into .kanban/sessions/<identity-key> (falling back to .kanban/session
   when no identity key can be derived), so later commands need no --session.
+  That happens in remote mode too: the file records which agent this machine is, not board
+  state (the server holds the board, and config.toml lives in the same local .kanban/).
+  Pass --no-write to skip it when the caller already passes the session id itself.
   The identity key is resolved in this order:
     1. $KANBAN_SESSION_KEY                        (any stable unique value)
     2. the harness session variable, e.g. PI_SESSION_ID (pi), PI_SESSION_FILE (oh-my-pi),
@@ -35,7 +38,8 @@ Notes:
   --harness is free-form and only labels the session on the board; it does not pick the key.
   Set $KANBAN_SESSION_KEY when your tool exports nothing usable (cursor-agent, codex).
   Agents sharing one directory therefore stay separate automatically.
-  In remote mode the session is still created on the server (--session only affects how the identity is passed).`;
+  In remote mode the session is created on the server, and the same local identity file is
+  written, so a remote project behaves exactly like a local one.`;
 
 export async function cmdSession(argv: string[]): Promise<ExitCodeValue> {
   const sub = argv[0];
@@ -111,10 +115,25 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
     });
     const session = data as Record<string, unknown>;
 
-    // 本地模式：写便捷文件，后续命令免传 --session（远程模式不写本地状态）
-    if (!getBool(args, "no-write") && ctx.backend.mode === "local") {
+    // 写本机身份文件，让后续命令免传 --session。
+    //
+    // ⚠ **本地与远程都要写**。曾经的实现是 `&& ctx.backend.mode === "local"`，
+    // 理由大概是“远程模式下状态在 server，别碰本地”。但**读的一侧没跟着改**：
+    // `currentSessionId()` 不分模式，照样去读 `.kanban/sessions/<key>`。于是
+    // 远程模式下 `session start` 报告成功、打印 session_id 与 identity key，
+    // 却一个字节都没落地（`.kanban` 目录甚至没被创建），紧接着的
+    // `task claim` 报 `missing session id, cannot tell who is operating`。
+    //
+    // 身份文件记的是**“这台机器上我是谁”**，不是看板状态：远程模式下
+    // config.toml 同样在本机 `.kanban/` 里，身份文件放这儿毫无矛盾。
+    // 真正该跳过的场合是显式的 `--no-write`（调用方自己管身份，
+    // 比如脚本里已经在用 KANBAN_SESSION）。
+    const wroteFile = !getBool(args, "no-write");
+    if (wroteFile) {
       writeSessionFile(ctx, String(session.id));
     }
+    // 反映实际结果（ops.ts 里曾硬编码 false —— 本地模式下明明写了却说没写）
+    session.written_session_file = wroteFile;
 
     out.line(`${styleGreen("✓")} Session registered`);
     out.line(`  session_id : ${session.id}`);

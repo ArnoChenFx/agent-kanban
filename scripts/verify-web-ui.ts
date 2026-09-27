@@ -13,7 +13,7 @@
 //
 // 找不到 Chrome/Edge 时**跳过并返回 0**（CI 镜像未必带浏览器，不能因此卡门禁）。
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -29,9 +29,23 @@ const PROJECT = "web-ui";
 const ALT_PROJECT = "web-ui-alt";
 const CARD_TITLE = "点开我有惊喜";
 
+/**
+ * 跑一次真实 CLI，**工作目录是临时目录而不是仓库根**。
+ *
+ * 为什么不用 ROOT：CLI 会把 session 身份写进 `<cwd>/.kanban/sessions/<key>`。
+ * 在仓库根跑的话，`session start` 会拿测试 session **覆盖掉开发者自己的身份文件**——
+ * 下一次在真项目里跑命令就会被认成这个测试 session。用临时目录则两者互不干扰。
+ *
+ * 同时这也让脚本回到真实用户的用法：进一个目录 → session start → 后续命令免 --session。
+ * 以前这里是显式塞 KANBAN_SESSION 绕过去的（绕的是 session start 在远程模式下
+ * 不写身份文件那个 bug，已修，见 src/commands/session.ts）。
+ */
 function run(args: string[], env: Record<string, string> = {}) {
   return new Promise<{ code: number; out: string; err: string }>((res) => {
-    const p = spawn("bun", ["run", "src/cli.ts", ...args], { cwd: ROOT, env: { ...process.env, ...env } });
+    const p = spawn("bun", ["run", join(ROOT, "src", "cli.ts"), ...args], {
+      cwd: dir,
+      env: { ...process.env, ...env },
+    });
     let out = "", err = "";
     p.stdout.on("data", (d) => (out += d));
     p.stderr.on("data", (d) => (err += d));
@@ -85,13 +99,9 @@ try {
   // 注意：plan save 默认就挂到任务上（要“不挂”才加 --no-attach）
   // 上游任务放在最后建：这样 CARD_TITLE 仍然是 T-0001，脚本后面的断言不用改
   //
-  // ⚠ **不能靠 `session start` 写默认会话文件**：它只在**本地模式**写
-  //   （`src/commands/session.ts`：`ctx.backend.mode === "local"`），
-  //   而本脚本全程带 KANBAN_SERVER，走的是远程模式。脚本以前依赖那个文件，
-  //   结果 task claim / plan save / handoff 全报 “missing session id”，
-  //   后面十几个断言（检查项计数、交接角标、计划页签…）连锁失败——
-  //   这个门禁在我改文案之前就已经是红的，不是文案改动引起的。
-  //   所以这里显式取回 session_id，用 KANBAN_SESSION 传给后面的命令。
+  // ⚠ 命令一律不带 --session / KANBAN_SESSION：身份必须从
+  //   `session start` 写下的身份文件里读出来。带了就等于把这个 bug 又盖住了。
+  //   身份文件落在临时工作目录里（见 run() 的注释），不会碰开发者自己的。
   const startRes = await run(["session", "start", "--agent", "pi-fix", "--harness", "pi", "--json"], env);
   let sessionId = "";
   try {
@@ -101,7 +111,15 @@ try {
     // 解析失败就留空，下面 check 会把原始输出报出来
   }
   check("造数据：session start", startRes.code === 0 && sessionId !== "", sessionId || startRes.err.trim().split("\n").slice(-2).join(" "));
-  const envWithSession = { ...env, KANBAN_SESSION: sessionId };
+  // 直接读目录而不去猜身份 key（那是 resolveSessionKey 的活，测试不重复它的逻辑）：
+  // 临时目录是全新的，所以该有且只有一个分片，内容就是刚拿到的 session id
+  const sessionFiles = readdirSync(join(dir, ".kanban", "sessions"));
+  check("session start 写下了身份分片（远程模式也得写）", sessionFiles.length === 1, sessionFiles.join(","));
+  check(
+    "分片内容就是刚拿到的 session id",
+    readFileSync(join(dir, ".kanban", "sessions", sessionFiles[0] ?? ""), "utf8").trim() === sessionId,
+    sessionId,
+  );
 
   const seeds: string[][] = [
     ["task", "add", CARD_TITLE, "-p", "0", "--check", "第一步,第二步", "-d", "详情页要能打开"],
@@ -113,7 +131,7 @@ try {
     ["task", "dep", "add", "T-0001", "T-0002"],
   ];
   for (const args of seeds) {
-    const r = await run(args, envWithSession);
+    const r = await run(args, env);
     check(`造数据：${args.slice(0, 2).join(" ")}`, r.code === 0, r.code === 0 ? "" : (r.out + r.err).split("\n").slice(-3).join(" "));
   }
 

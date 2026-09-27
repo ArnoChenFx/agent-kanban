@@ -18,6 +18,7 @@
  *   2. key 解析得出来时，**绝不能**回退读旧单文件——那等于让 B 冒充 A
  *   3. keyful 侧**不写**旧单文件——否则等于在新机制旁边留了个冒充后门
  *   4. 身份粒度不能比 agent 本身更细（codex 的 thread ≠ session，见下面那条测试）
+ *   5. **远程模式也写身份文件**——写入与读取必须对称，见第五个 describe
  *
  * 用法：真的 spawn `bun run src/cli.ts`，因为要证明的正是"两个进程在同一目录"的真实行为。
  */
@@ -28,6 +29,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -43,6 +45,11 @@ import {
   sessionKeyFilePath,
 } from "../src/core/paths.ts";
 import { readSessionFile, writeSessionFile, type Ctx } from "../src/commands/context.ts";
+import { migrate, openDb, setInitialConfig } from "../src/core/db.ts";
+import { createProject } from "../src/core/projects.ts";
+import { issueToken } from "../src/core/tokens.ts";
+import { withTx } from "../src/core/tx.ts";
+import { startServer } from "../src/server/http.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 
@@ -667,5 +674,207 @@ describe("同目录两个 agent 的真实行为（spawn CLI）", () => {
     });
     expect(ok.code).toBe(0);
     expect(ok.stderr).not.toContain("KANBAN_SESSION_KEY");
+  });
+});
+
+// =============================================================================
+// 五、远程模式：身份文件照样要写
+// =============================================================================
+
+describe("远程模式下 session start 同样写身份文件（写入与读取必须对称）", () => {
+  let dir: string;
+  let server: ReturnType<typeof startServer>;
+  let token: string;
+  let sessionId = "";
+  let project = "";
+  /** session start 所在的工作目录；后续命令必须复用它（换个目录就是换了个身份） */
+  let work = "";
+
+  const NOW = 1_767_225_600_000;
+
+  /**
+   * 跑真实 CLI。
+   *
+   * `work` 为空时新建一个干净目录；**同一个序列里的后续命令必须复用它**——
+   * 身份文件写在 `.kanban/sessions/<key>`，换个目录就等于换了个身份。
+   * （写这条测试时先踩了这个坑：每条命令各自 mkdtemp，结果 claim 跑在
+   * 一个从没 session start 过的目录里，报 missing session id，
+   * 看起来像是修复没生效。）
+   */
+  async function remoteCli(args: string[], work = "", extraEnv: Record<string, string> = {}) {
+    const cwd = work || mkdtempSync(join(tmpdir(), "kanban-remote-identity-"));
+    if (!work) madeDirs.push(cwd);
+    const proc = Bun.spawn(["bun", "run", join(ROOT, "src", "cli.ts"), ...args], {
+      cwd,
+      env: {
+        ...process.env,
+        KANBAN_SERVER: server.url,
+        KANBAN_PROJECT: project,
+        KANBAN_KEY: token,
+        // 关键：不能继承本机的 KANBAN_DB / KANBAN_SESSION，
+        // 否则测的就不是远程模式了（父进程可能正在本仓库里跑 agent）
+        KANBAN_DB: "",
+        KANBAN_SESSION: "",
+        PI_SESSION_ID: KEY_A,
+        PI_SESSION_FILE: "",
+        CLAUDE_CODE_SESSION_ID: "",
+        GROK_SESSION_ID: "",
+        CODEX_SESSION_ID: "",
+        DSH_SESSION_ID: "",
+        QODER_SESSION_ID: "",
+        QODERCN_SESSION_ID: "",
+        [SESSION_KEY_ENV]: "",
+        ...extraEnv,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    // 留下工作目录给断言查（身份文件在里面），测完统一删
+    return { code, stdout, stderr, work: cwd };
+  }
+
+  const madeDirs: string[] = [];
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "kanban-remote-identity-db-"));
+    const dbPath = join(dir, "server.db");
+    const handle = openDb(dbPath);
+    migrate(handle);
+    setInitialConfig(handle.raw, { projectName: "remote-identity" });
+    project = "remote-identity";
+    withTx(handle.raw, (tx) => {
+      createProject(tx.db, { key: project, name: "远程身份测试" });
+    });
+    token = issueToken(
+      handle.raw,
+      { role: "project", projects: [project], name: "test" },
+      NOW,
+    ).plaintext;
+    // now 要跟着真时钟走：CLI 子进程用 Date.now()，
+    // 固定成 2026-01 会让 server 端把刚建的 session 判成“早就失联”。
+    server = startServer({
+      dbPath,
+      host: "127.0.0.1",
+      port: 0,
+      reapIntervalSec: 3600,
+      now: () => Date.now(),
+      noBootstrap: true,
+    });
+  });
+
+  afterAll(() => {
+    server.stop();
+    rmSync(dir, { recursive: true, force: true });
+    for (const d of madeDirs) rmSync(d, { recursive: true, force: true });
+  });
+
+  /**
+   * 真实事故：`session start` 里有 `&& ctx.backend.mode === "local"`，
+   * 远程模式下**不写**身份文件；但读取端 `currentSessionId()` 不分模式，
+   * 照样去读它。于是：
+   *
+   *   ✓ Session registered          ← 报告成功
+   *   session_id : s-ky1roy          ← 打印了 id
+   *   identity   : pi-...            ← 连身份 key 都打印了
+   *   （.kanban 目录根本没被创建）
+   *   $ task claim T-0001
+   *   Error[USAGE]: missing session id, cannot tell who is operating
+   *
+   * 症状与“用户忘了跑 session start”一模一样，提示还反过来叫人去跑
+   * `session start` —— 已经跑过了。`verify:web` 就是这么红的三项。
+   */
+  test("session start 在远程模式下真的落盘了身份文件", async () => {
+    const start = await remoteCli(["session", "start", "--agent", "pi-fix", "--harness", "pi", "--json"]);
+    expect(start.code).toBe(0);
+    sessionId = (JSON.parse(start.stdout) as { id: string }).id;
+    work = start.work;
+
+    // 关键：文件必须存在，且内容就是刚拿到的 session id
+    const keyFile = sessionKeyFilePath(join(start.work, ".kanban"), `pi-${KEY_A}`);
+    expect(existsSync(keyFile)).toBe(true);
+    expect(readFileSync(keyFile, "utf8").trim()).toBe(sessionId);
+  });
+
+  test("written_session_file 如实反映（曾经硬编码 false，本地模式写却说没写）", async () => {
+    const work = mkdtempSync(join(tmpdir(), "kanban-remote-identity-"));
+    madeDirs.push(work);
+    const proc = Bun.spawn(
+      ["bun", "run", join(ROOT, "src", "cli.ts"), "session", "start", "--agent", "a", "--json", "--no-write"],
+      {
+        cwd: work,
+        env: {
+          ...process.env,
+          KANBAN_SERVER: server.url,
+          KANBAN_PROJECT: project,
+          KANBAN_KEY: token,
+          KANBAN_DB: "",
+          KANBAN_SESSION: "",
+          PI_SESSION_ID: KEY_B,
+          PI_SESSION_FILE: "",
+          [SESSION_KEY_ENV]: "",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [stdout, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      proc.exited,
+    ]);
+    expect(code).toBe(0);
+    expect((JSON.parse(stdout) as { written_session_file?: boolean }).written_session_file).toBe(false);
+    // --no-write 确实不落盘
+    expect(existsSync(join(work, ".kanban", "sessions", `pi-${KEY_B}`))).toBe(false);
+  });
+
+  test("后续命令免传 --session：claim / progress / end 全部成功", async () => {
+    // 整个远程目录里一条 KANBAN_SESSION 都没有，只能靠身份文件认人。
+    // 修复前这一条就报 missing session id。
+    // 注意全部复用 session start 那个 work —— 身份文件是写在里面的。
+    const add = await remoteCli(["task", "add", "远程卡", "--json"], work);
+    expect(add.code).toBe(0);
+    const id = (JSON.parse(add.stdout) as { id: string }).id;
+
+    const claim = await remoteCli(["task", "claim", id, "--json"], work);
+    expect(claim.code).toBe(0);
+    expect((JSON.parse(claim.stdout) as { assignee_session_id: string }).assignee_session_id).toBe(sessionId);
+
+    const progress = await remoteCli(["task", "progress", id, "--pct", "50", "--json"], work);
+    expect(progress.code).toBe(0);
+    expect((JSON.parse(progress.stdout) as { progress: number }).progress).toBe(50);
+
+    const end = await remoteCli(["session", "end", "--summary", "收工", "--json"], work);
+    expect(end.code).toBe(0);
+  });
+
+  test("还没 session start 就来认领：仍然报 missing session id（不是别的错）", async () => {
+    // 修的是“写”，不是把报错吞掉。没注册过就该明确报错。
+    const work = mkdtempSync(join(tmpdir(), "kanban-remote-identity-"));
+    madeDirs.push(work);
+    const proc = Bun.spawn(["bun", "run", join(ROOT, "src", "cli.ts"), "task", "claim", "T-0001", "--json"], {
+      cwd: work,
+      env: {
+        ...process.env,
+        KANBAN_SERVER: server.url,
+        KANBAN_PROJECT: project,
+        KANBAN_KEY: token,
+        KANBAN_DB: "",
+        KANBAN_SESSION: "",
+        PI_SESSION_ID: KEY_C,
+        PI_SESSION_FILE: "",
+        [SESSION_KEY_ENV]: "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("missing session id");
+    expect(stderr).toContain(`pi-${KEY_C}`);
   });
 });
