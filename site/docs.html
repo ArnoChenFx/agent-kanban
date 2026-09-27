@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>agent-kanban — Documentation</title>
+  <meta name="description" content="Documentation for agent-kanban: quick start, agent integration, command reference and exit codes.">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header>
+  <div class="container nav">
+    <a class="brand" href="./">agent-kanban</a>
+    <span class="spacer"></span>
+    <a href="./#how" data-i18n="nav.how">How it works</a>
+    <a href="./#install" data-i18n="nav.install">Install</a>
+    <a href="docs.html" data-i18n="nav.docs">Docs</a>
+    <a href="https://github.com/ArnoChenFx/agent-kanban">GitHub</a>
+    <button class="lang-toggle" type="button">中文</button>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+    <div class="hero" style="padding:56px 0 40px">
+      <div>
+        <h1 style="font-size:36px" data-i18n="docs.h1">Documentation</h1>
+        <p class="sub" style="max-width:640px" data-i18n="docs.lead">Everything you need to run agent-kanban and put your agents on it.</p>
+        <div class="docs-nav">
+          <a href="#quick" data-i18n="docs.nav.quick">Quick start</a>
+          <a href="#agents" data-i18n="docs.nav.agents">Agent integration</a>
+          <a href="#remote" data-i18n="docs.nav.remote">Server &amp; clients</a>
+          <a href="#cli" data-i18n="docs.nav.cli">Command reference</a>
+          <a href="#exit" data-i18n="docs.nav.exit">Exit codes</a>
+        </div>
+      </div>
+    </div>
+
+    <section id="quick" style="border-top:none;padding-top:24px">
+      <h2 data-i18n="qs.h2">Quick start</h2>
+      <p class="lead" data-i18n="qs.lead">Install, create a board, start the server. Three steps.</p>
+      <pre class="terminal"><span style="color:var(--fg-dim)"># macOS / Linux</span>
+curl -fsSL https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.sh | bash
+
+<span style="color:var(--fg-dim)"># Windows, any shell including cmd</span>
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.ps1 | iex"
+
+<span style="color:var(--fg-dim)"># in your repository</span>
+agent-kanban init
+agent-kanban install-protocol
+agent-kanban serve               <span style="color:var(--fg-dim)"># → http://127.0.0.1:7788/</span></pre>
+    </section>
+
+    <section id="agents">
+      <h2 data-i18n="agents.h2">Put your agents on the board</h2>
+      <p class="lead" data-i18n="agents.lead">Three complementary options: the protocol file enforces the habit, the MCP tools do the operations, the skill teaches the workflow.</p>
+
+      <h3 data-i18n="agents.p1h">The protocol file (works with any agent)</h3>
+      <p data-i18n="agents.p1p">Writes a managed block between agent-kanban:begin and agent-kanban:end markers, and touches nothing else in the file. doctor reports when the installed block is behind the CLI version.</p>
+      <pre class="terminal">agent-kanban install-protocol        <span style="color:var(--fg-dim)"># write the managed block into AGENTS.md</span>
+agent-kanban install-protocol --check   <span style="color:var(--fg-dim)"># CI guard: exits 2 if missing or outdated</span>
+agent-kanban install-protocol --file .cursor/rules/kanban.mdc</pre>
+
+      <h3 style="margin-top:32px" data-i18n="agents.p2h">MCP tools</h3>
+      <p data-i18n="agents.p2p">Register the server with any MCP-capable harness. The board is found by walking up from the harness working directory, so agents in the same repository share it automatically.</p>
+      <pre class="terminal">claude mcp add agent-kanban -- agent-kanban mcp
+pi mcp add agent-kanban -- agent-kanban mcp</pre>
+      <div class="doc-note" style="margin-top:16px">
+        <span data-i18n="integ.opt2p">20 tools over stdio, thin wrappers over the same core the CLI uses. Every tool returns { ok, data, next_actions }, failures carry the same exit-code semantics as the CLI.</span>
+      </div>
+
+      <h3 style="margin-top:32px" data-i18n="agents.p3h">The agent skill</h3>
+      <p data-i18n="agents.p3p">Ships the parts an agent keeps getting wrong as reference files: the full command reference, the MCP tool mapping, the local-versus-remote differences, and a troubleshooting table keyed by exit code. Install it into a project that already has a board.</p>
+      <pre class="terminal">npx skills add ArnoChenFx/agent-kanban --skill agent-kanban</pre>
+    </section>
+
+    <section id="remote">
+      <h2 data-i18n="remote.h2">Server on one machine, CLI everywhere else</h2>
+      <p class="lead" data-i18n="remote.lead">One serve process can host many projects. Each project is fully isolated: its own tasks, its own tokens, its own ID space. Clients only need the server URL, a project key and a token — no database, no runtime.</p>
+
+      <h3 data-i18n="remote.server.h">On the server machine</h3>
+      <pre class="terminal">agent-kanban serve                                  <span style="color:var(--fg-dim)"># prints the admin token once</span>
+agent-kanban admin project add my-app
+agent-kanban admin token create --project my-app --name "CI runner"
+<span style="color:var(--fg-dim)"># → k_a1b2c3...</span></pre>
+
+      <h3 style="margin-top:32px" data-i18n="remote.client.h">On a client machine</h3>
+      <pre class="terminal"><span style="color:var(--fg-dim)"># write &lt;project&gt;/.kanban/config.toml</span>
+mode = "remote"
+
+[server]
+url   = "https://kanban.example.com"
+token = "k_a1b2c3..."
+
+[project]
+key = "my-app"</pre>
+      <pre class="terminal" style="margin-top:12px">agent-kanban config show     <span style="color:var(--fg-dim)"># confirm what resolved and where it came from</span>
+agent-kanban task list       <span style="color:var(--fg-dim)"># no flags needed from here on</span></pre>
+      <p style="margin-top:12px" data-i18n="remote.oneline">Or set it up in one command:</p>
+      <pre class="terminal">agent-kanban config init --server https://kanban.example.com --project my-app --key k_a1b2c3</pre>
+
+      <div class="doc-note" style="margin-top:20px" data-i18n="remote.note">Mode defaults to remote when a server is set, local otherwise. Precedence: CLI flags &gt; environment variables &gt; config.toml &gt; derived defaults. An empty environment variable counts as unset, not as an empty value.</div>
+      <div class="doc-note" data-i18n="remote.sec">serve does not terminate TLS and binds 127.0.0.1 by default. Put it behind a TLS terminator before binding 0.0.0.0 — without TLS, tokens travel in plaintext.</div>
+    </section>
+
+    <section id="cli">
+      <h2 data-i18n="cli.h2">Command reference</h2>
+      <p class="lead" data-i18n="cli.lead">Run agent-kanban &lt;command&gt; --help for the full option list.</p>
+      <table class="doc-table">
+        <thead><tr><th>Command</th><th data-i18n="docs.purpose">Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inline">agent-kanban init</code></td><td data-i18n="cmd.init">Create the local board (.kanban/)</td></tr>
+          <tr><td><code class="inline">agent-kanban install-protocol</code></td><td data-i18n="cmd.protocol">Write the agent collaboration protocol into the project's AGENTS.md</td></tr>
+          <tr><td><code class="inline">agent-kanban mcp</code></td><td data-i18n="cmd.mcp">Run the MCP server (stdio) so an agent can call the board as tools</td></tr>
+          <tr><td><code class="inline">agent-kanban session start | end | list | heartbeat</code></td><td data-i18n="cmd.session">Session lifecycle</td></tr>
+          <tr><td><code class="inline">agent-kanban task add | list | show | claim | progress | block | done | …</code></td><td data-i18n="cmd.task">Task operations</td></tr>
+          <tr><td><code class="inline">agent-kanban board</code></td><td data-i18n="cmd.board">Swimlane view in the terminal</td></tr>
+          <tr><td><code class="inline">agent-kanban context</code></td><td data-i18n="cmd.context">Read the situation: board + handoffs + suggested actions</td></tr>
+          <tr><td><code class="inline">agent-kanban resume &lt;task&gt;</code></td><td data-i18n="cmd.resume">Take over a task; injects handoff and timeline</td></tr>
+          <tr><td><code class="inline">agent-kanban handoff</code></td><td data-i18n="cmd.handoff">Write a handoff (summary / next / blockers / open)</td></tr>
+          <tr><td><code class="inline">agent-kanban plan save | show | list | history | at | attach</code></td><td data-i18n="cmd.plan">Versioned plans</td></tr>
+          <tr><td><code class="inline">agent-kanban rebuild [--write]</code></td><td data-i18n="cmd.rebuild">Replay the event log and verify the projection</td></tr>
+          <tr><td><code class="inline">agent-kanban doctor [--deep]</code></td><td data-i18n="cmd.doctor">Consistency self-check and repair</td></tr>
+          <tr><td><code class="inline">agent-kanban export [--out &lt;dir&gt;]</code></td><td data-i18n="cmd.export">Export the event journal (one file per day)</td></tr>
+          <tr><td><code class="inline">agent-kanban import &lt;dir&gt; [--dry-run]</code></td><td data-i18n="cmd.import">Rebuild the database from a journal (cross-machine migration)</td></tr>
+          <tr><td><code class="inline">agent-kanban snapshot</code></td><td data-i18n="cmd.snapshot">Write a human-readable board snapshot</td></tr>
+          <tr><td><code class="inline">agent-kanban compact [--keep-days 30]</code></td><td data-i18n="cmd.compact">Trim old events (snapshots first)</td></tr>
+          <tr><td><code class="inline">agent-kanban config show | init | set | use | path</code></td><td data-i18n="cmd.config">Configuration</td></tr>
+          <tr><td><code class="inline">agent-kanban project list</code></td><td data-i18n="cmd.project">Query projects (local database)</td></tr>
+          <tr><td><code class="inline">agent-kanban admin project … | token …</code></td><td data-i18n="cmd.admin">Project and token management</td></tr>
+          <tr><td><code class="inline">agent-kanban update [--check]</code></td><td data-i18n="cmd.update">Self-update the binary from GitHub Releases (checksum-verified)</td></tr>
+          <tr><td><code class="inline">agent-kanban serve</code></td><td data-i18n="cmd.serve">Run the HTTP + SSE server</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="exit">
+      <h2 data-i18n="exit.h2">Exit codes</h2>
+      <p class="lead" data-i18n="exit.lead">A published contract. Agents branch on the code, never on message text.</p>
+      <table class="doc-table">
+        <thead><tr><th>Code</th><th>Name</th><th>Meaning</th><th data-i18n="exit.action.h">What to do</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td>OK</td><td data-i18n="exit.m.0">Success</td><td data-i18n="exit.a.0">—</td></tr>
+          <tr><td>1</td><td>USAGE</td><td data-i18n="exit.m.1">Bad arguments</td><td data-i18n="exit.a.1">Read details.usage and fix the command</td></tr>
+          <tr><td>2</td><td>STATE</td><td data-i18n="exit.m.2">Task missing, illegal transition, missing required --reason</td><td data-i18n="exit.a.2">Do not retry as-is</td></tr>
+          <tr><td>3</td><td>CONFLICT</td><td data-i18n="exit.m.3">Task is held by another session with a live lease</td><td data-i18n="exit.a.3">Work on something else, or wait. Do not reach for --force</td></tr>
+          <tr><td>4</td><td>BUSY</td><td data-i18n="exit.m.4">Database is locked</td><td data-i18n="exit.a.4">Back off and retry, at most 3 times</td></tr>
+          <tr><td>5</td><td>NOT_INIT</td><td data-i18n="exit.m.5">No .kanban/ directory, or schema needs migrating</td><td data-i18n="exit.a.5">Run agent-kanban init</td></tr>
+          <tr><td>6</td><td>INTERNAL</td><td data-i18n="exit.m.6">Bug</td><td data-i18n="exit.a.6">Report it, do not retry</td></tr>
+          <tr><td>7</td><td>AUTH</td><td data-i18n="exit.m.7">Missing key, wrong key, or project not found</td><td data-i18n="exit.a.7">Fix your credentials</td></tr>
+        </tbody>
+      </table>
+      <p class="lead" style="margin-top:32px" data-i18n="docs.more">More (FAQ, configuration, remote mode, HTTP API) lives in the GitHub README and the developer docs.</p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="container">
+    <span>agent-kanban</span>
+    <span>
+      <a href="https://github.com/ArnoChenFx/agent-kanban">GitHub</a> ·
+      <a href="https://github.com/ArnoChenFx/agent-kanban/releases">Releases</a> ·
+      <a href="https://github.com/ArnoChenFx/agent-kanban/issues">Issues</a>
+    </span>
+  </div>
+</footer>
+
+<script src="assets/i18n.js"></script>
+</body>
+</html>

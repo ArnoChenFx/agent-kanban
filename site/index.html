@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>agent-kanban — a task board that survives your AI agents' crashes</title>
+  <meta name="description" content="A project-scoped task board that lets multiple AI agent sessions share one source of truth, and pick up each other's work when they crash.">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header>
+  <div class="container nav">
+    <a class="brand" href="./">agent-kanban</a>
+    <span class="spacer"></span>
+    <a href="#how" data-i18n="nav.how">How it works</a>
+    <a href="#install" data-i18n="nav.install">Install</a>
+    <a href="docs.html" data-i18n="nav.docs">Docs</a>
+    <a href="https://github.com/ArnoChenFx/agent-kanban">GitHub</a>
+    <button class="lang-toggle" type="button">中文</button>
+  </div>
+</header>
+
+<main>
+  <div class="hero-wrap">
+    <div class="container hero">
+      <div>
+        <h1 data-i18n="hero.h1">Whoever picks it up<br><span class="hl">knows exactly what happened.</span></h1>
+        <p class="sub" data-i18n="hero.sub">agent-kanban is a project-scoped task board that lets multiple AI agent sessions share one source of truth, and pick up each other's work when they crash.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#install" data-i18n="hero.cta1">Get started</a>
+          <a class="btn btn-ghost" href="https://github.com/ArnoChenFx/agent-kanban" data-i18n="hero.cta2">View on GitHub</a>
+        </div>
+        <div class="badges">
+          <span data-i18n="hero.badge1">Single binary</span>
+          <span data-i18n="hero.badge2">macOS · Linux · Windows</span>
+          <span data-i18n="hero.badge3">Web UI included</span>
+        </div>
+      </div>
+      <div class="terminal-window" aria-hidden="true">
+        <div class="term-head"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div>
+        <div class="term-body" id="hero-term"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <section id="why">
+      <h2 data-i18n="why.h2">Every restart is archaeology</h2>
+      <p class="lead" data-i18n="why.lead">You run several coding agents against one repository. An agent dies halfway through a task: a network blip, an OOM kill, or a closed laptop. What survives is work in a terminal scrollback that nobody can read later.</p>
+      <div class="grid">
+        <div class="card"><h3 data-i18n="why.c1h">Context dies with the session</h3><p data-i18n="why.c1p">Agent A was halfway through rewriting the auth layer. That context lived only in Agent A's prompt window.</p></div>
+        <div class="card"><h3 data-i18n="why.c2h">Next agent starts from zero</h3><p data-i18n="why.c2p">Agent B sees a task titled "fix auth" and starts from scratch, or worse, starts conflicting with A.</p></div>
+        <div class="card"><h3 data-i18n="why.c3h">Nobody knows what's stale</h3><p data-i18n="why.c3p">Which of the three open branches is current? The task list is a TODO file, the reasoning is in an output window, the status is in your head.</p></div>
+      </div>
+    </section>
+
+    <section id="how">
+      <h2 data-i18n="how.h2">Four ideas carry the whole design</h2>
+      <p class="lead" data-i18n="how.lead">Each agent gets a lease on a task, an append-only event log, and a handoff protocol, so a new session starts with the previous session's actual context instead of a task title.</p>
+      <div class="grid">
+        <div class="card"><h3><span class="num">1</span><span data-i18n="how.1h">Ownership is a lease</span></h3><p data-i18n="how.1p"><code class="inline">task claim</code> grants a time-boxed lease. When it expires (crash, kill, or walk-away), the task is automatically reclaimed for the next session.</p></div>
+        <div class="card"><h3><span class="num">2</span><span data-i18n="how.2h">The event log is the truth</span></h3><p data-i18n="how.2p">Every state change is an event. The board is a projection, and <code class="inline">rebuild</code> can replay the log and diff it against what's stored.</p></div>
+        <div class="card"><h3><span class="num">3</span><span data-i18n="how.3h">Handoffs are written, not generated</span></h3><p data-i18n="how.3p">A stopping session writes what's done, what's next, what's blocked. <code class="inline">resume</code> shows it first. Crash-generated notes explicitly say the previous holder is unreachable.</p></div>
+        <div class="card"><h3><span class="num">4</span><span data-i18n="how.4h">Plans are versioned</span></h3><p data-i18n="how.4p"><code class="inline">plan save</code> never overwrites; it supersedes. The full chain, and the reasoning behind any decision, stays queryable.</p></div>
+      </div>
+    </section>
+
+    <section id="screenshots">
+      <h2 data-i18n="shots.h2">The board</h2>
+      <p class="lead" data-i18n="shots.lead">A web UI with a kanban view, task detail timelines, and live updates over SSE, served locally by the same binary.</p>
+      <div class="shots">
+        <figure>
+          <img src="images/screenshot.png" alt="agent-kanban board view">
+          <figcaption data-i18n="shots.cap1">Kanban board: lease holders, progress, blockers at a glance</figcaption>
+        </figure>
+        <figure>
+          <img src="images/task.png" alt="agent-kanban task detail">
+          <figcaption data-i18n="shots.cap2">Task detail: checklist, dependencies, and the full event timeline</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="install">
+      <h2 data-i18n="inst.h2">Install</h2>
+      <p class="lead" data-i18n="inst.lead">One-line install, no runtime required. The binary is self-contained: the Bun runtime, the database schema and the whole web UI are embedded.</p>
+
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" data-tab="macos" type="button" data-i18n="inst.tab.macos">macOS / Linux</button>
+        <button class="tab-btn" data-tab="windows" type="button" data-i18n="inst.tab.win">Windows</button>
+        <button class="tab-btn" data-tab="source" type="button" data-i18n="inst.tab.src">Build from source</button>
+      </div>
+
+      <div class="tab-panel active" id="tab-macos">
+        <pre class="terminal">curl -fsSL https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.sh | bash</pre>
+        <p class="tab-note" data-i18n="inst.note.mac">Installs to ~/.local/bin and adds it to your PATH. No sudo. Re-run the same command to upgrade, or use agent-kanban update.</p>
+      </div>
+      <div class="tab-panel" id="tab-windows">
+        <pre class="terminal"><span style="color:var(--fg-dim)"># any shell, including cmd</span>
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.ps1 | iex"
+
+<span style="color:var(--fg-dim)"># or, inside an open PowerShell window</span>
+irm https://raw.githubusercontent.com/ArnoChenFx/agent-kanban/main/install/install.ps1 | iex</pre>
+        <p class="tab-note" data-i18n="inst.note.win">Works from cmd and PowerShell alike. Installs to %LOCALAPPDATA%\Programs\agent-kanban and adds it to your PATH. No administrator rights.</p>
+      </div>
+      <div class="tab-panel" id="tab-source">
+        <pre class="terminal">git clone https://github.com/ArnoChenFx/agent-kanban.git
+cd agent-kanban
+bun install
+bun run build:binary      <span style="color:var(--fg-dim)"># frontend + embedded assets + compiled binary</span>
+./dist/agent-kanban init</pre>
+        <p class="tab-note" data-i18n="inst.note.src">Requires Bun ≥ 1.4.2.</p>
+      </div>
+
+      <h3 style="margin:36px 0 12px" data-i18n="inst.next.h">Then, in your repository</h3>
+      <pre class="terminal">agent-kanban init                <span style="color:var(--fg-dim)"># create a board in the current directory</span>
+agent-kanban install-protocol    <span style="color:var(--fg-dim)"># teach your agents to use the board</span>
+agent-kanban serve               <span style="color:var(--fg-dim)"># → http://127.0.0.1:7788/</span></pre>
+      <p class="tab-note" data-i18n="inst.next.note">install-protocol writes the collaboration protocol into the project's AGENTS.md, so agents that read it know to run session start and context before touching code.</p>
+
+      <h3 style="margin:48px 0 12px" data-i18n="integ.h">Put your agents on the board</h3>
+      <p class="lead" style="margin-bottom:24px" data-i18n="integ.lead">Three complementary ways. The skill teaches the workflow, the protocol file enforces the habit, the MCP tools give the agent hands.</p>
+      <div class="grid">
+        <div class="card">
+          <h3 data-i18n="integ.opt1h">1. The protocol file</h3>
+          <p data-i18n="integ.opt1p">Writes a managed block into AGENTS.md so any agent that reads it knows to run <code class="inline">session start</code> and <code class="inline">context</code> first. Supports <code class="inline">--check</code> as a CI guard.</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="integ.opt2h">2. MCP tools</h3>
+          <p data-i18n="integ.opt2p">20 tools over stdio, thin wrappers over the same core the CLI uses. Every tool returns <code class="inline">{ ok, data, next_actions }</code>, failures carry the same exit-code semantics as the CLI.</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="integ.opt3h">3. The agent skill</h3>
+          <p data-i18n="integ.opt3p">Teaches the workflow: what to do on exit code 3, that progress renews the lease, why doing → done goes through review.</p>
+        </div>
+      </div>
+      <pre class="terminal" style="margin-top:16px">npx skills add ArnoChenFx/agent-kanban --skill agent-kanban</pre>
+      <p class="tab-note" data-i18n="integ.more">See the <a href="docs.html">docs</a> for details.</p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="container">
+    <span>agent-kanban</span>
+    <span>
+      <a href="https://github.com/ArnoChenFx/agent-kanban">GitHub</a> ·
+      <a href="https://github.com/ArnoChenFx/agent-kanban/releases">Releases</a> ·
+      <a href="https://github.com/ArnoChenFx/agent-kanban/issues">Issues</a>
+    </span>
+  </div>
+</footer>
+
+<script src="assets/i18n.js"></script>
+<script>
+// tabs
+document.querySelectorAll(".tab-btn").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    document.querySelectorAll(".tab-btn").forEach(function (b) { b.classList.remove("active"); });
+    document.querySelectorAll(".tab-panel").forEach(function (p) { p.classList.remove("active"); });
+    btn.classList.add("active");
+    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+  });
+});
+
+// hero terminal: typed commands, instant outputs, loop
+(function () {
+  var body = document.getElementById("hero-term");
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var P = '<span class="t-prompt">$ </span>';
+  var seq = [
+    { cmd: "agent-kanban session start --agent pi", out: '<span class="t-dim">  session s-4k9d2m started · lease 15m\n\n</span>' },
+    { cmd: "agent-kanban context", out:
+      '<span class="t-warn">  ⚠ T-0007 doing · holder s-8fj21k · lease expired</span>\n' +
+      '<span class="t-dim">    handoff: "auth rewrite 60%, migrations pending"</span>\n' +
+      '<span class="t-ok">  ✓ 3 tasks ready to claim\n\n</span>' },
+    { cmd: "agent-kanban resume T-0007", out:
+      '<span class="t-ok">  ✓ you hold T-0007</span>\n' +
+      '<span class="t-dim">  handoff + 41-event timeline loaded\n\n</span>' },
+    { cmd: "agent-kanban task progress T-0007 --pct 80", out:
+      '<span class="t-ok">  ✓ saved · lease renewed\n\n</span>' }
+  ];
+
+  function renderStatic() {
+    body.innerHTML = seq.map(function (s) {
+      return P + s.cmd + "\n" + s.out;
+    }).join("") + '<span class="cursor"></span>';
+  }
+
+  if (reduce) { renderStatic(); return; }
+
+  function typeLine(step, done) {
+    var line = document.createElement("div");
+    body.appendChild(line);
+    var i = 0;
+    (function tick() {
+      if (i <= step.cmd.length) {
+        line.innerHTML = P + step.cmd.slice(0, i) + '<span class="cursor"></span>';
+        i++;
+        setTimeout(tick, 34);
+      } else {
+        line.innerHTML = P + step.cmd;
+        setTimeout(function () {
+          var out = document.createElement("div");
+          out.innerHTML = step.out;
+          body.appendChild(out);
+          done();
+        }, 320);
+      }
+    })();
+  }
+
+  function run(idx) {
+    if (idx >= seq.length) {
+      setTimeout(function () { body.innerHTML = ""; run(0); }, 5200);
+      return;
+    }
+    typeLine(seq[idx], function () { run(idx + 1); });
+  }
+  run(0);
+})();
+</script>
+
+</body>
+</html>
