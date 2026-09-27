@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -192,12 +192,15 @@ describe("applyUpdate", () => {
     const exe = join(dir, "agent-kanban");
     writeFileSync(exe, "old-binary");
 
+    // macOS 的 $TMPDIR 在 /private/var 符号链接后面，applyUpdate 内部会
+    // realpath 解析，所以断言必须对齐到解析后的路径（Windows/Linux 上原样返回）
+    const resolved = realpathSync(exe);
     const { exePath, backupPath } = applyUpdate({ exePath: exe, binary: new TextEncoder().encode("new-binary") });
-    expect(exePath).toBe(exe);
-    expect(backupPath).toBe(`${exe}.old`);
-    expect(readFileSync(exe, "utf8")).toBe("new-binary");
-    expect(readFileSync(`${exe}.old`, "utf8")).toBe("old-binary");
-    expect(existsSync(`${exe}.new`)).toBe(false);
+    expect(exePath).toBe(resolved);
+    expect(backupPath).toBe(`${resolved}.old`);
+    expect(readFileSync(resolved, "utf8")).toBe("new-binary");
+    expect(readFileSync(`${resolved}.old`, "utf8")).toBe("old-binary");
+    expect(existsSync(`${resolved}.new`)).toBe(false);
   });
 
   test("a stale .old from a previous run does not block the update", () => {
