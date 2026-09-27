@@ -38,7 +38,7 @@ import { createProject, generateApiKey, hashApiKey } from "../core/projects.ts";
 import { ensureAdminToken, readConfigFile, writeConfigFile } from "../core/config.ts";
 import { reapZombies } from "../core/sessions.ts";
 import { queryEvents } from "../core/events.ts";
-import { toEvent } from "../core/rows.ts";
+import { eventToJson, toEvent } from "../core/rows.ts";
 import { style } from "../core/format.ts";
 import { renderAdminPage } from "../server/admin-page.ts";
 import { EMBEDDED_ASSETS, EMBEDDED_BYTES, EMBEDDED_COUNT } from "./assets.generated.ts";
@@ -340,7 +340,8 @@ async function handleRequest(
     const after = Number(url.searchParams.get("after") ?? "0");
     const limit = Number(url.searchParams.get("limit") ?? "200");
     const rows = queryEvents(db, { projectKey: targetProject, sinceSeq: after, order: "asc", limit });
-    return json({ ok: true, data: rows.map((r) => toEvent(r)) });
+    // eventToJson：与 Op 路径同源，保证 /api/events 和 /api/op 返回的事件形状一致
+    return json({ ok: true, data: rows.map((r) => eventToJson(toEvent(r))) });
   }
 
   return jsonError(KanbanError.state(`unknown endpoint: ${path}`, { reason: "unknown_endpoint" }), 404);
@@ -679,11 +680,12 @@ function handleSse(req: Request, db: Database, url: URL, nowFn: () => number): R
         try {
           const rows = queryEvents(db, { projectKey, sinceSeq: cursor, order: "asc", limit: 100 });
           for (const row of rows) {
-            const event = toEvent(row);
-            cursor = event.seq;
+            // 游标用 row.seq（与领域对象同一个值），推送体走 eventToJson 转成 snake_case
+            cursor = row.seq;
+            const event = eventToJson(toEvent(row));
             send(
-              `id: ${event.seq}\n` +
-                `event: ${event.type}\n` +
+              `id: ${row.seq}\n` +
+                `event: ${row.type}\n` +
                 `data: ${JSON.stringify(event)}\n\n`,
             );
           }

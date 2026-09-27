@@ -650,4 +650,22 @@ describe("同目录两个 agent 的真实行为（spawn CLI）", () => {
     expect(new Set(holders).size).toBe(3);
     expect(new Set(holders)).toEqual(new Set([sessionA, sessionB, bareShellSession]));
   });
+
+  test("Qoder 环境（有 QODER_* 标记、无会话 id）身份退化时 stderr 给修复提示", async () => {
+    await cli(["task", "add", "card-qoder-hint"]);
+    const card = await idOf("card-qoder-hint");
+    const r = await cli(["session", "start", "--agent", "qoder-agent", "--json"], "", {
+      QODERCN_SESSION_TYPE: "app",
+    });
+    expect(r.code).toBe(0);
+    // 提示走 stderr：--json 模式 stdout 只能有单个 JSON
+    expect(r.stderr).toContain("Qoder injects no session-id env var");
+    expect(r.stderr).toContain("KANBAN_SESSION_KEY=qoder-<that-uuid>");
+    // 拿到身份的进程不需要提示
+    const ok = await cli(["task", "claim", card, "--json"], KEY_A, {
+      QODERCN_SESSION_TYPE: "app",
+    });
+    expect(ok.code).toBe(0);
+    expect(ok.stderr).not.toContain("KANBAN_SESSION_KEY");
+  });
 });

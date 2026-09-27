@@ -71,7 +71,12 @@ const { Database } = await import("bun:sqlite");
 const db = new Database(`${ROOT}/.kanban/kanban.db`, { readwrite: true, create: false });
 db.query("UPDATE tasks SET title = '被偷偷改过的标题', status = 'doing' WHERE id = 'T-0002'").run();
 db.query("UPDATE tasks SET progress = 99 WHERE id = 'T-0003'").run();
-db.query("DELETE FROM task_deps WHERE task_id = 'T-0003'").run();
+// project_key 不可省：T 编号是 per-project 的，这脚本跑在真实 .kanban 库上，
+// 不加过滤会连带删掉别的 project 的同号依赖边
+const projectKey =
+  db.query<{ key: string }, []>("SELECT key FROM projects ORDER BY created_at LIMIT 1").get()?.key ??
+  "";
+db.query("DELETE FROM task_deps WHERE project_key = ? AND task_id = 'T-0003'").run(projectKey);
 db.close();
 console.log("已直接改库：改标题/状态、错改进度、删掉一条依赖");
 

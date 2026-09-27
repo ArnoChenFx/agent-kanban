@@ -247,6 +247,40 @@ export function taskToJson(task: Task): Record<string, unknown> {
   };
 }
 
+/**
+ * 事件 → JSON 输出形状（snake_case，与 taskToJson / sessionToJson 同风格）。
+ *
+ * ## 这个函数为什么曾经不存在（别删）
+ *
+ * 文件头写着"JSON 输出又必须回到 snake_case……三处转换集中在这里"，
+ * 但事件这条路上**没有第三处**：`ops.ts` 的 `events.list` / `events.tail` /
+ * `task.get` 的 `timeline`，以及 `http.ts` 的 `/api/events` 与 SSE 推送，
+ * 全都把领域对象 `KanbanEvent`（驼峰 `sessionId` / `taskId` / `planId` / `projectKey`）
+ * 原样 `JSON.stringify` 出去了。
+ *
+ * 前端 `web/src/components/task-detail.tsx` 按对外契约读 `e.session_id`，
+ * 于是每一条事件都取到 `undefined`，走 `?? "system"` 兜底——
+ * **任务时间线上"谁做的"永远显示 system**。数据本身是对的：
+ * 库里的 session_id 有真值（s-xxxxxx），只是没被送到前端。
+ *
+ * 这个 bug 特别难查，因为症状（全是 system）和"这些都是系统事件"一模一样，
+ * 不报错、不空屏、其它页签全正常。`test/web-contract.test.ts` 的
+ * "事件字段形状" 那个 describe 是它的守卫。
+ */
+export function eventToJson(event: KanbanEvent): Record<string, unknown> {
+  return {
+    seq: event.seq,
+    ts: event.ts,
+    session_id: event.sessionId,
+    type: event.type,
+    task_id: event.taskId,
+    plan_id: event.planId,
+    project_key: event.projectKey,
+    // data 是普通 JSON（不是领域对象），原样透传，不做键名转换
+    data: event.data,
+  };
+}
+
 /** Session → JSON 输出形状 */
 export function sessionToJson(session: Session, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {

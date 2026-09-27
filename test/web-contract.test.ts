@@ -7,12 +7,13 @@
  * 而服务端（以及 CLI / MCP）一直返回**任务本体**，
  * 结果点开任务详情就抛 `Cannot read properties of undefined (reading 'plan_id')`。
  *
- * 这里钉住五件事：
+ * 这里钉住六件事：
  * 1. `task.get` 的 data 就是任务本体（不是包装对象），且带上前端要读的字段
  * 2. 前端 `web/src/lib/api.ts` 不能再出现 `data.task` 这种拆包装的写法
  * 3. `handoff.list` / `task.transition` 这类前端在调的 Op 必须真的存在（曾长期是"未实现"）
  * 4. 描述字段的参数名是 `description`（曾写成 `body` → 服务端静默忽略 → 填了等于没填）
  * 5. `task.get` 必须真的返回描述与检查项**明细**（详情抽屉概览区的数据源）
+ * 6. 事件字段是 snake_case 且带真实 `session_id`（曾直出驼峰领域对象 → 时间线全显示 system）
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -290,6 +291,134 @@ describe("描述与检查项：写得进也要读得回（Web 概览区的两端
     expect(res.data.unfinished_dependencies).toEqual([]);
     const details = res.data.dependency_details as Array<{ id: string; done: boolean }>;
     expect(details.map((d) => d.done)).toEqual([true]);
+  });
+});
+
+describe("事件字段形状：时间线的“谁做的”（全显示 system 的那次）", () => {
+  /**
+   * 背景：`rows.ts` 的文件头说“JSON 输出必须回到 snake_case，三处转换集中在这里”，
+   * 但事件这条路**漏了第三处**——`events.list` / `events.tail` / `task.get` 的
+   * `timeline` / `/api/events` / SSE 全都把驼峰领域对象直接 JSON.stringify 出去。
+   * 前端 `task-detail.tsx` 读 `e.session_id` 恒为 undefined，于是每条都走
+   * `?? "system"` 兜底。库里 session_id 是有真值的，只是没送到前端。
+   *
+   * 难查的原因：症状（全是 system）与“这些都是系统事件”完全一样，
+   * 不报错、不空屏、其它页签全正常。
+   */
+  let taskId = "";
+
+  beforeAll(async () => {
+    const created = await callOp<{ id: string }>({
+      kind: "task.create",
+      params: { title: "时间线要显示会话名的卡", priority: 2 },
+    });
+    taskId = created.data.id;
+    await callOp({ kind: "task.claim", params: { task_id: taskId } });
+    await callOp({ kind: "task.progress", params: { task_id: taskId, pct: 40, note: "推进中" } });
+  });
+
+  /** 事件的对外形状：snake_case，且必须真的有 session_id（不能是 undefined） */
+  const EXPECTED_KEYS = ["seq", "ts", "session_id", "type", "task_id", "plan_id", "project_key", "data"];
+
+  /**
+   * 收集形状问题并一次性断言。
+   *
+   * 不用 `expect(条件).toBe(...)` 逐条抛：一条事件有 8 个字段 × 4 个数据源，
+   * 第一个错就中断，报告里看不到“到底哪个出口出的问题”。收集起来一次列全。
+   */
+  function assertEventShape(events: Array<Record<string, unknown>>, where: string) {
+    expect(events.length).toBeGreaterThan(0);
+    const problems: string[] = [];
+    for (const e of events) {
+      // 驼峰键一旦混进 JSON（领域对象直出），前端就永远读不到 session_id
+      for (const camel of ["sessionId", "taskId", "planId", "projectKey"]) {
+        if (camel in e) problems.push(`${where} seq=${e.seq}: 出现了驼峰键 ${camel}`);
+      }
+      for (const key of EXPECTED_KEYS) {
+        if (!(key in e)) problems.push(`${where} seq=${e.seq}: 缺少 ${key}`);
+      }
+      // 核心回归点：认领/进度都是 s-aaaaaa 这个会话做的，不该被显示成 system
+      if (e.session_id !== "s-aaaaaa") {
+        problems.push(`${where} seq=${e.seq}: session_id=${String(e.session_id)}（期望 s-aaaaaa）`);
+      }
+      if (e.task_id !== taskId) problems.push(`${where} seq=${e.seq}: task_id=${String(e.task_id)}`);
+      if (e.project_key !== PROJECT) problems.push(`${where} seq=${e.seq}: project_key=${String(e.project_key)}`);
+    }
+    expect(problems).toEqual([]);
+  }
+
+  test("events.tail 每条都带真实的 session_id", async () => {
+    const res = await callOp<Array<Record<string, unknown>>>({
+      kind: "events.tail",
+      params: { task_id: taskId, tail: 20 },
+    });
+    expect(res.ok).toBe(true);
+    assertEventShape(res.data, "events.tail");
+  });
+
+  test("events.list 每条都带真实的 session_id", async () => {
+    const res = await callOp<Array<Record<string, unknown>>>({
+      kind: "events.list",
+      params: { after_seq: 0, limit: 200 },
+    });
+    expect(res.ok).toBe(true);
+    // events.list 是跨任务的，只挑本卡的断言
+    assertEventShape(res.data.filter((e) => e.task_id === taskId), "events.list");
+  });
+
+  test("task.get 的 timeline 与 events.tail 同形（前端两条数据源不能漂移）", async () => {
+    const res = await callOp<Record<string, unknown>>({
+      kind: "task.get",
+      params: { task_id: taskId, timeline: true, tail: 20 },
+    });
+    expect(Array.isArray(res.data.timeline)).toBe(true);
+    assertEventShape(res.data.timeline as Array<Record<string, unknown>>, "task.get.timeline");
+  });
+
+  test("/api/events 端点与 Op 同形（调试端点不能是另一套形状）", async () => {
+    const res = await fetch(`${baseUrl}/api/events?project=${PROJECT}&after=0&limit=200`, {
+      headers: { "X-Kanban-Key": token },
+    });
+    const body = (await res.json()) as { ok: boolean; data?: Array<Record<string, unknown>> };
+    expect(body.ok).toBe(true);
+    assertEventShape((body.data ?? []).filter((e) => e.task_id === taskId), "/api/events");
+  });
+
+  test("rows.ts 的 eventToJson 覆盖了前端的 KanbanEvent 类型（静态守卫）", () => {
+    // 前端类型是手写的，没有编译期校验：web/src 不在根 tsc 范围里。
+    // 所以“前端声明的字段”与“后端产出的字段”必须在这里对一次账。
+    const typesSrc = readFileSync(join(ROOT, "web", "src", "lib", "types.ts"), "utf8");
+    const rowsSrc = readFileSync(join(ROOT, "src", "core", "rows.ts"), "utf8");
+
+    const eventBlock = /export interface KanbanEvent \{([^}]*)\}/.exec(typesSrc)?.[1] ?? "";
+    const declared = [...eventBlock.matchAll(/^\s*([a-z_]+)\??:/gm)].map((m) => m[1]!);
+    expect(declared.length).toBeGreaterThan(0);
+
+    // 抽 eventToJson 的函数体（到下一个顶层 export 为止）
+    const fnBody = /export function eventToJson\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(rowsSrc)?.[1] ?? "";
+    expect(fnBody.length).toBeGreaterThan(0);
+
+    // 前端声明了但后端不产出的字段 → 前端永远读到 undefined（本次事故的形态）
+    const missing = declared.filter((f) => !new RegExp(`\\b${f}\\s*:`).test(fnBody));
+    expect(missing).toEqual([]);
+  });
+
+  test("对外出口没有绕过 eventToJson 直接吐领域对象（防回退）", () => {
+    // 曾经的写法：`.map((e) => e)`（驼峰直出）。以后新增事件出口时最容易复制的就是它。
+    //
+    // 报错只列行号，不 dump 整个文件：assert 的失败消息会连带打全文，
+    // 而 ops.ts 有 1000+ 行，刷屏里那行 `map((e) => e)` 会被埋掉。
+    const offenders: string[] = [];
+    for (const file of [join(ROOT, "src", "core", "ops.ts"), join(ROOT, "src", "server", "http.ts")]) {
+      readFileSync(file, "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (/\.map\(\s*\(\s*e\s*\)\s*=>\s*e\s*\)/.test(line)) {
+            offenders.push(`${file}:${i + 1}  ${line.trim()}`);
+          }
+        });
+    }
+    expect(offenders).toEqual([]);
   });
 });
 

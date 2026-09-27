@@ -204,7 +204,7 @@ agent-kanban context              # agent-b：同样一条命令，独立的会�
 | Grok | `GROK_SESSION_ID` |
 | Codex | `CODEX_SESSION_ID`（root session，不是 thread） |
 | DeepSeek Harness | `DSH_SESSION_ID`（**仅 agent 发起的 shell 调用**才有） |
-| Qoder | `QODER_SESSION_ID` / `QODERCN_SESSION_ID`（名字已对照 SDK 源码核实；截至 2026-09-27 Qoder 尚不注入，需要时自己设） |
+| Qoder | **没有——不支持自动会话身份** |
 | 其它任意工具 | 环境里出现的 `<TOOL>_SESSION_ID` 会被自动收编 |
 
 如果你的 agent 工具不导出可用的变量（截至本文写作时 cursor-agent 不导出），

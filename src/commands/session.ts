@@ -62,6 +62,24 @@ export async function cmdSession(argv: string[]): Promise<ExitCodeValue> {
 /** 通用选项集合（所有 session 子命令共享） */
 const COMMON_STRINGS = ["db", "session", "server", "project", "key"];
 
+/**
+ * Qoder 桌面端目前（2026-09）不向工具子进程注入任何会话变量（核实过程见
+ * src/core/paths.ts 末尾），身份会退化到旧单文件。它唯一的对外通道是在 skill
+ * 文本里替换 ${QODER_SESSION_ID}——这里提示一句，让只按 AGENTS.md 干活、
+ * 没加载 skill 的 agent 也能发现。走 stderr：--json 模式 stdout 只能有单个 JSON。
+ */
+function qoderIdentityHint(): string | null {
+  const inQoder = Object.keys(process.env).some(
+    (k) => k.startsWith("QODER_") || k.startsWith("QODERCN_"),
+  );
+  if (!inQoder) return null;
+  return (
+    "note: Qoder injects no session-id env var; identity falls back to the shared .kanban/session file. " +
+    'Inside a Qoder skill, "${QODER_SESSION_ID}" is substituted with this session\'s real UUID - ' +
+    "prefix every command with KANBAN_SESSION_KEY=qoder-<that-uuid> for per-session identity."
+  );
+}
+
 /** 注册会话 */
 async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
   const args = parseArgs(argv, {
@@ -108,6 +126,8 @@ async function sessionStart(argv: string[]): Promise<ExitCodeValue> {
     if (key) out.line(`  identity   : ${key}`);
     else {
       out.line(`  identity   : (none — sharing .kanban/session with every other agent in this directory)`);
+      const hint = qoderIdentityHint();
+      if (hint) process.stderr.write(hint + "\n");
     }
     out.line("");
     out.line(`Next run \`agent-kanban context\` to read the situation: unconsumed handoffs, in-progress cards, claimable tasks.`);

@@ -490,6 +490,23 @@ function buildPaths(dir: string, dbPath: string): KanbanPaths {
 //     （`expandMcpEnvVars` 只对 process.env 展开，拿不到 session id）。
 //   - 若将来想接上：hook stdin JSON 里有 `session_id`（CC 兼容），skill 文本可用
 //     `${QODER_SESSION_ID}` 替换——这两条是 Qoder 官方留给外部进程拿会话 id 的口子。
+//   - **skill 替换通道已实证**（2026-09-27 探针实验）：往本仓库 skill 文件里塞一行
+//     `${QODER_SESSION_ID}`，经 Skill 工具加载后确实被替换成了当前会话的真实 UUID
+//     （与 `~/.qoder-cn/session-env/` 里最新的会话目录名一致）。这是目前唯一能
+//     自动拿到 id 的通道；用户级 agent-kanban skill 的「Qoder」节已把它落成操作步骤
+//     （agent 拿到 UUID 后每条命令带 `KANBAN_SESSION_KEY=qoder-<uuid>` 前缀）。
+//   - **"从磁盘会话数据反查"已验证不可行**（2026-09-27，别再试这三条）：
+//     a. worker 是**全 app 共享的长驻进程**——同一个 worker pid（91120）在
+//        `~/.qoder-cn/logs/runs/*-p<pid>/manifest.json` 里先后服务过 6+ 个不同
+//        session id，"pid → 会话"的 join 天然不唯一；
+//     b. Win32 CommandLine **看不到** `--session-id`（只有 exe 路径；manifest 里的
+//        argv 是 SDK 自记的，不是 OS 命令行），进程树反查拿不到参数；
+//     c. 启发式（"最新的带 sid 的 manifest"）**实测会选错**：本会话是 62acd020
+//        （13:21 启动），但 worker 13:27 又服务了 9e2c2dfa——按最新反查会静默顶替
+//        别的会话身份，正是身份分片要消灭的那类事故。`hosts/qoder-<pid>.json`
+//        也只是用户级记录，无 session id。
+//     结论：子进程拿不到任何"这个会话是我的"判据，除非 Qoder 注入 env（表里的
+//     QODER_SESSION_ID 条目为此留着）或走 skill 文本替换。
 // | cursor-agent  | `%LOCALAPPDATA%/cursor-agent`                 | ❌ 只有 `CURSOR_AGENT_SOCKET` 这类进程级变量 |
 //
 // ⚠ **扫描方法本身也有坑**：`rg '\bCODEX_[A-Z_]+\b'` 这种带 `\b` 的正则会**漏**。

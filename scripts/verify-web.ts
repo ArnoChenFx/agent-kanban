@@ -167,7 +167,43 @@ try {
 
   const handoffs = await op("handoff.list", { task_id: newId });
   check("handoff.list 存在且返回数组", handoffs.ok && Array.isArray(handoffs.data), handoffs.error?.message ?? "");
-  const trans = await op("task.transition", { task_id: newId, to: "blocked", reason: "等接口定稿" });
+  console.log("\n=== 4.2 事件字段形状（时间线上显示的“session 名”）===");
+// 曾经的真实故障：事件是驼峰领域对象直出（sessionId/taskId/…），
+// 前端 task-detail.tsx 读 e.session_id 恒为 undefined → 每条都走 `?? "system"` 兜底，
+// 于是**每张卡的时间线都显示 system**，而库里 session_id 本来是真值。
+// 不报错、不空屏，只是全错，所以只能在 HTTP 契约这一层钉。
+const timeline = (d.timeline ?? []) as Array<Record<string, unknown>>;
+const camelLeak = timeline.filter((e) => "sessionId" in e || "taskId" in e || "projectKey" in e);
+check("timeline 无驼峰键（没有绕过 eventToJson）", camelLeak.length === 0, `泄漏 ${camelLeak.length} 条`);
+const noSession = timeline.filter((e) => !("session_id" in e));
+check("每条事件都带 session_id", noSession.length === 0, `缺 ${noSession.length} 条`);
+// 注意 session_id 允许是 null：那表示“这次操作没关联会话”（本节里那条
+// task.progress 就没带 X-Kanban-Session 头），前端把它显示成 system 是**对的**。
+// 修复前的 bug 是**每一条**都显示 system——连明明有会话的也不显示。
+const sessionValues = timeline.map((e) => String(e.session_id));
+check(
+  "session_id 真送到了前端（有会话的事件显示 s-xxx）",
+  sessionValues.some((v) => /^s-[0-9a-z]+$/.test(v)),
+  sessionValues.join(","),
+);
+check(
+  "数据里没有 system 这个占位值（那是前端渲染时的兜底，不是存的值）",
+  !sessionValues.includes("system"),
+  sessionValues.join(","),
+);
+// /api/events 是同一份数据的另一个出口，两边不能漂移
+const eventsRes = await fetch(`${BASE}/api/events?project=web-demo&after=0&limit=200`, { headers: auth });
+const eventsJson = (await eventsRes.json()) as { ok: boolean; data?: Array<Record<string, unknown>> };
+const allEvents = eventsJson.data ?? [];
+check(
+  "/api/events 与 Op 同形（都过 eventToJson）",
+  allEvents.length > 0 &&
+    allEvents.every((e) => "session_id" in e) &&
+    allEvents.every((e) => !("sessionId" in e)),
+  `${allEvents.length} 条`,
+);
+
+const trans = await op("task.transition", { task_id: newId, to: "blocked", reason: "等接口定稿" });
   check("task.transition 能改状态", trans.ok && (trans.data as { status?: string } | undefined)?.status === "blocked", trans.error?.message ?? "");
 
   console.log("\n=== 5. 鉴权 ===");
@@ -207,6 +243,14 @@ try {
   }
   ctrl.abort();
   check("SSE 推送到新事件", received.includes("SSE 推送验证"), received ? `${received.split("\n").length} 行` : "无数据");
+  // SSE 与 /api/op 是两个独立出口，payload 形状也必须一致（否则看板收事件那条路又默默失效）
+  const sseDataLine = received.split("\n").find((l) => l.startsWith("data: "));
+  const sseEvent = sseDataLine ? (JSON.parse(sseDataLine.slice(6)) as Record<string, unknown>) : null;
+  check(
+    "SSE 事件也走 eventToJson（带 session_id，无驼峰键）",
+    sseEvent !== null && "session_id" in sseEvent && !("sessionId" in sseEvent),
+    sseEvent ? Object.keys(sseEvent).join(",") : "未收到事件",
+  );
 
   console.log("\n=== 7. 缓存头 ===");
   const htmlHead = root.headers.get("cache-control");

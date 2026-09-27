@@ -71,7 +71,7 @@ import {
   listProjects,
   requireProject,
 } from "./projects.ts";
-import { sessionToJson, taskToJson, toEvent } from "./rows.ts";
+import { eventToJson, sessionToJson, taskToJson, toEvent } from "./rows.ts";
 import type { Plan, Task, TaskStatus } from "./types.ts";
 
 /**
@@ -367,9 +367,14 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         }),
       };
       if (op.params.timeline) {
-        data.timeline = taskRecentEvents(ctx.db, ctx.projectKey, op.params.task_id, op.params.tail ?? 20).map(
-          (e) => e,
-        );
+        // 必须走 eventToJson：直接吐领域对象是驼峰，前端读 e.session_id 恒为 undefined
+        // （曾导致时间线上"谁做的"全显示 system）
+        data.timeline = taskRecentEvents(
+          ctx.db,
+          ctx.projectKey,
+          op.params.task_id,
+          op.params.tail ?? 20,
+        ).map(eventToJson);
       }
       return { data, nextActions: hintsForTask(task.status, task.id) };
     }
@@ -655,12 +660,13 @@ export function executeOp(op: Op, ctx: OpContext): { data: unknown; nextActions:
         order: "asc",
         limit: op.params.limit ?? 200,
       });
-      return { data: rows.map((r) => toEvent(r)), nextActions: [] };
+      // 同样必须过 eventToJson：SSE 收到的每条事件都靠它把 session_id 送到前端
+      return { data: rows.map((r) => eventToJson(toEvent(r))), nextActions: [] };
     }
 
     case "events.tail": {
       const events = taskRecentEvents(ctx.db, ctx.projectKey, op.params.task_id, op.params.tail ?? 20);
-      return { data: events.map((e) => e), nextActions: [] };
+      return { data: events.map(eventToJson), nextActions: [] };
     }
 
     // ================= 崩溃恢复（ADR-7）=================

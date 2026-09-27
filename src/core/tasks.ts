@@ -211,11 +211,20 @@ export function listTasks(scope: Scope, filter: ListFilter = {}): Task[] {
 
   // ready = 依赖全部完成。SQLite 没有 "全部满足" 关键字，
   // 用 NOT EXISTS（存在未完成依赖）来表达，语义等价且可走索引
+  //
+  // ⚠ 子查询里每个表都必须带 project_key：T 编号是 per-project 的，
+  // 只按 `d.task_id = tasks.id` 匹配会把别的 project 的依赖边也拉进来，
+  // 后果是“本来能认领的卡被判成依赖未完成”（单 project 的库永远不会暴露）。
+  // JOIN 条件写成 dt.project_key = d.project_key 而不是外层的 tasks.project_key，
+  // 让子查询自洽；WHERE 里的 d.project_key = tasks.project_key 正好走
+  // idx_deps_project(project_key, task_id) 这个复合索引。
   const readySql = filter.ready
     ? ` AND NOT EXISTS (
         SELECT 1 FROM task_deps d
-        JOIN tasks dt ON dt.id = d.depends_on_id AND dt.project_key = tasks.project_key
-        WHERE d.task_id = tasks.id AND dt.status NOT IN ('done','cancelled')
+        JOIN tasks dt ON dt.project_key = d.project_key AND dt.id = d.depends_on_id
+        WHERE d.project_key = tasks.project_key
+          AND d.task_id = tasks.id
+          AND dt.status NOT IN ('done','cancelled')
       )`
     : "";
 
@@ -1137,6 +1146,10 @@ export function removeDependency(ctx: TxContext, taskId: string, dependsOnId: st
  * 为什么批量而不是逐个 getUnfinishedDeps：看板一次要渲染几百张卡，
  * 逐个查就是几百次 SQL（N+1）。这里用一条带相关子查询的 SQL 一次拿完。
  *
+ * ⚠ 与 listTasks 的 readySql 同一个坑：T 编号 per-project，
+ * 子查询里 d2 必须带 `d2.project_key = t.project_key`，
+ * 否则别的 project 的同号边会显示成这张卡的上游。
+ *
  * 返回：taskId → 未完成依赖 ID 列表（无未完成依赖的卡不在 map 里）
  */
 export function getWaitingDepsMap(scope: Scope): Map<string, string[]> {
@@ -1146,8 +1159,9 @@ export function getWaitingDepsMap(scope: Scope): Map<string, string[]> {
               (SELECT group_concat(d2.depends_on_id)
                  FROM task_deps d2
                  JOIN tasks dt2
-                   ON dt2.project_key = t.project_key AND dt2.id = d2.depends_on_id
-                WHERE d2.task_id = t.id
+                   ON dt2.project_key = d2.project_key AND dt2.id = d2.depends_on_id
+                WHERE d2.project_key = t.project_key
+                  AND d2.task_id = t.id
                   AND dt2.status NOT IN ('done','cancelled')) AS waiting
          FROM tasks t
         WHERE t.project_key = ?`,

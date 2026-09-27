@@ -209,7 +209,7 @@ processes that have no such variable, so a keyless shell never borrows someone e
 | Grok | `GROK_SESSION_ID` |
 | Codex | `CODEX_SESSION_ID` (the root session, not the thread) |
 | DeepSeek Harness | `DSH_SESSION_ID` (only present for agent-initiated shell calls) |
-| Qoder | `QODER_SESSION_ID` / `QODERCN_SESSION_ID` (names verified against the SDK; not auto-injected yet — set it yourself if needed) |
+| Qoder | **none — no automatic session identity** |
 | anything else | any `<TOOL>_SESSION_ID` in the environment is picked up automatically |
 
 If your agent tool exports nothing usable (cursor-agent doesn't, as of this writing), or you want to

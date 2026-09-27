@@ -268,6 +268,29 @@ try {
   check("交接页签有角标计数（handoff.list 生效）", Number(badge?.[1] ?? 0) > 0, `count=${badge?.[1] ?? "无"}`);
   // 计划页签只有 plan.show 成功才会渲染
   check("有「计划」页签（plan_id + plan.show 生效）", sheet.text.includes("计划"));
+
+  // ---- 时间线的“session 名”（真实事故：每条都显示 system）----
+  // 详情抽屉默认就停在 Timeline 页签（Tabs defaultValue="timeline"），
+  // 所以下面这几条读的就是时间线区的文本。
+  //
+  // 格式：`{相对时间} · {session_id ?? "system"}`。
+  // 修复前事件是驼峰领域对象直出，前端读 e.session_id 恒为 undefined，
+  // 于是每行都走 `?? "system"` —— 库里 session_id 本来是真值，只是没送到前端。
+  //
+  // 用 `· s-xxx` 定位而不是“含 s-xxx”：检查项那行是 `s-xxx · 刚刚`（顺序相反），
+  // 不加这个限定会误把检查项的 session 当成时间线的。
+  console.log("\n=== 时间线显示真实 session 名（不是 system）===");
+  check("时间线有事件", /认领任务|Claimed|Created|创建任务|推进/.test(sheet.text), "");
+  check(
+    "时间线里出现 `· s-xxx`（session_id 送到了前端）",
+    /·\s*s-[0-9a-z]+/.test(sheet.text),
+    sheet.text.match(/·\s*\S+/g)?.slice(0, 6).join(" ") ?? "无",
+  );
+  check(
+    "时间线里没有 `· system`（修复前每行都是它）",
+    !/·\s*system/.test(sheet.text),
+    sheet.text.match(/.{0,12}·\s*system.{0,6}/g)?.slice(0, 3).join(" | ") ?? "无",
+  );
   const tabHandoff = await openTab("交接");
   sheet = await sheetText();
   check("交接页签可点开", tabHandoff);
